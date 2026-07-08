@@ -1,0 +1,17 @@
+{
+  "enabledPlugins": {
+    "frontend-mobile-development@claude-code-workflows": true,
+    "ui-design@claude-code-workflows": true,
+    "backend-development@claude-code-workflows": true,
+    "ship-mate@claude-code-workflows": true,
+    "llm-application-dev@claude-code-workflows": true
+  },
+  "extraKnownMarketplaces": {
+    "claude-code-workflows": {
+      "source": {
+        "source": "github",
+        "repo": "wshobson/agents"
+      }
+    }
+  }
+}
