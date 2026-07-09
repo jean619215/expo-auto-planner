@@ -241,6 +241,134 @@ limit 20;
 
 ---
 
+## 6. Profile API (`GET/PATCH /api/profile`)
+
+> 沿用 3.2 產生的 `cookies.txt`（已登入 session）。所有請求皆用
+> `-b cookies.txt` 帶上 session cookie。
+
+### 6.1 未登入 GET → 401
+
+```bash
+curl -i http://localhost:3000/api/profile
+```
+
+- 預期 status：`401`
+- 預期 body：`{"error":"請先登入"}`
+
+### 6.2 未登入 PATCH → 401
+
+```bash
+curl -i -X PATCH http://localhost:3000/api/profile \
+  -H "Content-Type: application/json" \
+  -d '{"nickname":"新名字"}'
+```
+
+- 預期 status：`401`
+- 預期 body：`{"error":"請先登入"}`
+
+### 6.3 已登入 GET → 200，回自己 profile 五欄位
+
+```bash
+curl -i -b cookies.txt http://localhost:3000/api/profile
+```
+
+- 預期 status：`200`
+- 預期 body 恰含 `id`/`nickname`/`role`/`created_at`/`updated_at` 五欄位，
+  `role` 為 `"user"`。
+
+### 6.4 PATCH 合法 nickname → 200，`updated_at` 由 trigger 自動更新
+
+```bash
+curl -i -b cookies.txt -X PATCH http://localhost:3000/api/profile \
+  -H "Content-Type: application/json" \
+  -d '{"nickname":"新名字"}'
+```
+
+- 預期 status：`200`
+- 預期 body：更新後的 profile（`nickname` 為 `"新名字"`）。
+- 於 Studio 查 `public.profiles`：該 row 的 `updated_at` 應大於 `created_at`
+  （由 `profiles_set_updated_at` trigger 自動寫入，route 未手動塞值）。
+
+### 6.5 PATCH 清空 nickname（`""` 與 `null`）→ 200，回傳 `nickname: null`
+
+```bash
+curl -i -b cookies.txt -X PATCH http://localhost:3000/api/profile \
+  -H "Content-Type: application/json" \
+  -d '{"nickname":""}'
+
+curl -i -b cookies.txt -X PATCH http://localhost:3000/api/profile \
+  -H "Content-Type: application/json" \
+  -d '{"nickname":null}'
+```
+
+- 兩者皆預期 status `200`，body `nickname` 皆為 `null`（`""` 已正規化為
+  `null` 再寫入 DB）。
+
+### 6.6 PATCH nickname 超過 50 字 → 400
+
+```bash
+curl -i -b cookies.txt -X PATCH http://localhost:3000/api/profile \
+  -H "Content-Type: application/json" \
+  -d '{"nickname":"一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一"}'
+```
+
+（上方字串為 51 個中文字，超過上限 50。）
+
+- 預期 status：`400`
+- 預期 body：`{"error":"nickname 須為字串且長度不可超過 50 字"}`
+
+### 6.7 PATCH 帶非法欄位 → 400，且不更新任何東西
+
+```bash
+curl -i -b cookies.txt -X PATCH http://localhost:3000/api/profile \
+  -H "Content-Type: application/json" \
+  -d '{"nickname":"x","role":"admin"}'
+
+curl -i -b cookies.txt -X PATCH http://localhost:3000/api/profile \
+  -H "Content-Type: application/json" \
+  -d '{"role":"admin"}'
+```
+
+- 兩者皆預期 status `400`，body `{"error":"僅允許更新 nickname"}`。
+- 於 Studio 查 `public.profiles`：確認 `role`、`nickname` 皆未被改動
+  （整包拒絕，不部分套用）。
+
+### 6.8 PATCH 空物件 / 非 JSON / 型別錯誤 → 400
+
+```bash
+curl -i -b cookies.txt -X PATCH http://localhost:3000/api/profile \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+curl -i -b cookies.txt -X PATCH http://localhost:3000/api/profile \
+  -H "Content-Type: application/json" \
+  -d 'not-json'
+
+curl -i -b cookies.txt -X PATCH http://localhost:3000/api/profile \
+  -H "Content-Type: application/json" \
+  -d '{"nickname":123}'
+```
+
+- 三者皆預期 status `400`。
+
+### 6.9 安全斷言：無法讀/改他人 profile
+
+```bash
+curl -i -b cookies.txt "http://localhost:3000/api/profile?id=<使用者A的uuid>"
+
+curl -i -b cookies.txt -X PATCH http://localhost:3000/api/profile \
+  -H "Content-Type: application/json" \
+  -d '{"id":"<使用者A的uuid>","nickname":"x"}'
+```
+
+- 第一個請求：`?id=` query string 應被完全忽略，仍回**目前登入者自己**的
+  profile（`200`），不會回傳/更改成 query string 指定的對象。
+- 第二個請求：body 帶 `id` 屬於白名單外欄位 → `400`（同 6.7），不更新任何東西。
+- 用另一組使用者（B）的 `cookies.txt` 重複 6.3/6.4，確認 B 只能讀到/改到自己的
+  row，看不到 A 的 `nickname`/`role` 內容。
+
+---
+
 ## 設定備忘（非本 checklist 的測試步驟，但驗證流程需要）
 
 - 若要讓真實驗證信的連結直接可用（而非手動從信件內容組 URL），需將 Supabase

@@ -1,0 +1,198 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_date": "2026-07-09T06:30:00.000Z",
+  "__export_source": "expo-auto-planner.membership",
+  "resources": [
+    {
+      "_id": "wrk_auth_expo",
+      "_type": "workspace",
+      "parentId": null,
+      "name": "expo-auto-planner · Auth",
+      "description": "會員系統 auth API routes 手動測試 (Task 2)",
+      "scope": "collection"
+    },
+    {
+      "_id": "env_base",
+      "_type": "environment",
+      "parentId": "wrk_auth_expo",
+      "name": "Base Environment",
+      "data": {
+        "base_url": "http://127.0.0.1:3000",
+        "email": "you@example.com",
+        "password": "password123",
+        "token_hash": "PASTE_TOKEN_HASH_FROM_EMAIL",
+        "type": "signup",
+        "nickname_too_long": "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一"
+      },
+      "dataPropertyOrder": {
+        "&": ["base_url", "email", "password", "token_hash", "type", "nickname_too_long"]
+      },
+      "metaSortKey": 1
+    },
+    {
+      "_id": "fld_auth",
+      "_type": "request_group",
+      "parentId": "wrk_auth_expo",
+      "name": "auth",
+      "metaSortKey": -100
+    },
+    {
+      "_id": "req_register",
+      "_type": "request",
+      "parentId": "fld_auth",
+      "name": "1. POST register (註冊, 不建 session)",
+      "method": "POST",
+      "url": "{{ _.base_url }}/api/auth/register",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"email\": \"{{ _.email }}\",\n  \"password\": \"{{ _.password }}\"\n}"
+      },
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "description": "預期 200 + 通用訊息, 無 Set-Cookie. 重複 email 再送一次應回相同 200 + 相同訊息.",
+      "metaSortKey": -100
+    },
+    {
+      "_id": "req_confirm",
+      "_type": "request",
+      "parentId": "fld_auth",
+      "name": "2. GET confirm (email 驗證 callback)",
+      "method": "GET",
+      "url": "{{ _.base_url }}/api/auth/confirm?token_hash={{ _.token_hash }}&type={{ _.type }}",
+      "body": {},
+      "headers": [],
+      "description": "token_hash 從驗證信連結取得, 填進 Base Environment 的 token_hash. 成功會 303 導向首頁; 無效/過期 token 回 400.",
+      "metaSortKey": -90
+    },
+    {
+      "_id": "req_login",
+      "_type": "request",
+      "parentId": "fld_auth",
+      "name": "3. POST login (登入, 設 httpOnly cookie)",
+      "method": "POST",
+      "url": "{{ _.base_url }}/api/auth/login",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"email\": \"{{ _.email }}\",\n  \"password\": \"{{ _.password }}\"\n}"
+      },
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "description": "未驗證帳號 → 403 (請先驗證). 帳密錯 → 401 通用訊息. 已驗證+正確 → 200 + Set-Cookie httpOnly session.",
+      "metaSortKey": -80
+    },
+    {
+      "_id": "req_logout",
+      "_type": "request",
+      "parentId": "fld_auth",
+      "name": "4. POST logout (清除 session)",
+      "method": "POST",
+      "url": "{{ _.base_url }}/api/auth/logout",
+      "body": {},
+      "headers": [],
+      "description": "清除 session cookie. 需先 login 拿到 cookie (Insomnia 會自動帶 cookie jar).",
+      "metaSortKey": -70
+    },
+    {
+      "_id": "req_register_bad",
+      "_type": "request",
+      "parentId": "fld_auth",
+      "name": "5. POST register 缺欄位 → 400",
+      "method": "POST",
+      "url": "{{ _.base_url }}/api/auth/register",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"email\": \"{{ _.email }}\"\n}"
+      },
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "description": "缺 password → 400. 另可測: 無效 email 格式 / 密碼 <6 字 → 皆 400 (非 500).",
+      "metaSortKey": -60
+    },
+    {
+      "_id": "fld_profile",
+      "_type": "request_group",
+      "parentId": "wrk_auth_expo",
+      "name": "profile",
+      "metaSortKey": -50
+    },
+    {
+      "_id": "req_profile_get_unauth",
+      "_type": "request",
+      "parentId": "fld_profile",
+      "name": "5b. GET profile 未登入 → 401",
+      "method": "GET",
+      "url": "{{ _.base_url }}/api/profile",
+      "body": {},
+      "headers": [],
+      "description": "先到 Cookie Jar 清掉 sb-* cookie (或 logout 後) 再送. 預期 401 + {\"error\":\"請先登入\"}. PATCH 未登入亦同 401.",
+      "metaSortKey": -55
+    },
+    {
+      "_id": "req_profile_get",
+      "_type": "request",
+      "parentId": "fld_profile",
+      "name": "6. GET profile (已登入自己的五欄位)",
+      "method": "GET",
+      "url": "{{ _.base_url }}/api/profile",
+      "body": {},
+      "headers": [],
+      "description": "需先 login (Insomnia 自動帶 cookie jar). 已登入 → 200 + id/nickname/role/created_at/updated_at 五欄位. 未登入 → 401.",
+      "metaSortKey": -50
+    },
+    {
+      "_id": "req_profile_patch",
+      "_type": "request",
+      "parentId": "fld_profile",
+      "name": "7. PATCH profile nickname (合法)",
+      "method": "PATCH",
+      "url": "{{ _.base_url }}/api/profile",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"nickname\": \"新名字\"\n}"
+      },
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "description": "已登入 → 200 + 更新後 profile, updated_at 由 DB trigger 自動更新. 未登入 → 401.",
+      "metaSortKey": -40
+    },
+    {
+      "_id": "req_profile_patch_role",
+      "_type": "request",
+      "parentId": "fld_profile",
+      "name": "8. PATCH profile 帶 role → 400",
+      "method": "PATCH",
+      "url": "{{ _.base_url }}/api/profile",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"nickname\": \"x\",\n  \"role\": \"admin\"\n}"
+      },
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "description": "帶白名單外欄位 (role) → 400, 不更新任何東西. 單獨帶 {\"role\":\"admin\"} 或空物件 {} 亦皆 400.",
+      "metaSortKey": -30
+    },
+    {
+      "_id": "req_profile_patch_too_long",
+      "_type": "request",
+      "parentId": "fld_profile",
+      "name": "9. PATCH profile nickname 超過 50 字 → 400",
+      "method": "PATCH",
+      "url": "{{ _.base_url }}/api/profile",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"nickname\": \"{{ _.nickname_too_long }}\"\n}"
+      },
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" }
+      ],
+      "description": "nickname_too_long 為 51 個中文字 (Base Environment), 超過上限 50 → 400.",
+      "metaSortKey": -20
+    }
+  ]
+}

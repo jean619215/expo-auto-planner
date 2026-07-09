@@ -1,214 +1,128 @@
-# Architect Plan — 建立 auth API routes (register/login/logout + email 驗證 confirm callback)
+# Architect Plan — 建立 /api/profile API (GET/PATCH)
 
-> Story: 會員系統 | Task type: BACKEND | Generated: 2026-07-09T04:30:00Z
-> ⚠️ auth-adjacent：本 task 全程觸及認證/session/cookie，依 AGENTS.md 於 review 階段自動 🔴 Critical。所有步驟已套用 security guardrail，實作前務必先讀框架文件（見步驟 0）。
+> Story: 會員系統 | Task 3 of 7 | Task type: BACKEND | Generated: 2026-07-09T07:30:00Z
+> auth-adjacent：本 task 消費既有 session 機制（未改動 auth 模型），依 AGENTS.md 於 review 階段自動 🔴 Critical 審視。
 
 ## Overview
-建立 4 支 App Router route handlers（register / login / logout / confirm），全部透過 `@supabase/ssr` 的 `createServerClient` 綁定 Next.js `cookies()` 來讀寫 httpOnly session cookie。前端只打自己的 API route，session token 一律存 httpOnly cookie。email 驗證啟用：註冊不建立 session、不建 profile；profile 由 DB trigger 在 `auth.users` insert 時自動建立（選項 A）。
+
+在 `src/app/api/profile/route.ts` 新增 GET/PATCH 兩支 handler：以既有 `createSupabaseServerClient()`（cookie-bound 使用者情境 client）從 session 取得身分，直接查/改 `public.profiles` 自己的 row（RLS 第二道防線自然生效），PATCH 僅允許 `nickname` 欄位並嚴格驗證。
 
 ## Task Type Confirmed
-BACKEND —（route handlers + 一支 DB migration + 設定調整）。與 orchestrator 的判定一致，無矛盾。
 
-## Escalation / 人工必讀事項（不阻擋，但核准計畫時請一併確認）
-1. **auth 模型**：本 task 即 story 已核准的認證實作，決定（httpOnly cookie + `@supabase/ssr` + email 驗證）皆由 orchestrator 記錄使用者確認在案。architect 不新增未經核准的 auth 決策；人工核准此計畫即等同核可此 auth 實作方向。
-2. **設定變更（非程式碼，但必要）**：`supabase/config.toml` 第 226 行目前 `enable_confirmations = false`，與「email 驗證啟用、註冊不自動登入」需求衝突。**必須改為 `true`**，否則 Supabase 會在註冊時直接回 session、驗收條件無法達成。列為本 task 的設定依賴。
-3. **env 變數命名不一致**：`.env.example` 用 `SUPABASE_SECRET_KEY`，但 `.env.local` 目前是 `SUPABASE_SERVICE_ROLE_KEY`。程式碼只能有一個正解。本計畫統一採 `.env.example` 的命名（`NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_SECRET_KEY`），developer 需同步修正 `.env.local` 的 key 名（值不動）。請人工確認採此命名。
-
-## Plan Dependencies（實作前置，developer 須先處理）
-- **安裝套件**：`@supabase/supabase-js` 與 `@supabase/ssr`（專案目前皆未裝）。以 `npm install @supabase/supabase-js @supabase/ssr` 安裝為 runtime dependency。此為 AGENTS.md「不得 ad hoc 加 DB client」的指定 client，屬本 task 明列依賴。
-- **設定**：依上方第 2 點，將 `config.toml` `enable_confirmations` 設為 `true`。
-- **env**：依上方第 3 點統一命名；確保 `SUPABASE_SECRET_KEY`（secret / 舊 service_role）只在 server 讀取，永不加 `NEXT_PUBLIC_` 前綴。
+BACKEND — 與 orchestrator-output.md 一致，無矛盾。
 
 ## Files to Create
+
 | File path | Purpose |
-| --- | --- |
-| `src/lib/supabase/server.ts` | 使用者情境 client 工廠：`createServerClient`（publishable key）綁 `await cookies()`，讀寫 httpOnly session cookie。login / logout / confirm 用。 |
-| `src/lib/supabase/admin.ts` | 管理員 client 工廠：用 `SUPABASE_SECRET_KEY` 的 `createClient`，**不綁 cookie、關閉 session 持久化**。register 用來呼叫 Auth signUp（避免污染請求 cookie），未來 profile 特權操作亦走此。 |
-| `src/app/api/auth/register/route.ts` | `POST` 註冊 handler。 |
-| `src/app/api/auth/login/route.ts` | `POST` 登入 handler。 |
-| `src/app/api/auth/logout/route.ts` | `POST` 登出 handler。 |
-| `src/app/api/auth/confirm/route.ts` | `GET` email 驗證 callback handler。 |
-| `supabase/migrations/<timestamp>_auth_users_profile_trigger.sql` | DB trigger：`on auth.users insert` 自動建 profile（選項 A）。用 `supabase migration new auth_users_profile_trigger` 產生正確時間戳檔名。 |
-| `supabase/tests/auth_routes_manual.md` | 手動測試 checklist（curl / REST client），含每個 case 的預期 status code 與行為。 |
+| --------- | ------- |
+| `src/app/api/profile/route.ts` | GET（回當前使用者 profile 五欄位）+ PATCH（僅更新 nickname）兩支 route handler |
 
 ## Files to Modify
+
 | File path | What changes |
-| --- | --- |
-| `supabase/config.toml` | `enable_confirmations = false` → `true`（第 226 行）。 |
-| `.env.local` | 將 `SUPABASE_SERVICE_ROLE_KEY` 更名為 `SUPABASE_SECRET_KEY`（值不變），與 `.env.example` 對齊。 |
-| `package.json` / `package-lock.json` | 由 `npm install` 自動加入兩個 supabase 套件。 |
-| email confirmation 模板設定（`config.toml` `[auth.email.template.confirmation]` 或 Dashboard，見步驟 8 註）| 讓驗證信連結指向 `/api/auth/confirm`（token_hash 流程）。屬設定，非程式碼。 |
+| --------- | ------------ |
+| `supabase/tests/auth_routes_manual.md` | 新增「5. Profile (`GET/PATCH /api/profile`)」段落：登入後 GET/PATCH 成功案例 + 401/400/超長 nickname/非法欄位 fail cases 的 curl 步驟與預期結果 |
+| `supabase/tests/insomnia_auth.json` | 在 `resources` 陣列追加 GET profile、PATCH profile（合法）、PATCH 帶 `role`（400）、PATCH nickname 51 字（400）等 request 項目（沿用既有 `_id`/`request_group` 慣例，建議新開 `fld_profile` group） |
 
-## 註冊時 profile 建立策略 — 選定：選項 A（DB trigger）
-理由：
-- 符合 story「RLS / DB 層防護」精神，profile 建立不依賴應用層記得呼叫，永不漏建。
-- 驗證流程（confirm route）不需碰 profile，邏輯更單純。
-- Task 1 只建表未建 auto-insert trigger，補此 trigger 屬本 task 合理範圍。
+## Key Decisions
 
-**Trigger SQL 要點（developer 照此撰寫，鎖 search_path + 正確 SECURITY DEFINER）：**
-```sql
--- supabase/migrations/<timestamp>_auth_users_profile_trigger.sql
--- 在 auth.users 新增時，自動於 public.profiles 建立對應 row（role 預設 'user'）。
-create or replace function public.handle_new_user()
-returns trigger
-language plpgsql
-security definer            -- 需以 owner 權限寫入 public.profiles（跨 schema、繞過 RLS）
-set search_path = ''        -- 鎖死 search_path，防 search_path 注入
-as $$
-begin
-  insert into public.profiles (id)
-  values (new.id)
-  on conflict (id) do nothing;   -- 冪等，重放安全
-  return new;
-end;
-$$;
+### 1. 「取當前使用者」helper：先內聯，不抽到 src/lib/
 
-create trigger on_auth_user_created
-  after insert on auth.users
-  for each row
-  execute function public.handle_new_user();
-```
-註：
-- 全部物件皆以 schema 限定名（`public.profiles`、`public.handle_new_user`）撰寫，因 `search_path = ''`。
-- `role` 不在 insert 指定，交由 profiles 表的 `default 'user'` 產生 → 滿足驗收「role 預設 user」。
-- trigger 在 `auth.users` insert 當下就建 profile（即使尚未驗證）。這符合「profile 1:1 對應 auth.users」；驗收條件「驗證完成後 profiles 存在對應 row」仍成立（更早存在，不違反）。若日後要求「僅驗證後才建 profile」，再改用 confirm 事件，但目前選項 A 最穩妥，且 orchestrator 建議 A。
-- `SECURITY DEFINER` 函式的 owner 需能 insert `public.profiles`；migration 由 owner 套用即可，無需額外 grant。
+- GET/PATCH 同檔共用一個檔案內部的小 helper（呼叫 `supabase.auth.getUser()`，無 user 則回 401）即可。
+- **不現在抽到 `src/lib/`**：Task 4 的 middleware 跑在 Next.js middleware 情境，`@supabase/ssr` 在 middleware 用的是 `NextRequest`/`NextResponse` cookie 綁定模式，與 route handler 的 `next/headers` `cookies()` 綁定不同 — 現在抽出的 helper 到 Task 4 也無法直接複用，屬過早抽象（AGENTS.md：不發明過早 pattern）。Task 4 架構時再決定共用層形狀。
+
+### 2. 資料存取：只用使用者情境 client，不用 admin client — 確認
+
+- `createSupabaseServerClient()` 帶使用者 JWT 查詢 → `profiles_select_own` / `profiles_update_own` RLS policy 生效，天然只碰得到自己的 row（第二道防線）。
+- 使用者操作自己的 row，RLS 明確允許，**完全不需要** `createSupabaseAdminClient()`（service role 會 bypass RLS，反而削弱防線）。route.ts 不得 import `@/lib/supabase/admin`。
+
+### 3. nickname 清空的正規化
+
+- `null` 與 `""` 皆視為「清空」；寫入 DB 前將 `""` 正規化為 `null`（schema `nickname text` 可 null），DB 內清空狀態單一表示。回傳給前端即 `nickname: null`。
+
+### 4. 長度計算
+
+- 「50 字」以 Unicode code point 計（`[...nickname].length`），避免 emoji/罕用字以 UTF-16 單位計數造成中文使用者困惑。上限 50，超過 → 400。
 
 ## Implementation Steps
 
-0. **先讀框架文件（強制，AGENTS.md 最上方警告）**：這是破壞性版本的 Next.js 16，寫任何 route handler / cookie 程式碼前，developer 必讀：
-   - `node_modules/next/dist/docs/01-app/01-getting-started/15-route-handlers.md`
-   - `node_modules/next/dist/docs/01-app/03-api-reference/04-functions/cookies.md`
-   已由 architect 確認的關鍵事實：
-   - route handler 簽名：`export async function POST(request: Request) { ... }`，回傳 `Response.json(...)` 或 `NextResponse`。
-   - **`cookies()` 是 async**：必須 `const cookieStore = await cookies()`。`.set(name, value, options)` / `.delete(name)` 只能在 route handler / server function 內呼叫。
-   - 讀 supabase `@supabase/ssr` README（`node_modules/@supabase/ssr/`）確認 `createServerClient` 的 `cookies` 介面（現行為 `getAll` / `setAll`）。
-
-1. **安裝依賴**：`npm install @supabase/supabase-js @supabase/ssr`。安裝後 `package.json` dependencies 應含這兩者。
-
-2. **修正設定與 env**：
-   - `supabase/config.toml`：`enable_confirmations = true`。
-   - `.env.local`：`SUPABASE_SERVICE_ROLE_KEY` → `SUPABASE_SECRET_KEY`（值不變）。
-   - 確認 `.env.example` 三個 key 齊全（已齊，無需改）。
-
-3. **建立使用者情境 client** `src/lib/supabase/server.ts`：
-   - export `async function createSupabaseServerClient()`。
-   - 內部 `const cookieStore = await cookies()`（`import { cookies } from 'next/headers'`）。
-   - `createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!, { cookies: { getAll() { return cookieStore.getAll() }, setAll(list) { list.forEach(({name, value, options}) => cookieStore.set(name, value, options)) } } })`。
-   - `@supabase/ssr` 會自動以 httpOnly + SameSite +（production）Secure 設定寫 session cookie；不要手動覆蓋成非 httpOnly。
-   - 不在此檔讀 secret key。
-
-4. **建立管理員 client** `src/lib/supabase/admin.ts`：
-   - export `function createSupabaseAdminClient()`，用 `createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SECRET_KEY!, { auth: { autoRefreshToken: false, persistSession: false } })`。
-   - 此 client 不綁 cookie、不持久 session，純供 server 端特權操作。register 用它呼叫 `auth.signUp`（不希望註冊在當前瀏覽器留下任何 session cookie，符合「不自動登入」）。
-   - **檔案內加註解**：`SUPABASE_SECRET_KEY` 僅限 server；此模組不得被任何 client component import。
-
-5. **`src/app/api/auth/register/route.ts`（POST）**：
-   - 解析 body（`await request.json()`，包 try/catch → 解析失敗回 400）。
-   - 輸入驗證（在 API 邊界）：`email`、`password` 必填；email 格式基本檢查；password 長度 ≥ `config.toml` 的 `minimum_password_length`（目前 6）。缺欄位或格式錯 → 400 附清楚訊息，不 500。
-   - 用 **admin client** 呼叫 `auth.signUp({ email, password, options: { emailRedirectTo: <SITE_URL>/api/auth/confirm } })`。（`SITE_URL` 從 env，如 `NEXT_PUBLIC_SITE_URL`；若沿用 config `site_url`，developer 於 env 定義並於 confirm 導向重用。）
-   - 因 `enable_confirmations = true`，Supabase 回傳 user 但**無 session** → route **不設任何 cookie**。
-   - 回傳 200/201 + `{ message: "註冊成功，請至信箱點擊驗證連結完成驗證" }`。
-   - **帳號枚舉防護**：重複 email 時 Supabase 行為依專案設定可能回一般化結果；route 一律回相同的「請至信箱查看」訊息，不回「此 email 已存在」。若 Supabase 回錯誤，映射為通用訊息，避免洩漏帳號是否存在。
-   - 不 log email 完整值 / password / 任何 token。
-
-6. **`src/app/api/auth/login/route.ts`（POST）**：
-   - 解析 + 驗證 body（同上，缺欄位 400）。
-   - 用 **使用者情境 client**（`createSupabaseServerClient`）呼叫 `auth.signInWithPassword({ email, password })`。
-   - 成功 → `@supabase/ssr` 自動經 `setAll` 寫入 httpOnly session cookie；回 200 + `{ message: "登入成功" }`（可附非敏感的 user id）。
-   - 未驗證信箱：Supabase 回 `email_not_confirmed` 類錯誤 → 映射為 403（或 401）+ `{ error: "請先至信箱完成驗證再登入" }`。
-   - 帳密錯誤 → 401 + 通用 `{ error: "帳號或密碼錯誤" }`（不透露是帳號不存在或密碼錯，防枚舉）。
-   - 不 log password / token / session。
-
-7. **`src/app/api/auth/logout/route.ts`（POST）**：
-   - 用 **使用者情境 client** 呼叫 `auth.signOut()` → `@supabase/ssr` 會清除 session cookie。
-   - 回 200 + `{ message: "已登出" }`。
-   - 即使當前無 session 也回 200（冪等）。
-
-8. **`src/app/api/auth/confirm/route.ts`（GET）**：
-   - email 驗證連結 callback。採 **token_hash 流程**（server-side、與 `@supabase/ssr` 相容）：
-     - 從 `request` 的 `URL` 讀 `token_hash` 與 `type`（`new URL(request.url).searchParams`）。
-     - 用 **使用者情境 client** 呼叫 `auth.verifyOtp({ type, token_hash })`。
-     - 成功 → Supabase 交換出 session，經 `setAll` 寫 httpOnly cookie；以 `NextResponse.redirect(<成功頁，如 SITE_URL/>)` 導向（Task 5 前端頁未做，先導向首頁或回可導向的 JSON 結果）。
-     - token 過期 / 無效 / 缺參數 → 不 500；回導向錯誤頁或回 400/JSON `{ error: "驗證連結無效或已過期，請重新註冊或重寄驗證信" }`。
-   - profile 由 DB trigger 已自動建立，本 route 不碰 profile。
-   - 註（設定，非程式碼）：需確保 Supabase confirmation email 模板送出的連結指向 `/api/auth/confirm?token_hash={{ .TokenHash }}&type=email`（或 signup）。若沿用預設 `{{ .ConfirmationURL }}`（指向 `/auth/v1/verify`），改用其 `redirect_to` 落到本 route 亦可，但 token_hash 自訂模板最直接。developer 於 `config.toml` `[auth.email.template.confirmation]` 或 Dashboard 設定，並記錄於手動測試 checklist。
-
-9. **DB trigger migration**：`supabase migration new auth_users_profile_trigger`，填入上方「選項 A」的 SQL。**不自動套用**（延續 Task 1 慣例：由使用者手動 `npm run db:push` 或 Dashboard 執行）。
-
-10. **手動測試 checklist** `supabase/tests/auth_routes_manual.md`：見下方 Test Plan，developer 據此撰寫可複製貼上的 curl 指令與預期結果。
-
-11. **收尾**：`npm run lint` 必須通過（AGENTS.md 要求）。無 TODO、無 debug log、無 commented-out code。
+1. 建立 `src/app/api/profile/route.ts`。頂部 `import { createSupabaseServerClient } from "@/lib/supabase/server";`。定義常數 `const PROFILE_COLUMNS = "id, nickname, role, created_at, updated_at";`、`const NICKNAME_MAX_LENGTH = 50;`，以及中文錯誤訊息常數（風格對齊 `src/app/api/auth/login/route.ts` 的 `GENERIC_LOGIN_ERROR` 做法），建議：未登入 401 →「請先登入」、找不到 row 404 →「找不到會員資料」、body 非 JSON →「請求格式錯誤」（沿用 login 同字串）、非法欄位 →「僅允許更新 nickname」、nickname 不合法 →「nickname 須為字串且長度不可超過 50 字」。
+2. 檔案內部寫 helper `async function getAuthenticatedUser(supabase)`（或等效內聯邏輯）：呼叫 `supabase.auth.getUser()`；`error` 或 `!data.user` → 回 `null`。呼叫端據此回 `Response.json({ error: "請先登入" }, { status: 401 })`。身分**只**來自此處 — 兩支 handler 皆不得從 query string、body、header 讀取任何 user id。
+3. 實作 `export async function GET()`（Next 16 簽名已確認；GET 用不到 request 參數可省略）：
+   1. `const supabase = await createSupabaseServerClient();`
+   2. 驗身分 → 無 user 回 401。
+   3. `supabase.from("profiles").select(PROFILE_COLUMNS).eq("id", user.id).maybeSingle()`。
+   4. 查詢 `error` → 500（`{ error: "伺服器錯誤" }`，server 端 `console.error` 只記 error code/message，不含 token/session/email）。
+   5. `data === null`（異常：DB trigger 應已建 row）→ 404 `{ error: "找不到會員資料" }`，並 `console.error` 記 user id（非敏感）以便排查 — 明確處理，不默默回空。
+   6. 成功 → `Response.json(data, { status: 200 })`（即五欄位物件）。
+4. 實作 `export async function PATCH(request: Request)`，驗證順序（**先驗身分再驗 body**，未登入一律 401 優先）：
+   1. `const supabase = await createSupabaseServerClient();` → 驗身分 → 無 user 回 401。
+   2. `await request.json()` 以 try/catch 包裹（風格同 login route）→ 失敗回 400「請求格式錯誤」。
+   3. body 必須是 plain object（`typeof === "object" && !== null && !Array.isArray`），否則 400。
+   4. **白名單整包拒絕**：`Object.keys(body)` 必須恰好等於 `["nickname"]` — 帶任何其他 key（含 `role`/`id` 等）→ 400「僅允許更新 nickname」，不更新任何東西。空物件 `{}`（缺 `nickname` key）同樣 400（符合驗收「空 body → 400」）。
+   5. 型別/長度驗證：`nickname` 須為 `string` 或 `null`，否則 400；為 string 且 `[...nickname].length > NICKNAME_MAX_LENGTH` → 400。
+   6. 正規化：`nickname === ""` → `null`。
+   7. `supabase.from("profiles").update({ nickname }).eq("id", user.id).select(PROFILE_COLUMNS).maybeSingle()`。（`updated_at` 由 DB trigger `profiles_set_updated_at` 自動更新 — route 不手動塞。）
+   8. `error` → 500（同 GET 的 log 規則）；`data === null`（RLS 拒絕或 row 不存在的異常）→ 404「找不到會員資料」。
+   9. 成功 → `Response.json(data, { status: 200 })`（更新後五欄位）。
+5. 更新 `supabase/tests/auth_routes_manual.md`：新增 profile 段落（沿用既有 curl `-b cookies.txt` 帶 session 的寫法），案例見 Test Plan。
+6. 更新 `supabase/tests/insomnia_auth.json`：追加 profile requests（成功 GET/PATCH + 非法欄位 + 超長 nickname + 未登入），命名沿用「編號. METHOD 說明」格式。
+7. `npm run lint` 與 `npx tsc --noEmit` 通過後才算完成。
 
 ## Data Flow
+
 ```
-註冊：
-  Browser → POST /api/auth/register {email,password}
-    → [admin client] auth.signUp (無 session)
-    → Supabase 建 auth.users row (unconfirmed)
-        └─(DB trigger on_auth_user_created)→ insert public.profiles(id, role='user')
-    → Supabase 寄驗證信
-    → route 回 200「請收信」，不設 cookie
-
-驗證：
-  Browser 點信中連結 → GET /api/auth/confirm?token_hash&type
-    → [user client] auth.verifyOtp → 交換 session
-    → @supabase/ssr setAll → 寫 httpOnly session cookie
-    → redirect 導向
-
-登入：
-  Browser → POST /api/auth/login {email,password}
-    → [user client] auth.signInWithPassword
-    → 成功：setAll → httpOnly cookie；未驗證：403；錯誤：401(通用)
-
-登出：
-  Browser → POST /api/auth/logout
-    → [user client] auth.signOut → 清 cookie → 200
+Client (帶 httpOnly session cookie)
+  → GET/PATCH /api/profile (route handler)
+    → createSupabaseServerClient()  [綁 cookies()，使用者 JWT]
+    → supabase.auth.getUser()       [身分唯一來源；失敗 → 401]
+    → supabase.from("profiles")…eq("id", user.id)
+        [第一道: route 只用 session 的 user.id]
+        [第二道: RLS profiles_select_own / profiles_update_own]
+    → PATCH 時 DB trigger profiles_set_updated_at 更新 updated_at
+  ← Response.json(profile 五欄位 / { error: 中文訊息 })
 ```
 
 ## Test Plan
-專案無 Docker、無 JS 測試框架（本 task **不**引入測試框架；若後續要自動化再另立 plan dependency）。採手動測試，寫成 `supabase/tests/auth_routes_manual.md`，內容為 dev server（`npm run dev`）+ 本機 Supabase（`supabase start`）下可執行的 curl / REST client checklist。每項需標「指令 + 預期 status code + 預期 body/行為」。
 
-必涵蓋案例（對照 orchestrator 驗收與 edge case）：
-- 註冊：合法 email+密碼 → 200/201，回「請收信」，**回應無 `Set-Cookie` session**。
-- 註冊：缺 email 或 password → 400。
-- 註冊：無效 email 格式 / 密碼過短 → 400（非 500）。
-- 註冊：重複 email → 不洩漏帳號存在（與首次註冊回應一致或通用訊息）。
-- 登入（未驗證帳號）→ 403 + 「請先驗證信箱」，無 session cookie。
-- 驗證：從本機 Inbucket/`local_smtp`（config port 54324）取驗證連結 → GET /api/auth/confirm → 成功導向、回應含 httpOnly session cookie。
-- 驗證：竄改 / 過期 token_hash → 明確錯誤（非 500）。
-- 登入（已驗證帳號、正確帳密）→ 200 + httpOnly session cookie（檢查 `Set-Cookie` 含 `HttpOnly`、`SameSite`）。
-- 登入：密碼錯 → 401 通用「帳號或密碼錯誤」（不分帳號/密碼）。
-- 登入：缺欄位 → 400。
-- 登出：帶 session → 200 且 session cookie 被清除（`Set-Cookie` 過期）。
-- profile 驗證：註冊後查 `public.profiles` 存在對應 row 且 `role='user'`（可複用 profiles_verify.sql 的查詢思路）。
+無 Docker、不安裝測試框架（延續 Task 1/2 已核可做法）— 手動測試。
 
-Unit / integration：本 task 不寫 JS 單元/整合測試（無框架）。route 的驗證邏輯正確性由上述手動 checklist 覆蓋。QA 依此 checklist 靜態/手動驗收（延續 Task 1 模式）。
+- **手動 checklist**（`supabase/tests/auth_routes_manual.md` 新段落，逐條對應驗收條件）：
+  1. 未登入 GET → 401。
+  2. 未登入 PATCH → 401。
+  3. login 後 GET → 200，body 恰含 `id`/`nickname`/`role`/`created_at`/`updated_at` 五欄位，`role = "user"`。
+  4. PATCH `{"nickname":"新名字"}` → 200 回更新後 profile；Studio 查 DB 確認 `updated_at` 已由 trigger 更新（大於 `created_at`）。
+  5. PATCH `{"nickname":""}` 與 `{"nickname":null}` → 200，回傳 `nickname: null`。
+  6. PATCH nickname 51 字 → 400（checklist 提供現成 51 字字串）。
+  7. PATCH `{"nickname":"x","role":"admin"}` 及 `{"role":"admin"}` → 400，Studio 確認 `role`、`nickname` 皆未變。
+  8. PATCH `{}`、非 JSON body、`{"nickname":123}` → 400。
+  9. 安全斷言：以使用者 B 的 cookie 無任何方式讀/改使用者 A（無參數可指定 id）；嘗試 `?id=<A的id>`（應被忽略、仍回自己資料）與 body 帶 `id`（應 400）皆無法越權。
+- **Insomnia**（`supabase/tests/insomnia_auth.json`）：追加 GET profile、PATCH profile（合法）、PATCH 帶 `role`（fail case）、PATCH 超長 nickname（fail case）、未登入 GET 等 requests。
+- Edge cases 來源：orchestrator-output.md「Edge Cases / Notes for QA」全數涵蓋（查無 row 走 404 明確處理；清空允許；不 log token/session）。
 
 ## Architecture Notes
-- **偏離點**：以「手動 checklist」取代自動化測試 — 延續 Task 1 已確立、使用者核可的做法（無 Docker/無測試框架）。QA agent 依 AGENTS.md 仍會標示「0 自動測試覆蓋」，屬已知並接受的狀態。
-- **兩個 client 的分工**是刻意設計：register 走 admin client 確保註冊「不自動登入」（不在瀏覽器留 cookie）；login/logout/confirm 走 user client 讓 `@supabase/ssr` 管 cookie。
-- **選項 A 的時序**：profile 在 auth.users insert（即註冊當下、未驗證）就建立，早於驗證完成。驗收條件（驗證後存在對應 row）仍滿足。若產品要求「未驗證不得有 profile」，需改策略 — 目前無此要求。
-- **風險**：email 模板 / redirect URL 設定錯會導致 confirm 流程斷掉（連結指錯 route）。已在步驟 8 明列並要求寫進手動 checklist 驗證。
-- **效能**：route 皆 request-time、無快取（route handler POST 預設不快取；confirm 用動態 API 亦不快取）。無明顯效能疑慮。
+
+- **無 pattern 偏離**：沿用 Task 2 的 route handler 結構、`Response.json` + 中文 `error` 訊息、常數化訊息字串、try/catch JSON 解析風格。
+- Next.js 16（破壞版本）已於 Task 2 確認：`cookies()` 為 async、handler 簽名 `export async function GET/PATCH(request: Request)`；本次再對照 `node_modules/next/dist/docs/01-app/01-getting-started/15-route-handlers.md`，原生 `Request`/`Response.json` 用法不變。
+- 404 vs 500 抉擇（spec 留給 architect）：查無 row 採 **404**（語意正確：資源不存在），但因屬異常（trigger 應保證存在）須 server 端 log 以便排查。
+- 效能：單 row 主鍵查詢/更新，無 N+1、無分頁需求，無特別考量。
+- 風險：`update … select().maybeSingle()` 在 RLS 拒絕時回 0 rows 而非 error — 已以 404 分支明確處理，不會誤判成功。
 
 ## Security Checklist
-- [ ] `SUPABASE_SECRET_KEY` 只在 `src/lib/supabase/admin.ts`（server-only）讀取，永不加 `NEXT_PUBLIC_` 前綴、不出現在 client component。
-- [ ] 無 hardcoded 密鑰 / 連線字串；全走 env（AGENTS.md）。
-- [ ] session cookie 為 httpOnly + SameSite +（production）Secure — 交由 `@supabase/ssr` 處理，不手動降級成可被 JS 讀取。
-- [ ] 輸入驗證在 API 邊界（email/password 必填、格式、長度）；壞輸入回 400 非 500。
-- [ ] 密碼交給 Supabase Auth（bcrypt），route 不碰明文、不自行儲存。
-- [ ] 帳號枚舉防護：login 密碼錯回通用 401；register 重複 email 不洩漏存在與否。
-- [ ] 不 log 密碼、token、token_hash、session、完整 email。
-- [ ] 未驗證帳號無法取得 session（login 擋、register 不發 session）。
-- [ ] `config.toml` 未提交任何真實密鑰；secret 走 `env(...)`。
+
+- [ ] No hardcoded secrets or credentials（Supabase URL/key 皆走 env，經既有 lib 讀取）
+- [ ] Input validation implemented at system boundaries（PATCH body：JSON 解析、plain object、key 白名單整包拒絕、型別、長度）
+- [ ] Auth/permission checks in place（兩支 handler 進入即 `auth.getUser()`；未登入 401）
+- [ ] No sensitive data logged（不 log token/session/cookie/email；error log 僅 code/message/user id）
+- [ ] 身分不可由參數指定：user id 只來自 `supabase.auth.getUser()`，query/body/header 中的任何 id 不進入查詢條件；body 帶 `id` 直接 400（白名單）
+- [ ] RLS 第二道防線確認生效：使用 user-context client（`server.ts`），**禁止** import admin client；`profiles_select_own`/`profiles_update_own` policy 對本 route 的查詢實際套用
+- [ ] Auth-adjacent 變更已標記（AGENTS.md：PR Reviewer 自動 🔴 Critical 審視）— 本 task 消費既有 session 機制，未改動 auth 模型
 
 ## Definition of Done
-- [ ] 步驟 0–11 全部完成。
-- [ ] 4 支 route + 2 支 lib client + 1 支 trigger migration + 手動 checklist 皆建立。
-- [ ] `config.toml` `enable_confirmations = true`；`.env.local` key 命名對齊。
-- [ ] Test Plan 全部案例寫入 `supabase/tests/auth_routes_manual.md`。
-- [ ] `npm run lint` 通過。
-- [ ] 無 TODO / commented-out code / debug log。
-- [ ] Security Checklist 全數通過。
-- [ ] 遵守 AGENTS.md 所有 guardrail（`@/*` alias、lib 放 `src/lib/`、DB client 為指定的 `@supabase/*`、pooled 連線與 env、不 hardcode 密鑰）。
+
+- [ ] All implementation steps complete
+- [ ] 手動測試文件兩份（checklist + Insomnia 匯入檔）已更新且涵蓋全部驗收條件與 fail cases
+- [ ] No TODOs, commented-out code, or debug logs
+- [ ] Code follows all rules in AGENTS.md（`@/*` alias、env 變數、無 admin client 濫用）
+- [ ] `npm run lint` 與 `npx tsc --noEmit` 通過
+- [ ] Security checklist passed

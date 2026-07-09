@@ -1,69 +1,53 @@
-# Code Review Report — 會員系統 / Task 2（auth API routes + email 驗證 + profile trigger）
-> Generated: 2026-07-09T05:40:00Z | Review iteration: 1 | Reviewer: PR Reviewer agent
+# Code Review Report — 建立 /api/profile API (GET/PATCH)
+> Generated: 2026-07-09T15:40:00+08:00 | Review iteration: 1 | Reviewer: PR Reviewer agent
+> Story: 會員系統 | Task 3 of 7
 
 ## Overall Assessment
-**APPROVED WITH MINOR FIXES**
-
-本 task 為 auth-adjacent，依 AGENTS.md 以最嚴（🔴）標準審視。逐項核對 session/cookie 安全、secret key 隔離、密碼處理、帳號枚舉防護、輸入驗證、confirm token 流程、open redirect、trigger 權限提升等，**未發現任何真正的安全漏洞**（無 token/key 洩漏、無 open redirect、無 RLS/權限繞過、無 hardcoded 密鑰）。實作忠實落實 architect-plan 與 orchestrator 已核可的 auth 決策。故本 auth task **不觸發 🔴 Critical、不需人工暫停**，僅有 1 項可由 developer 自動修正的 🟡 Should Fix 與數項 💡 Consider。
+APPROVED WITH MINOR FIXES
 
 ## Summary
-4 支 route handler（register/login/logout/confirm）+ 2 支 lib client（user/admin）+ 1 支 trigger migration + 手動測試 checklist 皆到位，範圍精準（未混入前端/middleware/profile API 等後續 task）。session cookie 全交由 `@supabase/ssr` 管理（httpOnly/SameSite/(prod)Secure），secret key 僅在 server 端 `admin.ts` 使用且只被 register route import。`npm run lint` 通過、無 debug log、無 TODO。
-
----
+`src/app/api/profile/route.ts` 完整實作 architect plan 全部步驟：驗證順序（先身分後 body）、白名單整包拒絕、Unicode code point 長度計算、`""` → `null` 正規化皆與規格一致。本 task 為 auth-adjacent（消費既有 session），已依 AGENTS.md 以 🔴 Critical 標準逐項審視——**未發現任何安全漏洞**，越權路徑不存在、RLS 第二道防線完整，判定「已審視通過、不阻擋」。`npm run lint` 與 `npx tsc --noEmit` 皆通過。僅一項測試文件的 plan 對齊小缺口（🟡）。
 
 ## 🔴 Critical Issues (Must Fix — Pipeline Paused)
-**無。** 已依 AGENTS.md「auth 變更自動 🔴」標準逐項複核，未發現實際安全漏洞，故判定「已審視通過、不阻擋」，不設 `review_critical_pending`。
+無。
 
-### Auth Security Checklist 審視結果（全 PASS）
-- **Session/cookie**：`server.ts` 正確 `await cookies()`（Next.js 16 async cookies），以 `getAll`/`setAll` 介面接 `@supabase/ssr`，httpOnly/SameSite/(prod)Secure 由函式庫設定，未手動降級成可被 JS 讀取 → 無 XSS 竊取 session 風險。**PASS**
-- **Secret key 隔離**：`SUPABASE_SERVICE_ROLE_KEY` 僅出現在 `src/lib/supabase/admin.ts`；`grep` 確認全專案僅 `register/route.ts` 一處 import admin client，無任何 `use client` 檔案觸及，永不加 `NEXT_PUBLIC_` 前綴 → 不會進前端 bundle。**PASS**
-- **密碼處理**：完全交給 Supabase Auth（`signUp` / `signInWithPassword`），route 不碰明文、不儲存、不 log。**PASS**
-- **帳號枚舉**：register 對成功與 Supabase 錯誤（含重複 email）一律回相同通用訊息；login 對「密碼錯」與「帳號不存在」一律回 401 通用「帳號或密碼錯誤」，未驗證帳號回 403 明確訊息。**PASS**
-- **輸入驗證**：每支 route 於邊界檢查缺欄位/型別/email 格式/密碼長度，`request.json()` 包 try/catch，壞輸入回 400 非 500。**PASS**
-- **confirm token 流程 / open redirect**：採 token_hash + `verifyOtp` server-side 流程；成功後 `Response.redirect(origin, 303)` 的 `origin` 取自 `new URL(request.url)`（伺服器自身 origin），**非**使用者可控的 query 參數 → 無 open redirect。type 參數以白名單 `EmailOtpType` 驗證。**PASS**
-- **trigger 權限**：`security definer` + `set search_path = ''` + 全 schema-qualified 名稱（`public.profiles` / `public.handle_new_user`）；對照 Task 1 migration 確認 `public.profiles(id)` 為合法 PK 且 `role default 'user'`；`on conflict (id) do nothing` 冪等 → 無 search_path 注入、無權限提升。**PASS**
-- **hardcode / 敏感 log**：無 hardcoded 密鑰或連線字串，全走 env；無 debug log 洩漏密碼/token/session。**PASS**
-
----
+### Auth-adjacent 強制審視結果（AGENTS.md 自動 🔴 標準，逐項通過）
+1. **身分驗證**：GET/PATCH 皆先 `getAuthenticatedUser()`（`supabase.auth.getUser()`），`error` 或無 user → 401（route.ts:27-30, 54-57）。身分唯一來自 session cookie；query string 完全未讀取，body 帶 `id`/任何非 `nickname` key 被白名單整包 400（route.ts:70-73），header 亦未讀取。**無任何路徑可指定他人 id**。
+2. **Client 選擇**：只 import `@/lib/supabase/server`（cookie 情境、publishable key），全檔無 admin client import → `profiles_select_own`/`profiles_update_own` RLS 第二道防線有效。查詢/更新皆 `.eq("id", user.id)`（第一道防線）。
+3. **白名單**：`Object.keys(body)` 必須恰為 `["nickname"]`；空物件 `{}`、多餘 key、`role`、`id` 皆 400。plain object 檢查（`typeof "object"`、非 null、非 Array）先行，array/字串/數字 body 皆 400。**Prototype pollution 不可行**：`JSON.parse` 對 `"__proto__"` 建立 own property → 出現在 `Object.keys` → 400；且 update payload 為字面量 `{ nickname }`，非 spread 使用者輸入。型別繞過（nickname 傳 array/object/number/boolean）被 `typeof !== "string" && !== null` 擋下 → 400。
+4. **nickname 驗證**：string 或 null；`[...rawNickname].length > 50` 以 Unicode code point 計（符合 plan Key Decision 4）；`""` 於驗證後正規化為 `null` 才寫入（route.ts:77-84）。manual doc 6.6 的 51 字測試字串已實際驗證為 51 code points。
+5. **查無 row**：GET/PATCH 皆 `maybeSingle()` + `data === null` → 404「找不到會員資料」，server log 僅含 user id（非敏感），不默默回空（route.ts:43-46, 98-101）。RLS 拒絕回 0 rows 的情境亦落入此分支，不會誤判成功。
+6. **錯誤處理**：`request.json()` 以 try/catch 包裹，非 JSON body → 400 不 500；DB error → 500 且 log 僅 `error.code`/`error.message`。無未捕捉例外路徑（`createSupabaseServerClient` 僅在 env 缺失時拋錯，屬部署設定問題，與既有 auth routes 行為一致）。
+7. **不洩漏敏感資料**：全檔無 token/session/cookie/email 進 log；回傳欄位由 `PROFILE_COLUMNS` 常數限定恰為 `id, nickname, role, created_at, updated_at` 五欄，無多洩 email。
+8. **範圍**：僅新增 `src/app/api/profile/route.ts` + 更新兩份手動測試檔，無 middleware/前端混入，無 scope creep。
 
 ## 🟡 Should Fix (Auto-resolved by Developer)
 
-### Issue 1 — register 對所有 signUp 錯誤一律靜默回成功，缺 server 端可觀測性
-- **File**: `src/app/api/auth/register/route.ts:56-58`
-- **Issue**: 為防帳號枚舉，`if (error)` 分支對「重複 email」與「任何其他錯誤」（Supabase 服務中斷、寄信頻率上限 `over_email_send_rate_limit`、網路失敗等）都回相同的成功訊息，且**完全不做 server 端記錄**。對外回通用訊息本身正確（符合 plan 的枚舉防護），但真正的基礎設施失敗時，使用者被告知「請收信」卻其實什麼都沒發生，營運端也沒有任何訊號可察覺 → 屬 silent failure / 可觀測性缺口。
-- **Suggested fix**: 保留對外的通用回應不變（維持枚舉防護），在 `if (error)` 內加一行**不含敏感資料**的 server 端 log（例如 `console.error("register signUp failed", { code: error.code })`，切勿記 email 全值/password/token）；或針對可安全區分的非枚舉類錯誤（如 rate limit）回對應 4xx。重點是失敗要在 server 留痕，而非一律偽裝成功。
-
----
+### Issue 1
+- **File**: supabase/tests/insomnia_auth.json
+- **Issue**: architect plan Implementation Step 6 / Test Plan 明列 Insomnia 需追加「未登入 GET」request，實作只加了 4 個 profile requests（GET、PATCH 合法、PATCH 帶 role、PATCH 超長 nickname），缺未登入 401 案例。
+- **Suggested fix**: 在 `fld_profile` group 追加「10. GET profile 未登入 → 401」request（description 註明需清空 cookie 後執行，或設 `settingSendCookies: false`）。
+- **Impact**: 非安全問題——manual checklist 6.1/6.2 已完整覆蓋 401 情境，僅為兩份測試文件間的 plan 對齊缺口，不阻擋 pipeline。
 
 ## 💡 Suggestions (Consider — No Action Required)
-1. **共用驗證邏輯重複**：register 與 login 的 body 解析 + 缺欄位/型別檢查幾乎逐字相同（各自 `route.ts:9-30` / `:5-25`）。可抽成 `src/lib/http/` 下的小 helper，降低日後兩處漂移風險。無功能問題，屬整潔度。
-2. **confirm 成功導向目標**：`Response.redirect(origin, 303)` 導回站台根路徑。Task 5 前端頁尚未建立，目前合理；待前端就緒後應改導向明確的「驗證成功」頁。已在計畫記錄，僅提醒。
-3. **密碼長度上界**：目前僅檢查下界 6。可選擇性加合理上界（如 ≤ 72/128）以避免超長輸入。Supabase 自身有處理，屬防禦深度的 nice-to-have。
-4. **email 正則為基本檢查**：`EMAIL_REGEX` 僅粗略格式驗證，最終正確性由 Supabase 寄信驗證把關。可接受，僅記錄。
-
----
+1. **route.ts:14** — `SupabaseClient` 使用預設 generics，`from("profiles")` 回傳型別寬鬆。日後可導入 supabase gen types 取得 DB schema 型別（等 lib 層慣例確立後再做，避免過早抽象）。
+2. **route.ts:84** — nickname 未 trim：`"   "`（全空白）會原樣存入而非視為清空。spec 未要求，僅列為未來 UX 考量。
 
 ## Security Assessment
-- Secrets scan: **PASS**（無 hardcoded 密鑰；service_role key 僅 server 端、僅 `admin.ts`、未進前端 bundle）
-- Input validation: **PASS**（所有 route 邊界驗證，壞輸入 400 非 500）
-- Auth/authz: **PASS**（httpOnly cookie 由 `@supabase/ssr` 管理；未驗證帳號 login 擋 403；register 不發 session；trigger 無權限提升）
-- Open redirect: **PASS**（confirm 導向 origin 取自伺服器，非使用者輸入）
-- Test coverage: 0% 自動化（延續 Task 1 已核可的無測試框架狀態；改以 `supabase/tests/auth_routes_manual.md` 手動 checklist 覆蓋全部驗收與 edge case。QA 依 AGENTS.md 仍會標示 0 自動覆蓋，屬已知並接受）
-
----
+- Secrets scan: PASS（無 hardcode；Supabase URL/key 走 env；Insomnia env 的 `password123` 為本機測試 placeholder，沿用既有檔案慣例）
+- Input validation: PASS（JSON 解析 → plain object → key 白名單 → 型別 → 長度，五層依序把關）
+- Auth/authz: PASS（session-only 身分 + `.eq("id", user.id)` + RLS 雙防線；無越權路徑）
+- Sensitive data in logs: PASS（僅 error code/message/user id）
+- CORS/CSP: 未變動
+- Test coverage: 無自動化框架（Task 1/2 既定核可做法）；manual checklist 第 6 段共 9 小節 + Insomnia 4 requests，覆蓋全部驗收條件含安全斷言 6.9（他人 id 越權嘗試）
+- Lint / typecheck: PASS（`npm run lint`、`npx tsc --noEmit` 皆通過）
 
 ## Plan Compliance
-- [x] architect-plan 全部步驟已實作（4 route + 2 client + trigger migration + 手動 checklist + config/env/套件）
-- [x] 實作符合計畫意圖（兩個 client 分工、選項 A DB trigger、token_hash confirm 流程、email 驗證啟用）
-- [x] 無未授權的範圍擴張（未觸及 Task 3/4/5 的 profile API、middleware、前端頁）
-- [x] env 命名一致：程式碼與 `.env.example` 均採使用者最終確認的 `SUPABASE_SERVICE_ROLE_KEY`（覆蓋 plan 早期暫定的 `SUPABASE_SECRET_KEY`；`admin.ts` 與 `.env.example` 已對齊，無混用）
-- [x] `config.toml` `enable_confirmations = true` 已改
-- [x] `@supabase/supabase-js` + `@supabase/ssr` 為指定 client（符合 AGENTS.md「不得 ad hoc 加 DB client」）
-- [x] `@/*` alias、lib 置於 `src/lib/`、`npm run lint` 通過
-
----
+- [x] All architect plan steps implemented（唯 Step 6 的 Insomnia「未登入 GET」缺漏 → 🟡 Issue 1）
+- [x] Implementation matches plan intent（含 Key Decisions 1-4：inline helper 不過早抽象、user-context client、`""`→`null`、code point 計長）
+- [x] No unauthorised scope additions（無 middleware/前端/DB client 混入）
 
 ## Conversation Log
 | Issue | Developer Response | Resolution |
 |---|---|---|
-| Issue 1 — register 靜默成功缺 server log | (待 developer 處理) | pending — 加非敏感 server log，維持對外通用訊息 |
+| 🟡 Issue 1（Insomnia 缺未登入 GET request） | 待 developer agent 補上 | 已交辦；不阻擋 pipeline（401 情境於 manual checklist 6.1/6.2 已覆蓋） |
