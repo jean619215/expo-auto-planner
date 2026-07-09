@@ -18,7 +18,7 @@
 - 在已登入狀態下,當使用者登出,則 session 清除,受保護頁面無法再存取。
 
 ## 任務清單
-- [ ] [BACKEND] 建立 Supabase 專案,建立 `profiles` 資料表 (id 對應 auth.users.id、暱稱、role 預設 user、建立時間),設定 RLS policy (使用者只能存取自己的 row)
+- [x] [BACKEND] 建立 Supabase 專案,建立 `profiles` 資料表 (id 對應 auth.users.id、暱稱、role 預設 user、建立時間),設定 RLS policy (使用者只能存取自己的 row)
 - [ ] [BACKEND] 建立 `/api/auth/register`、`/api/auth/login`、`/api/auth/logout` API routes,包裝 Supabase server-side SDK,處理註冊時自動建立對應 profile
 - [ ] [BACKEND] 建立 `/api/profile` API (GET/PATCH),驗證 token 後只能讀寫呼叫者自己的 profile
 - [ ] [BACKEND] 建立 middleware,驗證 session/token,保護所有需要登入的 API route,未通過回傳 401
