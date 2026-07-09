@@ -22,8 +22,8 @@
 - [x] [BACKEND] 建立 Supabase 專案,建立 `profiles` 資料表 (id 對應 auth.users.id、暱稱、role 預設 user、建立時間),設定 RLS policy (使用者只能存取自己的 row)
 - [x] [BACKEND] 建立 `/api/auth/register`、`/api/auth/login`、`/api/auth/logout` API routes,包裝 Supabase server-side SDK,處理註冊時自動建立對應 profile
 - [x] [BACKEND] 建立 `/api/profile` API (GET/PATCH),驗證 token 後只能讀寫呼叫者自己的 profile
-- [ ] [BACKEND] 建立 middleware,驗證 session/token,保護所有需要登入的 API route,未通過回傳 401
-- [ ] [FRONTEND] 建立註冊/登入頁面表單,呼叫自己的 `/api/auth/*`,不直接呼叫 Supabase client
+- [x] [BACKEND] 建立 middleware,驗證 session/token,保護所有需要登入的 API route,未通過回傳 401
+- [x] [FRONTEND] 建立註冊/登入頁面表單,呼叫自己的 `/api/auth/*`,不直接呼叫 Supabase client
 - [ ] [FRONTEND] 建立個人資料頁面 (顯示/編輯暱稱等欄位),呼叫 `/api/profile`
 - [ ] [FRONTEND] 建立路由保護邏輯:未登入時導向登入頁,已登入時登入/註冊頁導向首頁
 
