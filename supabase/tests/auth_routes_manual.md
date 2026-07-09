@@ -369,6 +369,91 @@ curl -i -b cookies.txt -X PATCH http://localhost:3000/api/profile \
 
 ---
 
+## 7. Middleware / Proxy 保護 (`src/proxy.ts`)
+
+> Next.js 16 root proxy（舊稱 middleware）在 route handler 之前攔截所有
+> `/api/*` 請求，用 `@supabase/ssr` 刷新 session 並判斷是否放行。
+> 白名單外、未登入一律 401（fail-closed）。route handler 自己的 `getUser()`
+> 檢查（見第 6 節）仍保留，形成 defense in depth —— 本節驗證的是「proxy 這一
+> 層」本身是否正確擋下 / 放行，即使假設性地拿掉 route handler 檢查也一樣。
+
+### 7.1 未登入打受保護 `/api/profile`（GET 與 PATCH）→ 401
+
+```bash
+curl -i http://localhost:3000/api/profile
+
+curl -i -X PATCH http://localhost:3000/api/profile \
+  -H "Content-Type: application/json" \
+  -d '{"nickname":"新名字"}'
+```
+
+- 兩者皆預期 status `401`，body `{"error":"請先登入"}`。
+- 現象與 6.1/6.2 相同，但此處是 **proxy** 先擋下、根本沒進 route handler：
+  即使日後把 profile route 的 `getUser()` 檢查拿掉，proxy 仍應擋住。
+
+### 7.2 白名單放行（未登入，不帶 cookie）
+
+```bash
+curl -i -X POST http://localhost:3000/api/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"password123"}'
+
+curl -i -X POST http://localhost:3000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"password123"}'
+
+curl -i "http://localhost:3000/api/auth/confirm?token_hash=invalid&type=email"
+
+curl -i -X POST http://localhost:3000/api/auth/logout
+```
+
+- 四者皆**不得**被 proxy 回 401——應走各自 route 的正常回應（register 依帳號狀態、
+  login 依帳密、confirm 依 token 有效性回應、logout 200）。
+
+### 7.3 已登入放行
+
+```bash
+curl -i -b cookies.txt http://localhost:3000/api/profile
+```
+
+- 沿用 3.2 產生的 `cookies.txt`。預期 status `200`，回自己 profile 五欄位
+  （與 6.3 相同結果），確認 proxy 未誤擋已登入者。
+
+### 7.4 Session 刷新 cookie 回寫（best-effort）
+
+```bash
+curl -i -c cookies.txt -b cookies.txt http://localhost:3000/api/profile
+```
+
+- 正常情況（token 未接近過期）：`cookies.txt` 內容應維持有效、後續請求仍為已登入，
+  proxy 不應破壞既有 session cookie。
+- 若回應 header 出現 `Set-Cookie`（token 接近過期觸發刷新時），其屬性應含
+  `HttpOnly`，且 `cookies.txt` 應被更新為新值。本機不易人為造出「即將過期」的
+  token，此項可標記為 best-effort，僅需確認正常路徑不掉登入。
+
+### 7.5 非 `/api` 不受影響
+
+```bash
+curl -i http://localhost:3000/
+```
+
+- 預期正常回應（首頁），不被 401、不被導向、無異常延遲，證明
+  `config.matcher = "/api/:path*"` 只攔 `/api`，靜態資源與頁面不受影響。
+
+### 7.6 路徑正規化不繞過白名單
+
+```bash
+curl -i "http://localhost:3000/api/auth/../profile"
+```
+
+- 未登入時，該路徑會被 Next.js 正規化為 `/api/profile`，預期 status `401`
+  （不得因字面上包含 `/api/auth/` 而被白名單誤放行）。
+
+### 7.7 不 log 敏感資訊
+
+- 執行 7.1–7.6 全程觀察 `npm run dev` 終端輸出：不得印出 token、session、
+  cookie 內容或使用者物件。
+
 ## 設定備忘（非本 checklist 的測試步驟，但驗證流程需要）
 
 - 若要讓真實驗證信的連結直接可用（而非手動從信件內容組 URL），需將 Supabase

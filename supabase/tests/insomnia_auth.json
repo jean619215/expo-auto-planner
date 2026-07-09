@@ -26,7 +26,14 @@
         "nickname_too_long": "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一"
       },
       "dataPropertyOrder": {
-        "&": ["base_url", "email", "password", "token_hash", "type", "nickname_too_long"]
+        "&": [
+          "base_url",
+          "email",
+          "password",
+          "token_hash",
+          "type",
+          "nickname_too_long"
+        ]
       },
       "metaSortKey": 1
     },
@@ -48,9 +55,7 @@
         "mimeType": "application/json",
         "text": "{\n  \"email\": \"{{ _.email }}\",\n  \"password\": \"{{ _.password }}\"\n}"
       },
-      "headers": [
-        { "name": "Content-Type", "value": "application/json" }
-      ],
+      "headers": [{ "name": "Content-Type", "value": "application/json" }],
       "description": "預期 200 + 通用訊息, 無 Set-Cookie. 重複 email 再送一次應回相同 200 + 相同訊息.",
       "metaSortKey": -100
     },
@@ -77,9 +82,7 @@
         "mimeType": "application/json",
         "text": "{\n  \"email\": \"{{ _.email }}\",\n  \"password\": \"{{ _.password }}\"\n}"
       },
-      "headers": [
-        { "name": "Content-Type", "value": "application/json" }
-      ],
+      "headers": [{ "name": "Content-Type", "value": "application/json" }],
       "description": "未驗證帳號 → 403 (請先驗證). 帳密錯 → 401 通用訊息. 已驗證+正確 → 200 + Set-Cookie httpOnly session.",
       "metaSortKey": -80
     },
@@ -106,9 +109,7 @@
         "mimeType": "application/json",
         "text": "{\n  \"email\": \"{{ _.email }}\"\n}"
       },
-      "headers": [
-        { "name": "Content-Type", "value": "application/json" }
-      ],
+      "headers": [{ "name": "Content-Type", "value": "application/json" }],
       "description": "缺 password → 400. 另可測: 無效 email 格式 / 密碼 <6 字 → 皆 400 (非 500).",
       "metaSortKey": -60
     },
@@ -154,9 +155,7 @@
         "mimeType": "application/json",
         "text": "{\n  \"nickname\": \"新名字\"\n}"
       },
-      "headers": [
-        { "name": "Content-Type", "value": "application/json" }
-      ],
+      "headers": [{ "name": "Content-Type", "value": "application/json" }],
       "description": "已登入 → 200 + 更新後 profile, updated_at 由 DB trigger 自動更新. 未登入 → 401.",
       "metaSortKey": -40
     },
@@ -171,9 +170,7 @@
         "mimeType": "application/json",
         "text": "{\n  \"nickname\": \"x\",\n  \"role\": \"admin\"\n}"
       },
-      "headers": [
-        { "name": "Content-Type", "value": "application/json" }
-      ],
+      "headers": [{ "name": "Content-Type", "value": "application/json" }],
       "description": "帶白名單外欄位 (role) → 400, 不更新任何東西. 單獨帶 {\"role\":\"admin\"} 或空物件 {} 亦皆 400.",
       "metaSortKey": -30
     },
@@ -188,9 +185,7 @@
         "mimeType": "application/json",
         "text": "{\n  \"nickname\": \"{{ _.nickname_too_long }}\"\n}"
       },
-      "headers": [
-        { "name": "Content-Type", "value": "application/json" }
-      ],
+      "headers": [{ "name": "Content-Type", "value": "application/json" }],
       "description": "nickname_too_long 為 51 個中文字 (Base Environment), 超過上限 50 → 400.",
       "metaSortKey": -20
     }
