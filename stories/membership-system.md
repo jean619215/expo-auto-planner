@@ -11,7 +11,8 @@
 - 檔案上傳 (Supabase Storage) 是之後的延伸功能,本 story 不包含,但 `profiles`/使用者資料設計需保留擴充空間 (之後檔案路徑會用 `user_id` 命名慣例掛鉤 RLS)。
 
 ## 驗收條件
-- 在未登入狀態下,當使用者提交註冊表單 (email + 密碼),則建立帳號並自動登入,導向首頁。
+- 在未登入狀態下,當使用者提交註冊表單 (email + 密碼),則建立帳號 (未驗證) 並提示前往收信驗證 (email 驗證已啟用,不自動登入)。
+- 在收到驗證信後,當使用者點擊驗證連結,則帳號標記為已驗證,可進行登入。
 - 在已註冊狀態下,當使用者輸入正確帳密登入,則取得 session,可存取受保護頁面。
 - 在已登入狀態下,當使用者呼叫個人資料 API,則只能取得/更新自己的 profile,不能存取他人資料。
 - 在未登入狀態下,當使用者嘗試存取受保護頁面或 API,則導向登入頁 / 回傳 401。
@@ -19,7 +20,7 @@
 
 ## 任務清單
 - [x] [BACKEND] 建立 Supabase 專案,建立 `profiles` 資料表 (id 對應 auth.users.id、暱稱、role 預設 user、建立時間),設定 RLS policy (使用者只能存取自己的 row)
-- [ ] [BACKEND] 建立 `/api/auth/register`、`/api/auth/login`、`/api/auth/logout` API routes,包裝 Supabase server-side SDK,處理註冊時自動建立對應 profile
+- [x] [BACKEND] 建立 `/api/auth/register`、`/api/auth/login`、`/api/auth/logout` API routes,包裝 Supabase server-side SDK,處理註冊時自動建立對應 profile
 - [ ] [BACKEND] 建立 `/api/profile` API (GET/PATCH),驗證 token 後只能讀寫呼叫者自己的 profile
 - [ ] [BACKEND] 建立 middleware,驗證 session/token,保護所有需要登入的 API route,未通過回傳 401
 - [ ] [FRONTEND] 建立註冊/登入頁面表單,呼叫自己的 `/api/auth/*`,不直接呼叫 Supabase client

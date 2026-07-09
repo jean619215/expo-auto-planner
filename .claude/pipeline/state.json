@@ -1,13 +1,13 @@
 {
   "story_file": "stories/membership-system.md",
   "story_title": "會員系統",
-  "task_index": 0,
-  "current_task": "[BACKEND] 建立 Supabase 專案,建立 profiles 資料表 (id 對應 auth.users.id、暱稱、role 預設 user、建立時間),設定 RLS policy (使用者只能存取自己的 row)",
+  "task_index": 1,
+  "current_task": "[BACKEND] 建立 /api/auth/register、/api/auth/login、/api/auth/logout API routes,包裝 Supabase server-side SDK,處理註冊時自動建立對應 profile",
   "task_type": "BACKEND",
   "stage": "complete",
   "iteration": {
     "review": 1,
-    "qa": 1
+    "qa": 2
   },
   "checkpoints": {
     "scan": "completed",
@@ -23,5 +23,5 @@
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "last_updated": "2026-07-09T03:00:00Z"
+  "last_updated": "2026-07-09T06:15:00Z"
 }

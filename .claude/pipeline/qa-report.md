@@ -1,72 +1,123 @@
-# QA Report — 會員系統 / Task 1：建立 profiles 表 + RLS
-> Generated: 2026-07-09T03:00:00Z | QA iteration: 1
+# QA Report — 會員系統 / Task 2（auth API routes + email 驗證 + profile trigger）
+> Generated: 2026-07-09T06:15:00Z | QA iteration: 2（重驗，聚焦 Bug 1 複驗）
 
 ## Testing Method
-無 Docker / 無自動化測試環境（使用者選擇手動測試）。本次驗收採**靜態驗收**：逐條比對
-`supabase/migrations/20260708173519_create_profiles.sql` 與
-`supabase/tests/profiles_verify.sql` 內容是否滿足 `orchestrator-output.md` 的驗收條件與
-edge case。未實際套用 migration 或連線資料庫執行 SQL。
+延續 iteration 1 的方法：專案無 Docker、無 JS 測試框架、QA 環境無法啟動 dev server + 本機 Supabase 實際打 API，採**靜態驗收**——逐行比對程式碼實作、`supabase/tests/auth_routes_manual.md` 手動 checklist，與 `orchestrator-output.md` 驗收條件逐條核對。本輪為第 2 次迭代，聚焦：(1) Bug 1 修正複驗、(2) 修正未破壞其他既有 PASS 項目、(3) manual checklist 斷言是否已能攔截此類問題。
+
+檔案清單（本輪重新讀取以複驗）：
+- `src/app/api/auth/register/route.ts`（全文）
+- `src/app/api/auth/login/route.ts`、`confirm/route.ts`、`logout/route.ts`（全文，確認未被連帶修改、無回歸）
+- `supabase/tests/auth_routes_manual.md`（全文，確認 1.1 / 1.5 斷言更新）
+- `.claude/pipeline/qa-report.md`（iteration 1，作為 Bug 1 原始記錄比對基準）
+- `.claude/pipeline/orchestrator-output.md`（驗收條件重新核對）
 
 ## Summary
-- Test cases executed (static review): 13
-- Passed: 13
+- Tests executed: 16 acceptance criteria + 7 edge cases + 1 targeted Bug-1 regression check = 24
+- Passed: 24
 - Failed: 0
 - Blocked: 0
 
 ## Recommendation
-**APPROVED** — 三項 review Should-Fix 已確認修正到位；驗收條件與 edge case 在靜態層面全數滿足。
+**APPROVED — Bug 1 已確認修復，無新 bug，其餘既有驗收條件與 edge case 皆維持 PASS。QA 簽核通過。**
+
+---
+
+## Bug 1 複驗（Critical focus of this iteration）
+
+`src/app/api/auth/register/route.ts:57-67`：
+
+```ts
+if (error) {
+  console.error(
+    `[auth/register] signUp error: status=${error.status ?? "?"} code=${error.code ?? "?"} message=${error.message}`
+  );
+  return Response.json({ message: GENERIC_REGISTER_MESSAGE }, { status: 200 });
+}
+
+// enable_confirmations = true，signUp 不會回傳 session；此 route 也不設任何 cookie。
+// 帳號枚舉防護：成功與錯誤（含重複 email）分支必須回相同 status code，
+// 否則客戶端可用 HTTP status 區分該 email 是否已註冊。兩者一律 200。
+return Response.json({ message: GENERIC_REGISTER_MESSAGE }, { status: 200 });
+```
+
+- 成功分支（第 67 行）與錯誤分支（第 61 行，含重複 email）**status code 皆為 200**，body 皆為同一個 `GENERIC_REGISTER_MESSAGE`（`"註冊成功，請至信箱點擊驗證連結完成驗證"`）常數。✅ **兩分支在 status code 與 body 文字上完全不可區分** — Bug 1 的 side-channel（201 vs 200）已消除。
+- Server 端 log（第 58-60 行）維持不變：僅記 `status`/`code`/`message`，不含 email/密碼/token，「失敗要留痕」的要求仍成立。✅
+- 程式碼內附上清楚的中文註解說明「兩者一律 200」的防枚舉理由，避免未來維護者又不小心讓兩分支 status 漂移。✅ 屬良好實踐。
+- **結論：Bug 1 確認修復，無殘留 side-channel。**
+
+### Manual checklist 斷言複驗（`supabase/tests/auth_routes_manual.md`）
+- 1.1 節（`供合法 email+密碼`）：預期 status 已從 `201` 改為 `200`，與程式碼實作一致。✅
+- 1.5 節（重複 email）：新增「⚠️ **關鍵防枚舉斷言**：此 status code 必須與 1.1 成功時**完全相同**（皆為 `200`）。若兩者不同（例如 1.1 回 201、這裡回 200），即使 body 訊息一樣，客戶端仍可用 HTTP status 區分該 email 是否已註冊 → 視為 fail。」✅ 這條斷言明確要求跨案例比對 status，往後若 status 又意外分歧（例如未來重構動到其中一支分支），照此 checklist 手動測試即可攔截，補上了 iteration 1 發現的 checklist 缺口。
+
+---
 
 ## Acceptance Criteria Results
+
 | Criterion | Result | Notes |
 |---|---|---|
-| Migration file exists under `supabase/migrations/`, valid SQL | ✅ PASS | `20260708173519_create_profiles.sql`，語法檢視無誤（create table / alter / policy / function / trigger 語法皆正確） |
-| `profiles` 5 欄位型別/約束正確 | ✅ PASS | `id uuid PK`, `nickname text NULL`, `role text NOT NULL DEFAULT 'user'`, `created_at timestamptz NOT NULL DEFAULT now()`, `updated_at timestamptz NOT NULL DEFAULT now()` — 與 orchestrator-output.md 表格逐欄一致 |
-| `id` 為 PK 且 FK → `auth.users(id)` ON DELETE CASCADE | ✅ PASS | migration L4-5：`primary key references auth.users (id) on delete cascade` |
-| `role` 預設 `'user'` | ✅ PASS | migration L7：`not null default 'user'` |
-| RLS enabled | ✅ PASS | migration L15：`alter table public.profiles enable row level security;` |
-| 3 條 policy（SELECT/UPDATE/INSERT），`auth.uid() = id` 隔離邏輯正確 | ✅ PASS | L22-41：三條 policy 皆以 `(select auth.uid()) = id` 判斷（`select` 包裝為 Supabase 推薦的效能寫法，語意等價於 `auth.uid() = id`）；UPDATE 同時有 `using` + `with check`，INSERT 只有 `with check`，符合預期 |
-| 無 DELETE policy（帳號刪除不在範圍） | ✅ PASS | L43 明確以註解說明，RLS 預設 deny，未建立 DELETE policy |
-| Migration 對 forward-only 套用安全（無需 idempotent 包裝） | ✅ PASS | 未使用 `if not exists`，符合 Supabase CLI 以 timestamp 管理套用順序的慣例（review 已確認） |
+| register 合法 email+密碼 → 成功、未驗證、提示收信、不建 session | ✅ PASS | `register/route.ts:67` 回 200（已從 201 調整）+ 通用訊息；使用 admin client（不綁 cookie），無 `Set-Cookie` 寫入路徑。 |
+| register 重複 email → 明確錯誤但不洩漏帳號存在與否 | ✅ **PASS（Bug 1 已修復）** | 成功分支與錯誤分支 status 皆 200、body 皆同一常數，HTTP 層與文字層皆不可區分。 |
+| login 未驗證帳號 → 「請先驗證信箱」錯誤，不給 session | ✅ PASS | 未受本次修正影響，程式碼與 iteration 1 相同，複核維持 PASS。 |
+| login 已驗證帳號 + 正確帳密 → 設 httpOnly cookie、成功 | ✅ PASS | 同上，未變動。 |
+| `GET /api/auth/confirm` 合法 token → 驗證完成、建立 profile、可導向 | ✅ PASS | 同上，未變動。 |
+| `POST /api/auth/logout` → 清除 session cookie | ✅ PASS | 同上，未變動。 |
+| profile: 驗證完成後 `profiles` 存在對應 row，role 預設 `user` | ✅ PASS | trigger migration 未變動。 |
+| 密碼交給 Supabase Auth（bcrypt） | ✅ PASS | 未變動。 |
+| httpOnly + Secure + SameSite cookie 設定正確 | ✅ PASS | 未變動。 |
+| secret key 走 env，不 hardcode | ✅ PASS | 未變動。 |
+| 輸入驗證在 API 邊界 | ✅ PASS | register 缺欄位/型別/格式/密碼長度檢查（32-41 行）未受本次修正影響，複核維持 PASS。 |
+| trigger: on auth.users insert 自動建 profile | ✅ PASS | 未變動。 |
+| trigger: SECURITY DEFINER + search_path 鎖定 | ✅ PASS | 未變動。 |
+| trigger: 冪等 | ✅ PASS | 未變動。 |
+| 全域: 不 log 密碼/token | ✅ PASS | register 錯誤分支 log 內容複核仍僅含 status/code/message。 |
+| secret key 只在 server（不進前端 bundle） | ✅ PASS | 未變動。 |
 
 ## Edge Case Results
+
 | Edge Case | Result | Notes |
 |---|---|---|
-| 刪除 `auth.users` row 會 cascade 移除對應 `profiles` row | ✅ PASS | Schema 層：FK `on delete cascade` 存在（migration L5）。驗證面：`profiles_verify.sql` #8 提供可執行步驟（insert → delete auth.users → 斷言 profiles 0 rows）。因無資料庫連線環境，僅能靜態確認 SQL 語法正確且邏輯完整，未實際執行 |
-| `role` 未指定時永遠預設 `'user'` | ✅ PASS | Schema 層：`default 'user'`（migration L7）。驗證面：`profiles_verify.sql` #4 提供可執行步驟（insert 不帶 role → select 斷言 role='user'）。同上，僅靜態確認 |
-| RLS 隔離：authenticated 使用者無法 SELECT 他人 profile row | ✅ PASS | `profiles_verify.sql` #9 已從 review 前的散文說明，改為可直接複製執行的 SQL 區塊：`set local role authenticated;` + `set local request.jwt.claims = '{"sub":"<uuid>","role":"authenticated"}'`，模擬 user A 與 user B 兩者，斷言 A 的 session 只能 select 到自己的 row，且 update 他人 row 影響 0 rows。指示明確要求「整段一起執行」（simple query protocol 下多語句會被隱含包在同一交易，`set local` 在此情境下有效跨語句），寫法正確 |
+| 無效 email 格式 → 400 非 500 | ✅ PASS | `register/route.ts:32-34` 未受修正影響。 |
+| 弱密碼（過短）→ 400 非 500 | ✅ PASS | `register/route.ts:36-41` 未受修正影響。 |
+| 缺欄位（無 email 或 password）→ 400 | ✅ PASS | 未受修正影響。 |
+| 登入密碼錯誤 → 401，不透露帳號存在與否 | ✅ PASS | login route 未變動。 |
+| 驗證 token 過期/無效 → 明確錯誤，非 500 | ✅ PASS | confirm route 未變動。 |
+| 所有 route 不得 log 密碼/token/session | ✅ PASS | 複核 register 唯一新增 log 內容安全。 |
+| secret key 只在 server 端使用 | ✅ PASS | 未變動。 |
 
 ## Error State Results
+
 | Error State | Result | Notes |
 |---|---|---|
-| 插入不存在於 `auth.users` 的 `id`（FK 違反） | ✅ PASS（設計層面） | FK 約束會使此類 insert 拋出 foreign key violation，行為正確且為 Postgres 標準行為，migration 未做多餘處理，符合預期（無需自訂錯誤處理，schema-only task） |
-| 未帶 JWT / 非 authenticated 角色存取 profiles | ✅ PASS（設計層面） | GRANT 只給 `authenticated`，未 grant 給 `anon`；且 RLS enable 後無 policy 命中即 deny-by-default，anon/未認證存取會被拒 |
+| register：JSON 格式錯誤 | ✅ PASS | `route.ts:12-15` 回 400，未受本次修正影響。 |
+| register：Supabase signUp 回錯（重複 email / 其他） | ✅ PASS | 修正後與成功分支 status/body 一致，Bug 1 消除。 |
+| confirm：`token_hash`/`type` 缺漏或非白名單 type | ✅ PASS | 回 400，未變動。 |
 
 ## Regression Check
+
 | Feature | Result | Notes |
 |---|---|---|
-| 其他既有 migration / schema | ✅ PASS | 此為專案第一個 migration，無既有 schema 可能受影響 |
-| `.env.example` 未被 migration 變更 | ✅ PASS | 本 task 未觸碰環境變數檔案（git status 顯示的 `.env.example` 變更為既有未提交項目，非本次交付物範圍） |
+| Task 1：`profiles` 表結構 / RLS | ✅ PASS | 本輪修正未觸及 migration，未受影響。 |
+| Task 1：`profiles_verify.sql` 手動驗證流程 | ✅ PASS | 未受影響。 |
+| login / logout / confirm 三條 route | ✅ PASS | 複核程式碼與 iteration 1 完全相同，本次僅修改 register，無連帶回歸。 |
+| register 既有的缺欄位/格式/弱密碼 400 分支 | ✅ PASS | 複核第 17-41 行邏輯未被修正動到，維持正確。 |
+| `.env.local` / `.env.example` 既有變數 | ✅ PASS | 未受影響。 |
+| `npm run lint` | N/A | 本次 QA 環境仍未重跑（同 iteration 1 說明）；此修正僅調整 status code 數值與新增註解，語法風險極低。 |
 
-## Review Should-Fix 修正確認（3 項）
-| # | Review 發現 | 修正狀態 | 證據 |
-|---|---|---|---|
-| 1 | RLS policy 缺對應 `authenticated` GRANT，policy 實質不生效 | ✅ 已修正 | migration L19：`grant select, insert, update on public.profiles to authenticated;`（未 grant delete/anon，與 review 建議一致）。並確認 `config.toml` L24 `auto_expose_new_tables` 確實被註解（預設不 expose），故此 GRANT 為必要修正，非多餘 |
-| 2 | `set_updated_at` 函式 search_path 可變（linter 告警風險） | ✅ 已修正 | migration L47：函式宣告已加 `set search_path = ''` |
-| 3 | RLS 隔離驗證只有散文說明，無可執行 SQL | ✅ 已修正 | `profiles_verify.sql` #9 已改為完整可執行區塊（seed 兩使用者 + `set local role authenticated` + `request.jwt.claims` 模擬 + select/update 斷言 + cleanup） |
+## Security Test（mandatory）
+- 敏感資料外洩（回應/UI）：**PASS** — register/login/confirm/logout 回應皆無密碼、token、token_hash、service_role key 洩漏。
+- 輸入驗證（所有進入點）：**PASS** — register/login 邊界檢查缺欄位/型別/格式/長度；confirm 邊界檢查 `token_hash`/`type` 白名單，皆未受本次修正影響。
+- Auth 邊界 / 帳號枚舉：**PASS（Bug 1 已修復）** — register 成功與重複 email 兩分支 status code（200/200）與 body 完全一致，side-channel 已消除；login 端維持 iteration 1 即已 PASS 的狀態（401 通用訊息覆蓋帳號不存在與密碼錯誤）。
+- Secret key 隔離：**PASS** — 未受本次修正影響。
 
-## Security Test
-- 敏感資料外洩: **PASS** — migration/verify script/`config.toml` 皆無 hardcode 密鑰或連線字串；`config.toml` 敏感值走 `env(...)`
-- 輸入驗證: **N/A** — 純 schema/RLS task，無 API 層輸入面
-- Auth 邊界: **PASS** — RLS enable + 3 policy 皆以 `auth.uid() = id` 隔離；GRANT 範圍精準（`authenticated` 才有 select/insert/update，無 delete，無 anon）；未認證或非本人請求皆 deny-by-default
+---
 
 ## Bugs Found
-無。三項 review Should-Fix 皆確認修正到位，靜態驗收未發現新的缺陷。
+
+無。Bug 1（iteration 1 發現的 register 帳號枚舉 side-channel）已於本輪確認修復，本輪複驗過程未發現任何新 bug。
+
+---
 
 ## Test Coverage
-- New code coverage: N/A（無 test framework，本 task 以 `profiles_verify.sql` 手動驗證腳本作為驗收依據，涵蓋全部 7 項結構檢查 + 3 項行為/edge case 檢查）
-- Minimum required: AGENTS.md 現況為「無測試框架，QA 需 flag 無覆蓋的新邏輯」— 本 task 已提供最大程度的手動驗證涵蓋（結構性檢查可靜態確認為正確 SQL；行為性 edge case 因無 DB 連線環境無法實際執行，但腳本本身邏輯正確且可執行）
-- Status: **PASS**（於「手動測試」授權範圍內已盡可能覆蓋；建議標記：待使用者實際套用 migration 後，應手動跑一次 `profiles_verify.sql` 全部 9 段以取得執行期確認，本 QA 僅完成靜態驗收）
-
-## Notes / Residual Risk (Low, non-blocking)
-- `profiles_verify.sql` 涵蓋了 orchestrator 要求的 3 個 edge case（cascade delete、role 預設、RLS SELECT 隔離），並額外涵蓋 UPDATE 隔離（bonus）。INSERT 隔離（他人無法以非本人 id insert）未在腳本中提供對應斷言範例，但這不在 orchestrator 明列的 edge case 清單內，且 policy 本身邏輯經 review 與本次靜態檢視確認正確 —— 記錄為 Low，不阻擋 sign-off。
-- package.json 缺 `db:reset`/`db:test` script（review 已記錄為 💡 Suggestion，非阻擋項），QA 同意不阻擋。
+- New code coverage: 0%（無自動化測試框架，符合 Task 1 已核可的專案現況）
+- Minimum required: 依 AGENTS.md「Current coverage: 0%. No test framework installed yet.」— 已於 iteration 1 標記旗標，本輪狀態不變，不構成阻擋項。
+- Status: **FLAGGED（沿用已核可的手動 checklist 替代方案，非本次簽核阻擋原因）**
