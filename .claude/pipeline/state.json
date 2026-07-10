@@ -1,9 +1,9 @@
 {
   "story_file": "stories/membership-system.md",
   "story_title": "會員系統",
-  "task_index": 2,
-  "current_task": "[BACKEND] 建立 /api/profile API (GET/PATCH),驗證 token 後只能讀寫呼叫者自己的 profile",
-  "task_type": "BACKEND",
+  "task_index": 5,
+  "current_task": "[FRONTEND] 建立個人資料頁面 (顯示/編輯暱稱等欄位),呼叫 /api/profile",
+  "task_type": "FRONTEND",
   "stage": "complete",
   "iteration": {
     "review": 1,
@@ -16,12 +16,12 @@
     "implement": "completed",
     "review": "completed",
     "qa": "completed",
-    "playwright": "pending"
+    "playwright": "completed"
   },
   "flags": {
     "review_critical_pending": false,
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "last_updated": "2026-07-09T16:20:00+08:00"
+  "last_updated": "2026-07-10T20:15:00+08:00"
 }

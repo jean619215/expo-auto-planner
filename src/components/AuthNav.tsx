@@ -50,14 +50,22 @@ export default function AuthNav() {
 
   if (state === "loggedIn") {
     return (
-      <button
-        type="button"
-        onClick={handleLogout}
-        disabled={loggingOut}
-        className="flex h-11 items-center justify-center rounded-full border border-black/12 px-6 font-medium transition-colors hover:bg-black/4 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/18 dark:hover:bg-white/6"
-      >
-        {loggingOut ? "登出中…" : "登出"}
-      </button>
+      <div className="flex flex-col gap-3 sm:flex-row">
+        <Link
+          href="/profile"
+          className="flex h-11 items-center justify-center rounded-full border border-black/12 px-6 font-medium transition-colors hover:bg-black/4 dark:border-white/18 dark:hover:bg-white/6"
+        >
+          個人資料
+        </Link>
+        <button
+          type="button"
+          onClick={handleLogout}
+          disabled={loggingOut}
+          className="flex h-11 items-center justify-center rounded-full border border-black/12 px-6 font-medium transition-colors hover:bg-black/4 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/18 dark:hover:bg-white/6"
+        >
+          {loggingOut ? "登出中…" : "登出"}
+        </button>
+      </div>
     );
   }
 

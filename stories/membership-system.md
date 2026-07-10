@@ -17,6 +17,7 @@
 - 在已登入狀態下,當使用者呼叫個人資料 API,則只能取得/更新自己的 profile,不能存取他人資料。
 - 在未登入狀態下,當使用者嘗試存取受保護頁面或 API,則導向登入頁 / 回傳 401。
 - 在已登入狀態下,當使用者登出,則 session 清除,受保護頁面無法再存取。
+- 在已註冊但未驗證狀態下,當使用者以正確帳密登入 (得到「請先驗證」401/403),則可從該處重寄驗證信;重寄需有冷卻時間 (不可頻繁重送),且不得洩漏帳號是否存在。
 
 ## 任務清單
 - [x] [BACKEND] 建立 Supabase 專案,建立 `profiles` 資料表 (id 對應 auth.users.id、暱稱、role 預設 user、建立時間),設定 RLS policy (使用者只能存取自己的 row)
@@ -24,8 +25,10 @@
 - [x] [BACKEND] 建立 `/api/profile` API (GET/PATCH),驗證 token 後只能讀寫呼叫者自己的 profile
 - [x] [BACKEND] 建立 middleware,驗證 session/token,保護所有需要登入的 API route,未通過回傳 401
 - [x] [FRONTEND] 建立註冊/登入頁面表單,呼叫自己的 `/api/auth/*`,不直接呼叫 Supabase client
-- [ ] [FRONTEND] 建立個人資料頁面 (顯示/編輯暱稱等欄位),呼叫 `/api/profile`
+- [x] [FRONTEND] 建立個人資料頁面 (顯示/編輯暱稱等欄位),呼叫 `/api/profile`
 - [ ] [FRONTEND] 建立路由保護邏輯:未登入時導向登入頁,已登入時登入/註冊頁導向首頁
+- [ ] [BACKEND] 建立 `/api/auth/resend` API,包 `supabase.auth.resend({type:'signup'})`,一律回通用 200 防枚舉,429/錯誤只記 server log;正式環境 `config.toml` `max_frequency` 調為 60s
+- [ ] [FRONTEND] 登入頁「請先驗證」分支顯示「重寄驗證信」按鈕,呼叫 `/api/auth/resend`,含 60 秒倒數冷卻 (localStorage 持久化,重整頁面不繞過)
 
 <!--
 給 STORY 撰寫者的備註:

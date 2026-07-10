@@ -1,63 +1,87 @@
-# QA Report — 建立 /api/profile API (GET/PATCH)
-> Generated: 2026-07-09T16:20:00+08:00 | QA iteration: 1
-> Story: 會員系統 | Task 3 of 7 | Type: BACKEND
-
-## Testing Method
-專案無 Docker、無 JS 測試框架、QA 環境無法啟動 dev server + 本機 Supabase 實際打 API，延續 Task 1/2 已核可做法，採**靜態驗收**——逐行比對程式碼實作、`supabase/tests/auth_routes_manual.md` 第 6 段、`supabase/tests/insomnia_auth.json`，與 `orchestrator-output.md` 驗收條件、`architect-plan.md` test plan 逐條核對，並核對 `supabase/migrations/20260708173519_create_profiles.sql` 確認 RLS policy 與 trigger 實際存在。
-
-檔案清單（本次讀取）：
-- `src/app/api/profile/route.ts`（全文）
-- `supabase/tests/auth_routes_manual.md` 第 6 段（6.1–6.9）
-- `supabase/tests/insomnia_auth.json`（`fld_profile` group 全部 request + base environment `nickname_too_long`）
-- `supabase/migrations/20260708173519_create_profiles.sql`（RLS policy、trigger 確認）
-- `.claude/pipeline/orchestrator-output.md`、`architect-plan.md`、`review-report.md`
+# QA Report — 個人資料頁面 (/profile)
+> Generated: 2026-07-10T13:00:00Z | QA iteration: 1
+> Story: 會員系統 | Task 6 of 9 | Type: FRONTEND
+> Method: 靜態驗收（逐行比對程式碼與驗收條件）。瀏覽器實測由下一階段 playwright 負責。
 
 ## Summary
-- Tests executed: 17（8 驗收條件 + 3 edge case + 3 安全斷言 + 1 review 補件確認 + 2 regression）
-- Passed: 17
+- Tests executed (static checklist items): 13
+- Passed: 13
 - Failed: 0
 - Blocked: 0
 
 ## Recommendation
-APPROVED — 所有驗收條件、edge case、安全斷言皆通過，review 🟡 補件已確認完成，無 bug，QA 簽核通過。
+APPROVED — 靜態驗收全數通過，交付 playwright 階段做瀏覽器實測。
 
 ## Acceptance Criteria Results
 | Criterion | Result | Notes |
 |---|---|---|
-| 已登入 GET → 200，回自己 profile 五欄位 | ✅ PASS | route.ts:32-48，`PROFILE_COLUMNS` 恰為 `id,nickname,role,created_at,updated_at`，`.eq("id", user.id)`；manual 6.3、insomnia `req_profile_get` 對應 |
-| 未登入 GET → 401 | ✅ PASS | route.ts:27-30；manual 6.1；insomnia `req_profile_get_unauth`（review 補件，見下方確認） |
-| 已登入 PATCH `{"nickname":"新名字"}` → 200，回更新後 profile；`updated_at` 由 trigger 更新 | ✅ PASS | route.ts:86-103；`profiles_set_updated_at` trigger 於 migration:56 確認存在，route 未手動塞 `updated_at`；manual 6.4、insomnia `req_profile_patch` |
-| PATCH nickname 超過 50 字 → 400 | ✅ PASS | route.ts:79 用 `[...rawNickname].length`（code point）；manual 6.6 提供 51 中文字字串；insomnia env `nickname_too_long` 實測確為 51 code points |
-| PATCH 帶 `role` 或其他非法欄位 → 400，不更新任何東西 | ✅ PASS | route.ts:70-73 白名單 `Object.keys(body)` 須恰為 `["nickname"]`；manual 6.7 含 Studio 覆核未變動；insomnia `req_profile_patch_role` |
-| PATCH 空 body / 非 JSON → 400 | ✅ PASS | route.ts:59-68（try/catch JSON 解析、plain-object 檢查、空物件因 `keys.length !== 1` 落入 400）；manual 6.8 涵蓋 `{}`/非 JSON/型別錯誤 |
-| 未登入 PATCH → 401 | ✅ PASS | route.ts:54-57（先驗身分再解析 body）；manual 6.2 |
-| 無法讀寫他人 profile（身分只來自 session，無路徑指定他人 id）| ✅ PASS | 全檔未讀取 query string / header 任何 id；PATCH body 帶 `id` 因白名單整包 400；manual 6.9 三案例（`?id=` 被忽略、body 帶 `id` 400、B 使用者互不可見）皆對應 |
+| 已登入造訪 `/profile` → 顯示暱稱、role、建立時間 | ✅ PASS | `page.tsx:120-142` 三欄位皆渲染；`id` 未出現於 JSX 任何位置（grep 確認） |
+| 修改暱稱送出 → 200 後畫面更新為新暱稱 + 成功訊息 | ✅ PASS | `page.tsx:70-74` 成功時 `setProfile`/`setNickname`/`setSaveSuccess("暱稱已更新")` |
+| 暱稱輸入 >50 字 → client 端擋下或後端 400，錯誤訊息顯示 | ✅ PASS | `page.tsx:63-66` 呼叫 `isValidNickname`（`validation.ts:16-18`，Unicode code point 計數，與後端一致），擋下不送出並顯示錯誤 |
+| 清空暱稱送出 → 允許（後端正規化 null），畫面顯示空 | ✅ PASS | 空字串通過 `isValidNickname`（長度 0 ≤ 50），送出後 `nickname ?? ""` 顯示空 |
+| 未登入造訪 `/profile` → 顯示「請先登入」與登入頁連結，不崩潰 | ✅ PASS | `page.tsx:44-45,100-110` 401 → `unauthenticated` 狀態，含 `/login` Link，無 throw |
+| 送出期間按鈕 disabled，不可重複送出 | ✅ PASS | `page.tsx:58` `if (saving) return`；`127,157` input/button `disabled={saving}` |
+| 首頁已登入時有 `/profile` 入口 | ✅ PASS | `AuthNav.tsx:51-59` loggedIn 分支含 `/profile` Link；首頁 `page.tsx` 已掛載 `<AuthNav />` |
+| 全程不直接呼叫 Supabase client，不出現 service_role key | ✅ PASS | grep 4 個交付檔案（page.tsx / profile-client.ts / validation.ts / AuthNav.tsx）無 `supabase`/`service_role` 字樣 |
 
 ## Edge Case Results
 | Edge Case | Result | Notes |
 |---|---|---|
-| 查無 row（異常）→ 明確處理不可默默回空 | ✅ PASS | route.ts:43-46（GET）、98-101（PATCH）：`data === null` → 404 `PROFILE_NOT_FOUND_ERROR`，且僅 log user id |
-| nickname 清空（`""` 或 `null`）→ 200，正規化為 null | ✅ PASS | route.ts:84 `rawNickname === "" ? null : rawNickname`；manual 6.5 兩案例皆驗證回傳 `nickname: null` |
-| 不 log 任何 token/session | ✅ PASS | 全檔僅兩處 `console.error`：查詢/更新失敗記 `error.code, error.message`；查無 row 記 `user.id`。全檔無 token/session/cookie/email 字樣進 log |
+| nickname 為 null → 輸入框顯示空字串，不顯示 "null" | ✅ PASS | `page.tsx:42,73` 皆用 `profile.nickname ?? ""` |
+| role 欄位唯讀，無 UI 可改 role | ✅ PASS | `page.tsx:132-135` 純 `<p>` 顯示，非 input，且 PATCH body 只送 `{nickname}`（`profile-client.ts:55`） |
+| 不 log token/session | ✅ PASS | 4 個檔案 grep `console\.` 無結果 |
+
+## Error State Results
+| Error State | Result | Notes |
+|---|---|---|
+| 網路錯誤 / 非預期 status → 通用錯誤訊息，不整頁崩潰 | ✅ PASS | `profile-client.ts:43-45,59-61` catch 回傳 `{ok:false,status:0,error:"連線失敗，請稍後再試"}`；`page.tsx:47-49` 渲染於 `error` 狀態，非 throw |
+| PATCH 失敗（非 401）→ 顯示後端 error 訊息 | ✅ PASS | `page.tsx:76` `setSaveError(result.error ?? "儲存失敗，請稍後再試")` |
+| PATCH 中途 401（session 失效）→ 轉未登入狀態 | ✅ PASS | `page.tsx:77-79` |
 
 ## Regression Check
-| Feature | Result | Notes |
-|---|---|---|
-| `/api/auth/login` 等既有 auth route（profile route 依賴其 cookie session）| ✅ PASS | route.ts 僅消費既有 `createSupabaseServerClient()`，未修改任何 auth route 檔案 |
-| RLS policy `profiles_select_own` / `profiles_update_own`（第二道防線）| ✅ PASS | migration 確認兩條 policy 存在；route.ts 全檔未 import `@/lib/supabase/admin`，未繞過 RLS |
+| Feature | Result |
+|---|---|
+| AuthNav 未登入分支（登入/註冊連結） | ✅ PASS — 本次未改動該分支邏輯 |
+| 首頁 `page.tsx`（登入前後其他區塊） | ✅ PASS — 本次未修改首頁檔案本身，僅沿用既有 `<AuthNav />` 掛載點 |
+| `/api/profile` GET/PATCH 後端契約 | ✅ PASS — 前端呼叫與既有 route 契約（body 恰為 `{"nickname":...}`、401/400 語意）逐項比對一致，未改動後端 |
 
-## Security Test（mandatory）
-- 敏感資料外洩（回應/UI）：PASS — 回應僅含 `PROFILE_COLUMNS` 五欄位常數，無 email/token 外洩；log 僅 error code/message/user id
-- 輸入驗證（所有進入點）：PASS — JSON 解析 try/catch → plain-object 檢查 → key 白名單整包拒絕 → 型別檢查 → 長度檢查，五層防線逐一對照程式碼行號屬實
-- Auth 邊界：PASS — 身分唯一來源 `supabase.auth.getUser()`；query string（`?id=`）、header、body 皆無法指定他人 id；PATCH 白名單擋下 body 帶 `id`；RLS 為第二道防線
-
-## Review 補件確認
-review-report.md 🟡 Issue 1 要求在 `insomnia_auth.json` 補「未登入 GET → 401」request。已於 `fld_profile` group 確認存在 `req_profile_get_unauth`（"5b. GET profile 未登入 → 401"，description 註明需清空 cookie / logout 後測試，並說明 PATCH 未登入亦同 401）。**確認已補上，缺口已關閉，無殘留未完成項。**
+## Security Test
+- Sensitive data exposure: PASS — 畫面不顯示 `id`/`updated_at`，僅顯示 nickname/role/created_at
+- Input validation: PASS — client 端 `isValidNickname` 與後端規則（`route.ts:79`，經 review-report 確認）一致，且後端仍為最終防線
+- Auth boundary: PASS — 全走同源相對路徑 fetch + `credentials: "same-origin"`（httpOnly cookie），401 一律顯示通用訊息不洩漏帳號存在性，無 role 竄改路徑
 
 ## Bugs Found
 無。
 
 ## Test Coverage
-- New code coverage: N/A（專案無自動化測試框架）
-- Minimum required: 依 AGENTS.md「Current coverage: 0%. No test framework installed yet.」— 本 task 以手動 checklist（6.1–6.9，9 小節）+ Insomnia 5 個 request（含 review 補上的未登入 401）完整覆蓋全部驗收條件、edge case 與安全斷言，非「無覆蓋」情形，符合 Task 1/2 已核可的專案現況做法
+- New code coverage: 手動 checklist `supabase/tests/auth_routes_manual.md` §8（8.1–8.10）逐條對應本 task 全部驗收條件與 edge case，另涵蓋 8.6 防重複、8.8 null nickname、8.9 離線、8.10 敏感 log 檢查
+- Minimum required（AGENTS.md）: 無 JS test framework，manual checklist 即符合最低要求；FRONTEND task 另有 playwright 階段做瀏覽器實測驗收
 - Status: PASS
+
+## Notes
+- 本輪為靜態程式碼比對驗收，未啟動 dev server 做瀏覽器互動測試（依任務指示，瀏覽器實測交由下一 playwright 階段）。
+- Review report 中的 3 項 💡 Suggestion（非阻塞）已知悉，不影響本次 QA 判定：
+  1. `profile-client.ts:34` — 200 但非 JSON body 的防禦深度（後端保證不會發生）
+  2. `page.tsx:126` — 儲存成功訊息在下次編輯時未即時清除的 UX 微調
+  3. `AuthNav.tsx:20` — 可改用 `getProfileRequest()` wrapper 統一模式（非本 task 義務）
+
+## Playwright 瀏覽器驗收
+> Executed: 2026-07-10T20:15:00+08:00
+> 環境：`npm run dev`（Turbopack，Next.js 16.2.10），瀏覽器用 `http://localhost:3000`（改用 localhost 而非 127.0.0.1——Next.js 16 dev server 預設對 `allowedDevOrigins` 外的 origin 擋掉 `/_next` HMR 資源，用 127.0.0.1 會導致 client bundle 無法正確 hydrate，頁面卡在 loading／表單以原生 GET 提交；換成 localhost 後行為正常，未修改任何專案設定檔）。工具：Node.js Playwright（`npx playwright install chromium`，臨時裝在 scratchpad，未動 `package.json`）。測試帳號：`jean619215@gmail.com`。
+
+| # | 情境 | 對應驗收條件 | 結果 | 證據 |
+|---|---|---|---|---|
+| AC1 | 未登入造訪 `/profile` | 顯示「請先登入」+ `/login` 連結，不崩潰 | ✅ PASS | `screens/1-unauthenticated.png`；console 無未捕捉錯誤 |
+| AC2 | 登入（測試帳號）| 導向首頁，AuthNav 顯示已登入狀態 + 個人資料連結 | ✅ PASS | `screens/2-after-login.png`；`url === /`，`a[href="/profile"]` count=1 |
+| AC3 | 點「個人資料」→ `/profile` | 顯示暱稱輸入框、role(user)、格式化建立時間 | ✅ PASS | `screens/3-profile-page.png`；role 文字為 `user`，建立時間顯示為「2026年7月9日 下午2:34」格式，無 uuid |
+| AC4 | 修改暱稱「測試暱稱」送出 | 成功訊息出現、輸入框更新；重整後仍為新值（確認存 DB） | ✅ PASS | `screens/4a-after-save.png`, `4b-after-reload.png`；成功訊息「暱稱已更新」，reload 後輸入框仍為「測試暱稱」 |
+| AC5 | 輸入 51 個字（中文字元）送出 | client 端擋下、不打 PATCH API、頁面不崩潰 | ✅ PASS | `screens/5-51chars.png`；PATCH 請求數送出前後不變（6→6），錯誤訊息「暱稱長度不可超過 50 字」 |
+| AC6 | 清空暱稱送出 | 成功，輸入框顯示空（不顯示 "null"）；重整後仍空 | ✅ PASS | `screens/6-cleared.png`；輸入框值為空字串，畫面卡片內文無 "null" 字樣 |
+| AC7 | 送出過程按鈕 disabled | 減速 PATCH（route intercept +1.5s）觀察送出中狀態 | ✅ PASS | `screens/7-disabled.png`；`disabled=true`，按鈕文字「儲存中…」 |
+| AC8 | 全程 network 監聽 | 不得出現對 `*.supabase.co` 的瀏覽器直連請求 | ✅ PASS | 全程攔截所有 request URL，`*.supabase.co` 命中數 = 0，所有請求均為同源 `/api/*` |
+
+### 結果
+8/8 全部通過。測試結束後已將暱稱改回空字串（原值），並執行登出；dev server 已關閉。
+
+### Recommendation
+✅ APPROVED — 全部驗收條件於真實瀏覽器中驗證通過，可交付完成。
