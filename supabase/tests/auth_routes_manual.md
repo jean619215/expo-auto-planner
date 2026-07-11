@@ -520,6 +520,50 @@ curl -i "http://localhost:3000/api/auth/../profile"
 
 ---
 
+## 9. 路由保護 (`src/proxy.ts` 頁面分流,Task 7)
+
+> 延續第 7 節的 proxy fail-closed 精神,本節驗證 proxy 對「頁面請求」
+> (`/profile`、`/login`、`/register`) 的 redirect 行為,以及確認 API 分支
+> (第 7 節) 完全不受影響。前置:dev server 運行、一組已確認 email 的測試帳號。
+
+### 9.1 各路徑 × 登入狀態
+
+1. [ ] 無痕視窗(未登入)直接開 `/profile` → URL 變為 `/login`,顯示登入頁,
+       profile 內容完全沒出現。
+2. [ ] 未登入開 `/login` → 正常顯示登入頁(無 redirect)。
+3. [ ] 未登入開 `/register` → 正常顯示註冊頁。
+4. [ ] 未登入開 `/` → 正常顯示首頁。
+5. [ ] 登入後開 `/profile` → 正常顯示個人資料。
+6. [ ] 登入狀態直接開 `/login` → URL 變為 `/`。
+7. [ ] 登入狀態直接開 `/register` → URL 變為 `/`。
+8. [ ] 未登入以 Insomnia 打 `GET /api/profile` → 401 JSON
+       `{"error":"請先登入"}`(非 3xx redirect,確認 API 分支不變)。
+9. [ ] 登入 → 登出 → 瀏覽器上一頁/重新整理回到 `/profile` → 導向 `/login`。
+
+### 9.2 迴圈防護 / 靜態資源不受影響
+
+10. [ ] DevTools Network:上述 redirect 皆為單一 307,無連續多次 redirect
+        (無迴圈);`_next/static`、favicon 均 200 正常載入(不在 matcher 內,
+        不經 proxy)。
+11. [ ] DevTools Network:redirect response 上若有 `Set-Cookie`(session
+        refresh)未遺失(比對 request 前後 cookie 值)。
+12. [ ] Console / server log 全程無 token、session、cookie 值輸出。
+
+### 9.3 延後至 Task 9 合併跑的 playwright 情境清單
+
+以下情境本 task 不跑 playwright(依 orchestrator 決議,Task 7/9 一次合併跑瀏覽器驗收),先記錄供 Task 9 完成後一併執行:
+
+- 未登入 `page.goto('/profile')` → 斷言 URL 為 `/login` 且看得到登入表單。
+- 走完登入流程後 `page.goto('/login')` → 斷言 URL 為 `/`;
+  `page.goto('/register')` → 斷言 URL 為 `/`。
+- 登入後 `page.goto('/profile')` → 斷言個人資料表單可見。
+- 未登入 `page.goto('/')`、`/login`、`/register` → 皆正常渲染,無非預期 redirect。
+- API context 檢查:未登入打 `/api/profile` → status 401、body 為 JSON。
+- 登出後 reload `/profile` → 導回 `/login`。
+- (與 Task 9 resend 驗證信按鈕情境一併執行,由 playwright agent 統一跑一輪)
+
+---
+
 ## 設定備忘（非本 checklist 的測試步驟，但驗證流程需要）
 
 - 若要讓真實驗證信的連結直接可用（而非手動從信件內容組 URL），需將 Supabase

@@ -1,47 +1,41 @@
-# Orchestrator Output — Task 6
+# Orchestrator Output — Task 7
 
-> Story: 會員系統 | Task 6 of 9 | Type: FRONTEND
+> Story: 會員系統 | Task 7 of 9 | Type: FRONTEND
 
 ## Task
-[FRONTEND] 建立個人資料頁面 (顯示/編輯暱稱等欄位),呼叫 `/api/profile`。
+[FRONTEND] 建立路由保護邏輯:未登入時導向登入頁,已登入時登入/註冊頁導向首頁。
 
 ## Confirmed Decisions (from user)
-1. **路由**: `/profile` (`src/app/profile/page.tsx`)。首頁已登入狀態下加「個人資料」連結入口。
-2. **顯示欄位**: 暱稱 (可編輯)、role、建立時間 (`created_at`,格式化顯示)。`id` 不顯示 (使用者不需看 uuid);`updated_at` 可不顯示。
-3. **編輯**: 暱稱 inline 編輯 + 儲存按鈕 → `PATCH /api/profile` (body 恰為 `{"nickname": ...}`)。成功顯示成功訊息並更新畫面;失敗顯示後端 `error` 訊息。前端同步做 client 端驗證: ≤50 字 (Unicode code point 計,對齊後端)。
-4. **未登入造訪 `/profile`**: 本 task 顯示「請先登入」+ 前往登入頁連結 (fetch 收到 401 時)。自動 redirect 是 Task 7 範圍。
-5. **FRONTEND task**: QA 通過後需跑 playwright 階段,瀏覽器實測驗收條件。
+1. 未登入造訪受保護頁面 (`/profile`,及未來新增的受保護頁) → 自動 redirect 到 `/login`。
+2. 已登入造訪 `/login` 或 `/register` → 自動 redirect 到首頁 `/`。
+3. 首頁 `/` 維持公開 (登入與否都可看)。
+4. **驗收方式**: 使用者選擇 Task 7/8/9 完成後一次手動驗收;playwright 瀏覽器驗收延後到 Task 9 完成後合併跑 (一次涵蓋 7+9 的前端情境)。本 task QA 後 stage 直接標 complete,playwright 欠帳記在 task-log。
 
-## Backend Contract (現有 route,前端須對齊)
-- `GET /api/profile` — 已登入 200 `{id,nickname,role,created_at,updated_at}` (nickname 可能為 null);未登入 401 `{"error":"請先登入"}`;查無 row 404。
-- `PATCH /api/profile` — body 必須恰為 `{"nickname": string|null}`;成功 200 回更新後 profile;>50 字或非法欄位 400;未登入 401。
-- 前端一律相對路徑 fetch,同源自動帶 httpOnly cookie。不直接呼叫 Supabase client。
+## 實作位置 (architect 評估)
+兩個選項,architect 擇一並說明:
+- **選項 A**: 擴充 `src/proxy.ts` — matcher 加頁面路徑,對頁面請求做 redirect (API 維持 401 JSON)。優點: 集中一處、server 端擋、無閃爍;缺點: matcher 變複雜,要小心不誤擋靜態資源。
+- **選項 B**: 頁面層處理 — `/profile` 已有 401 顯示邏輯改成 router.replace("/login");login/register 頁載入時查登入狀態導回首頁。優點: proxy 不動;缺點: client 端判斷有載入閃爍、每頁自己處理易漏。
+> 傾向 A (集中、fail-closed 精神一致),但由 architect 依 Next.js 16 proxy 文件確認頁面 redirect 的正確做法後定案。
 
-## Scope (this task)
-- 新增 `src/app/profile/page.tsx` (`"use client"`,需互動)。
-- 載入時 GET `/api/profile`: loading 狀態 → 成功渲染欄位 / 401 顯示請先登入+連結 / 其他錯誤顯示通用錯誤。
-- 暱稱編輯表單: 輸入框 (預填現值,null 顯示空)、儲存按鈕、送出中 disabled 防重複、成功/錯誤訊息 inline 顯示。
-- client 端驗證: >50 字擋下提示 (仍以後端 400 為準)。
-- 首頁 `src/app/page.tsx`: 已登入狀態加 `/profile` 連結。
-- 樣式: Tailwind v4,對齊既有 login/register 頁風格。文案繁體中文。
+## Backend/既有契約
+- proxy 已對 `/api/*` 做 401 (Task 4),頁面路徑目前不在 matcher 內。
+- `updateSession(request)` 回 `{response, user}`,可直接判斷登入狀態。
+- 受保護頁面清單目前僅 `/profile`;設計需讓未來新增頁面容易 (常數清單)。
 
 ## Acceptance Criteria
-- 已登入造訪 `/profile` → 顯示暱稱、role、建立時間。
-- 修改暱稱送出 → 200 後畫面更新為新暱稱 + 成功訊息。
-- 暱稱輸入 >50 字 → client 端擋下或後端 400,錯誤訊息顯示。
-- 清空暱稱送出 → 允許 (後端正規化 null),畫面顯示空。
-- 未登入造訪 `/profile` → 顯示「請先登入」與登入頁連結,不崩潰。
-- 送出期間按鈕 disabled,不可重複送出。
-- 首頁已登入時有 `/profile` 入口。
-- 全程不直接呼叫 Supabase client,不出現 service_role key。
+- 未登入瀏覽器直接開 `/profile` → 被導向 `/login` (URL 變為 /login),不顯示 profile 內容。
+- 已登入開 `/login` → 導向 `/`;已登入開 `/register` → 導向 `/`。
+- 未登入開 `/login`、`/register`、`/` → 正常顯示,不受影響。
+- 已登入開 `/profile` → 正常顯示。
+- API 行為不變: 未登入打 `/api/profile` 仍回 401 JSON (不是 redirect)。
+- 靜態資源 (_next、favicon、圖片) 不受影響。
+- redirect 不進入無限迴圈 (login→/→login 之類)。
 
 ## Edge Cases / Notes for QA
-- nickname 為 null 時輸入框顯示空字串,不顯示 "null"。
-- 網路錯誤 / 非預期 status → 通用錯誤訊息,不整頁崩潰。
+- 登出後停在 `/profile` 再重新整理 → 導向 `/login`。
+- redirect 用 3xx (server 端) 或 router.replace (client 端),不可用 window.location 硬跳造成歷史紀錄污染 (依所選方案)。
 - 不 log token/session。
-- role 欄位唯讀,無任何 UI 可改 role。
 
 ## Out of Scope
-- 未登入自動 redirect (Task 7)。
-- email 顯示 (profile API 不回 email)。
-- 頭像/其他欄位。
+- 登入後導回原本想去的頁面 (returnTo/redirect query) — 之後有需要再加。
+- Task 8/9 (resend API 與按鈕)。

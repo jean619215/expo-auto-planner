@@ -1,87 +1,96 @@
-# QA Report — 個人資料頁面 (/profile)
-> Generated: 2026-07-10T13:00:00Z | QA iteration: 1
-> Story: 會員系統 | Task 6 of 9 | Type: FRONTEND
-> Method: 靜態驗收（逐行比對程式碼與驗收條件）。瀏覽器實測由下一階段 playwright 負責。
+# QA Report — 路由保護邏輯 (會員系統 Task 7)
+> Generated: 2026-07-11T02:10:00Z | QA iteration: 1
+> Story: 會員系統 | Task 7 of 9 | Type: FRONTEND
+> Method: 靜態驗收 (逐行比對 `src/proxy.ts` 與 `supabase/tests/auth_routes_manual.md` 第 9 節)。瀏覽器實測依 orchestrator 決議延後至 Task 9 完成後合併跑 playwright。
 
 ## Summary
-- Tests executed (static checklist items): 13
-- Passed: 13
+- Tests executed: 15 (静態比對項目,對應下方各表)
+- Passed: 15
 - Failed: 0
-- Blocked: 0
+- Blocked: 0 (playwright 情境非本次範圍,已於 checklist 9.3 記錄延後清單,非 blocked)
 
 ## Recommendation
-APPROVED — 靜態驗收全數通過，交付 playwright 階段做瀏覽器實測。
+APPROVED — 靜態驗收全數通過,無 Critical/High/Medium bug。playwright 欠帳已依決議記錄,不影響本 task 簽核。
 
 ## Acceptance Criteria Results
 | Criterion | Result | Notes |
 |---|---|---|
-| 已登入造訪 `/profile` → 顯示暱稱、role、建立時間 | ✅ PASS | `page.tsx:120-142` 三欄位皆渲染；`id` 未出現於 JSX 任何位置（grep 確認） |
-| 修改暱稱送出 → 200 後畫面更新為新暱稱 + 成功訊息 | ✅ PASS | `page.tsx:70-74` 成功時 `setProfile`/`setNickname`/`setSaveSuccess("暱稱已更新")` |
-| 暱稱輸入 >50 字 → client 端擋下或後端 400，錯誤訊息顯示 | ✅ PASS | `page.tsx:63-66` 呼叫 `isValidNickname`（`validation.ts:16-18`，Unicode code point 計數，與後端一致），擋下不送出並顯示錯誤 |
-| 清空暱稱送出 → 允許（後端正規化 null），畫面顯示空 | ✅ PASS | 空字串通過 `isValidNickname`（長度 0 ≤ 50），送出後 `nickname ?? ""` 顯示空 |
-| 未登入造訪 `/profile` → 顯示「請先登入」與登入頁連結，不崩潰 | ✅ PASS | `page.tsx:44-45,100-110` 401 → `unauthenticated` 狀態，含 `/login` Link，無 throw |
-| 送出期間按鈕 disabled，不可重複送出 | ✅ PASS | `page.tsx:58` `if (saving) return`；`127,157` input/button `disabled={saving}` |
-| 首頁已登入時有 `/profile` 入口 | ✅ PASS | `AuthNav.tsx:51-59` loggedIn 分支含 `/profile` Link；首頁 `page.tsx` 已掛載 `<AuthNav />` |
-| 全程不直接呼叫 Supabase client，不出現 service_role key | ✅ PASS | grep 4 個交付檔案（page.tsx / profile-client.ts / validation.ts / AuthNav.tsx）無 `supabase`/`service_role` 字樣 |
+| 未登入直接開 `/profile` → 導向 `/login`,不顯示 profile 內容 | ✅ PASS | `!user && matchesPage(pathname, PROTECTED_PAGES)` → `NextResponse.redirect(new URL(LOGIN_PATH, ...))`;API 分支獨立,不會渲染頁面內容。checklist 9.1-1 已列。 |
+| 已登入開 `/login` → 導向 `/` | ✅ PASS | `user && matchesPage(pathname, AUTH_PAGES)` 命中 `/login` → redirect `/`。checklist 9.1-6。 |
+| 已登入開 `/register` → 導向 `/` | ✅ PASS | 同上邏輯,`AUTH_PAGES` 含 `/register`。checklist 9.1-7。 |
+| 未登入開 `/login`、`/register`、`/` → 正常顯示 | ✅ PASS | 未登入時 `user && ...` 條件為 false,不進入 redirect,falls through 回傳原 `response`;`/` 不在 matcher,proxy 不執行。checklist 9.1-2/3/4。 |
+| 已登入開 `/profile` → 正常顯示 | ✅ PASS | `!user` 為 false,且 `/profile` 不在 `AUTH_PAGES`,falls through 正常回應。checklist 9.1-5。 |
+| API 行為不變: 未登入打 `/api/profile` 仍 401 JSON | ✅ PASS | `isApiRequest` 分支與頁面分支互斥(`if (!isApiRequest) {...; return response;}` 先行 return),401 JSON 分支程式碼與 Task 4 一致,未被觸及。checklist 9.1-8。 |
+| 靜態資源 (_next、favicon、圖片) 不受影響 | ✅ PASS | `config.matcher` 為靜態陣列 `["/api/:path*","/profile","/login","/register"]`,不含 `_next`/`favicon`/`public` 路徑,故不經 proxy。checklist 9.2-10。 |
+| redirect 不進入無限迴圈 | ✅ PASS | 見下方「無 redirect 迴圈」真值表分析。 |
 
 ## Edge Case Results
 | Edge Case | Result | Notes |
 |---|---|---|
-| nickname 為 null → 輸入框顯示空字串，不顯示 "null" | ✅ PASS | `page.tsx:42,73` 皆用 `profile.nickname ?? ""` |
-| role 欄位唯讀，無 UI 可改 role | ✅ PASS | `page.tsx:132-135` 純 `<p>` 顯示，非 input，且 PATCH body 只送 `{nickname}`（`profile-client.ts:55`） |
-| 不 log token/session | ✅ PASS | 4 個檔案 grep `console\.` 無結果 |
+| 登出後停在 `/profile` 再重新整理 → 導向 `/login` | ✅ PASS | 登出清除 session 後 `user` 為 null,下一次請求命中 `!user && matchesPage(PROTECTED)` → redirect。checklist 9.1-9 已列為驗收步驟。 |
+| redirect 用 server 端 3xx,不用 window.location 硬跳 | ✅ PASS | 兩處皆為 `NextResponse.redirect(new URL(...))`,產生標準 307,無 client-side `window.location` 使用。 |
+| 不 log token/session | ✅ PASS | `grep -n "console\." src/proxy.ts` 無結果;整檔無任何 log 語句。checklist 9.2-12。 |
 
 ## Error State Results
 | Error State | Result | Notes |
 |---|---|---|
-| 網路錯誤 / 非預期 status → 通用錯誤訊息，不整頁崩潰 | ✅ PASS | `profile-client.ts:43-45,59-61` catch 回傳 `{ok:false,status:0,error:"連線失敗，請稍後再試"}`；`page.tsx:47-49` 渲染於 `error` 狀態，非 throw |
-| PATCH 失敗（非 401）→ 顯示後端 error 訊息 | ✅ PASS | `page.tsx:76` `setSaveError(result.error ?? "儲存失敗，請稍後再試")` |
-| PATCH 中途 401（session 失效）→ 轉未登入狀態 | ✅ PASS | `page.tsx:77-79` |
+| API 未登入 (無 session cookie) 打受保護路徑 | ✅ PASS | 回 401 JSON `{"error":"請先登入"}`,非 redirect,與 Task 4 契約一致。 |
+| PUBLIC_API_PATHS 白名單放行 (未登入) | ✅ PASS | 本 task 未變更第 7 節既有邏輯,`PUBLIC_API_PATHS.has(pathname)` 分支維持在頁面分流之後、401 判斷之前,順序未動。 |
+
+## 真值表逐格核對 (無 redirect 迴圈)
+| pathname | 登入狀態 | 結果 |
+|---|---|---|
+| `/profile` | 未登入 | → 307 `/login` |
+| `/profile` | 已登入 | → 正常顯示 (fall through) |
+| `/login` | 未登入 | → 正常顯示 (fall through) |
+| `/login` | 已登入 | → 307 `/` |
+| `/register` | 未登入 | → 正常顯示 (fall through) |
+| `/register` | 已登入 | → 307 `/` |
+| `/` | 任一 | → 不在 matcher,proxy 不執行,正常顯示 |
+| `/profile/xxx` (子路徑) | 未登入 | → 307 `/login` (matchesPage 前綴比對 + matcher anchoring 涵蓋,已用 `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/proxy.md:130` 「`/about` matches `/about` and `/about/team`」核實此版本 anchoring 語義) |
+| `/profilexyz` (非子路徑,誤判風險) | 未登入 | → 不匹配 (`matchesPage` 要求 `===` 或以 `p+"/"` 開頭,`/profilexyz` 兩者皆不成立) → 正常放行,無誤擋 |
+
+結論: 兩個 redirect 目標分別為 `/login`(僅未登入放行,已登入時走的是別條分支不受影響)與 `/`(不在 matcher,不會再次觸發 proxy 判斷)。不存在「redirect 目標又被同一 proxy 邏輯導回原頁」的組合,無迴圈。
+
+## Redirect 安全 / Cookie 核對
+| 項目 | Result | Notes |
+|---|---|---|
+| redirect 目標無 open redirect | ✅ PASS | `LOGIN_PATH`/`HOME_PATH` 為模組內固定常數字串;`new URL(LOGIN_PATH, request.url)` 中 `request.url` 僅提供 origin,不含使用者可控 query/header 影響路徑。 |
+| 帶 session 刷新 cookie | ✅ PASS | 兩個 redirect 分支皆經 `withCookiesFrom(response, NextResponse.redirect(...))`,把 `updateSession` 產生的 `response` 上的 cookie(含刷新後的 session)逐一複製到最終回應,不遺失 `Set-Cookie`。 |
+
+## matcher / 子路徑核對
+| 項目 | Result | Notes |
+|---|---|---|
+| matcher 靜態陣列與 PROTECTED_PAGES/AUTH_PAGES 常數同步 | ✅ PASS | `PROTECTED_PAGES=["/profile"]`、`AUTH_PAGES=["/login","/register"]`,`config.matcher=["/api/:path*","/profile","/login","/register"]`,三者項目一致,且程式碼中兩處均有「新增頁面需同步」註解提醒。 |
+| 子路徑 fail-closed | ✅ PASS | 見上方真值表 `/profile/xxx` 一列;matcher 與 `matchesPage` 的 anchoring 語義經官方文件核實一致,不會漏保護子路徑。 |
+
+## Checklist 涵蓋度 (`supabase/tests/auth_routes_manual.md` 第 9 節)
+| 項目 | Result | Notes |
+|---|---|---|
+| 9.1 (9 項) 涵蓋全部真值表格子 + 登出後重新整理 + API 401 不變 | ✅ PASS | 逐項比對 orchestrator 驗收條件,一一對應,無遺漏。 |
+| 9.2 (3 項) 迴圈防護 / 靜態資源 / Set-Cookie / 不 log | ✅ PASS | 涵蓋 DevTools Network 迴圈檢查、`_next/static`+favicon 200、cookie 比對、log 稽核。 |
+| 9.3 playwright 延後清單已定義 | ✅ PASS | 明列 6 項情境對應 Task 9 合併驗收,並註明與 Task 9 resend 按鈕情境一併執行。 |
 
 ## Regression Check
 | Feature | Result |
 |---|---|
-| AuthNav 未登入分支（登入/註冊連結） | ✅ PASS — 本次未改動該分支邏輯 |
-| 首頁 `page.tsx`（登入前後其他區塊） | ✅ PASS — 本次未修改首頁檔案本身，僅沿用既有 `<AuthNav />` 掛載點 |
-| `/api/profile` GET/PATCH 後端契約 | ✅ PASS — 前端呼叫與既有 route 契約（body 恰為 `{"nickname":...}`、401/400 語意）逐項比對一致，未改動後端 |
+| Task 4 API 401 auth gate (`/api/*`) | ✅ PASS — 分支邏輯與程式碼位置未變,仍為原本 allowlist → 401 → 放行三段 |
+| Task 5 login/register 頁面渲染 (client 邏輯) | ✅ PASS — page 檔案本身零改動 (git diff 僅觸及 `src/proxy.ts` 與 checklist) |
+| Task 6 `/profile` 頁面 (nickname 編輯) | ✅ PASS — page 檔案零改動;未登入情境行為由「顯示登入提示」升級為「導向 /login」,屬本 task 預期行為變更,非回歸 |
 
 ## Security Test
-- Sensitive data exposure: PASS — 畫面不顯示 `id`/`updated_at`，僅顯示 nickname/role/created_at
-- Input validation: PASS — client 端 `isValidNickname` 與後端規則（`route.ts:79`，經 review-report 確認）一致，且後端仍為最終防線
-- Auth boundary: PASS — 全走同源相對路徑 fetch + `credentials: "same-origin"`（httpOnly cookie），401 一律顯示通用訊息不洩漏帳號存在性，無 role 竄改路徑
+- Sensitive data exposure: PASS — 無新增 log、redirect response body 為空,無敏感資料
+- Input validation: PASS — pathname 由 Next.js normalize,`matchesPage` 僅用等值/前綴比對常數,無使用者輸入影響分支邏輯
+- Auth boundary: PASS — fail-closed 維持;子路徑、未知路徑均不會意外放行受保護頁面;無 open redirect
 
 ## Bugs Found
 無。
 
 ## Test Coverage
-- New code coverage: 手動 checklist `supabase/tests/auth_routes_manual.md` §8（8.1–8.10）逐條對應本 task 全部驗收條件與 edge case，另涵蓋 8.6 防重複、8.8 null nickname、8.9 離線、8.10 敏感 log 檢查
-- Minimum required（AGENTS.md）: 無 JS test framework，manual checklist 即符合最低要求；FRONTEND task 另有 playwright 階段做瀏覽器實測驗收
+- New code coverage: 手動 checklist 第 9 節 12 項 (9.1×9 + 9.2×3),逐項對應全部驗收條件、edge case 與安全項目
+- Minimum required: 依 AGENTS.md — 無 JS test framework,手動 checklist 視為合格覆蓋
 - Status: PASS
 
-## Notes
-- 本輪為靜態程式碼比對驗收，未啟動 dev server 做瀏覽器互動測試（依任務指示，瀏覽器實測交由下一 playwright 階段）。
-- Review report 中的 3 項 💡 Suggestion（非阻塞）已知悉，不影響本次 QA 判定：
-  1. `profile-client.ts:34` — 200 但非 JSON body 的防禦深度（後端保證不會發生）
-  2. `page.tsx:126` — 儲存成功訊息在下次編輯時未即時清除的 UX 微調
-  3. `AuthNav.tsx:20` — 可改用 `getProfileRequest()` wrapper 統一模式（非本 task 義務）
-
-## Playwright 瀏覽器驗收
-> Executed: 2026-07-10T20:15:00+08:00
-> 環境：`npm run dev`（Turbopack，Next.js 16.2.10），瀏覽器用 `http://localhost:3000`（改用 localhost 而非 127.0.0.1——Next.js 16 dev server 預設對 `allowedDevOrigins` 外的 origin 擋掉 `/_next` HMR 資源，用 127.0.0.1 會導致 client bundle 無法正確 hydrate，頁面卡在 loading／表單以原生 GET 提交；換成 localhost 後行為正常，未修改任何專案設定檔）。工具：Node.js Playwright（`npx playwright install chromium`，臨時裝在 scratchpad，未動 `package.json`）。測試帳號：`jean619215@gmail.com`。
-
-| # | 情境 | 對應驗收條件 | 結果 | 證據 |
-|---|---|---|---|---|
-| AC1 | 未登入造訪 `/profile` | 顯示「請先登入」+ `/login` 連結，不崩潰 | ✅ PASS | `screens/1-unauthenticated.png`；console 無未捕捉錯誤 |
-| AC2 | 登入（測試帳號）| 導向首頁，AuthNav 顯示已登入狀態 + 個人資料連結 | ✅ PASS | `screens/2-after-login.png`；`url === /`，`a[href="/profile"]` count=1 |
-| AC3 | 點「個人資料」→ `/profile` | 顯示暱稱輸入框、role(user)、格式化建立時間 | ✅ PASS | `screens/3-profile-page.png`；role 文字為 `user`，建立時間顯示為「2026年7月9日 下午2:34」格式，無 uuid |
-| AC4 | 修改暱稱「測試暱稱」送出 | 成功訊息出現、輸入框更新；重整後仍為新值（確認存 DB） | ✅ PASS | `screens/4a-after-save.png`, `4b-after-reload.png`；成功訊息「暱稱已更新」，reload 後輸入框仍為「測試暱稱」 |
-| AC5 | 輸入 51 個字（中文字元）送出 | client 端擋下、不打 PATCH API、頁面不崩潰 | ✅ PASS | `screens/5-51chars.png`；PATCH 請求數送出前後不變（6→6），錯誤訊息「暱稱長度不可超過 50 字」 |
-| AC6 | 清空暱稱送出 | 成功，輸入框顯示空（不顯示 "null"）；重整後仍空 | ✅ PASS | `screens/6-cleared.png`；輸入框值為空字串，畫面卡片內文無 "null" 字樣 |
-| AC7 | 送出過程按鈕 disabled | 減速 PATCH（route intercept +1.5s）觀察送出中狀態 | ✅ PASS | `screens/7-disabled.png`；`disabled=true`，按鈕文字「儲存中…」 |
-| AC8 | 全程 network 監聽 | 不得出現對 `*.supabase.co` 的瀏覽器直連請求 | ✅ PASS | 全程攔截所有 request URL，`*.supabase.co` 命中數 = 0，所有請求均為同源 `/api/*` |
-
-### 結果
-8/8 全部通過。測試結束後已將暱稱改回空字串（原值），並執行登出；dev server 已關閉。
-
-### Recommendation
-✅ APPROVED — 全部驗收條件於真實瀏覽器中驗證通過，可交付完成。
+## Playwright 欠帳 (依決議,非本次 blocker)
+- 已於 checklist 9.3 明確列出 6 項延後情境,將於 Task 9 完成後與 Task 9 情境合併跑一輪 playwright。
+- 已於 task-log.md 記錄本 task stage 直接標記 complete、playwright 欠帳待 Task 9。
