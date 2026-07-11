@@ -122,7 +122,7 @@ export default function GridEditor() {
             value={widthInput}
             onChange={(e) => setWidthInput(e.target.value)}
             data-testid="grid-width-input"
-            className="w-24 rounded-lg border border-black/12 bg-transparent px-3 py-2 text-base outline-none focus:border-zinc-500"
+            className="w-24 rounded-lg border border-black/12 bg-transparent px-3 py-2 text-base text-zinc-950 outline-none placeholder:text-zinc-400 focus:border-zinc-500"
           />
         </label>
         <label className="flex flex-col gap-1 text-sm">
@@ -133,7 +133,7 @@ export default function GridEditor() {
             value={heightInput}
             onChange={(e) => setHeightInput(e.target.value)}
             data-testid="grid-height-input"
-            className="w-24 rounded-lg border border-black/12 bg-transparent px-3 py-2 text-base outline-none focus:border-zinc-500"
+            className="w-24 rounded-lg border border-black/12 bg-transparent px-3 py-2 text-base text-zinc-950 outline-none placeholder:text-zinc-400 focus:border-zinc-500"
           />
         </label>
         <button
