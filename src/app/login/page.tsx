@@ -34,6 +34,7 @@ export default function LoginPage() {
       const storedEndsAt = readCooldownEndsAt();
       if (storedEndsAt && storedEndsAt > Date.now()) {
         setCooldownEndsAt(storedEndsAt);
+        setShowResend(true);
       } else if (storedEndsAt) {
         clearCooldownEndsAt();
       }

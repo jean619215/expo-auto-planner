@@ -1,9 +1,40 @@
 # Code Review Report — 登入頁「重新寄送驗證信」按鈕 + 60 秒冷卻
-> Generated: 2026-07-11T10:15:00+08:00 | Review iteration: 1 | Reviewer: PR Reviewer agent
+> Generated: 2026-07-11T10:15:00+08:00 | Last updated: 2026-07-11T18:20:00+08:00 | Review iteration: 2 | Reviewer: PR Reviewer agent
 > Story: 會員系統 | Task 9 of 9 | Type: FRONTEND
 
 ## Overall Assessment
 APPROVED
+
+## Iteration 2 — Playwright Bugfix Re-review (2026-07-11T18:20:00+08:00)
+
+**Context**: The combined Task 7+8+9 Playwright pass (see `qa-report.md` § "Playwright E2E Results") found Task9-AC4 failing — after a page reload mid-cooldown, the entire resend button/message block silently disappeared instead of resuming in its disabled/counting-down state. Root cause: the mount effect restored `cooldownEndsAt` from `localStorage` but never restored `showResend`, and the JSX block is gated on `showResend` alone.
+
+### Diff verified
+`git diff HEAD~1 -- src/app/login/page.tsx` (comparing against commit `159366e`, the original Task 9 implementation) shows exactly one line added, nothing else touched:
+
+```diff
+       if (storedEndsAt && storedEndsAt > Date.now()) {
+         setCooldownEndsAt(storedEndsAt);
++        setShowResend(true);
+       } else if (storedEndsAt) {
+         clearCooldownEndsAt();
+       }
+```
+
+### Verification checklist
+1. **Fix is exactly the specified one-line addition, correctly placed.** Confirmed via diff above — `setShowResend(true)` sits inside the `if (storedEndsAt && storedEndsAt > Date.now())` branch, i.e. it only fires when a stored cooldown timestamp exists **and** is still in the future (not expired). It does not fire unconditionally and does not fire in the `else if (storedEndsAt)` (expired-timestamp) branch. **PASS**
+2. **No regression on a clean page load.** When `localStorage` has no entry, `readCooldownEndsAt()` returns `null`/falsy → `storedEndsAt` is falsy → neither branch executes → `showResend` stays at its `useState(false)` default → the resend block does not render. **PASS**
+3. **Countdown-reaches-0 auto-revert behaviour unaffected.** The third `useEffect` (lines 56–63, unchanged by this diff) only clears `cooldownEndsAt` and calls `clearCooldownEndsAt()` when the countdown reaches zero — it does not touch `showResend`. So `showResend` remains `true`, the block keeps rendering, and `inCooldown` (`remainingSeconds > 0`) becomes `false` once `cooldownEndsAt` is `null`, which flips the button from disabled/counting-down to idle/clickable — exactly the behaviour verified in the original Task 9 QA pass, now confirmed still intact. **PASS**
+4. **Scope discipline.** `git diff HEAD~1 -- src/app/login/page.tsx` contains only the single added line shown above; no other lines in the file changed. `git status` shows no other tracked files modified by the fix (only pipeline bookkeeping files and pre-existing untracked `Design.pdf`/`playwright-tests/`/`playwright.config.ts`/`test-results/` from the playwright agent's infra, unrelated to this fix). **PASS**
+5. **Lint / tsc re-confirmed.** Re-ran both post-fix: `npm run lint` → clean, no errors/warnings. `npx tsc --noEmit` → clean, no errors. **PASS**
+6. **Auth-adjacent 🔴 scrutiny (per AGENTS.md — "any change touching auth, session ... is automatically Critical" gate applied as a review-rigor requirement, not a verdict).** This is the login page's verification/cooldown UI state, not the authentication/session mechanism itself (no Supabase calls, no cookies, no tokens touched). Re-checked adjacent invariants from the iteration-1 review to make sure the one-line fix didn't disturb them: anti-enumeration message display unchanged (not touched by diff), global single localStorage key unchanged, try/catch-never-throw helpers unchanged, `/api/auth/resend` and `src/proxy.ts` untouched, no new `console.*`/sensitive logging introduced, no direct Supabase client usage introduced. **PASS — no critical findings.**
+
+### Conclusion
+The fix is minimal, correctly scoped, correctly gated, and does not regress any previously-verified behaviour (clean load, countdown-to-zero auto-revert). No Critical, no Should-Fix issues from this bugfix. Routing to QA / Playwright re-run to close out Task9-AC4 (and the previously-deferred §10.6/§10.7 checks that were downstream of this bug).
+
+---
+
+## Iteration 1 — Original Implementation Review (2026-07-11T10:15:00+08:00)
 
 ## Summary
 `src/lib/resend-cooldown.ts`、`auth-client.ts` 新增匯出、`login/page.tsx` 的 state/effect/handler/UI 皆與 architect-plan 逐步吻合;倒數以時間戳差值運算（非遞減計數器）、mount 時續倒數、歸零自動清除、全域單一 localStorage key（不含 email）、成功訊息逐字顯示、400/網路錯誤不進冷卻並立即恢復 idle、email 即時讀取（非 403 快照）等全部驗收條件均正確實作。本 task 為 auth-adjacent（登入頁分支邏輯 + 呼叫驗證信重寄），已依 AGENTS.md 規則以 🔴 最嚴標準逐項複核 — **未發現任何安全漏洞或邏輯違規**。`npm run lint`、`npx tsc --noEmit`、`npm run build` 三者皆重跑並確認通過。僅 3 項可選建議，無 Critical、無 Should Fix。
