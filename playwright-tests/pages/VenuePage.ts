@@ -15,6 +15,11 @@ export class VenuePage {
   readonly heightInput: Locator;
   readonly applyButton: Locator;
   readonly sizeError: Locator;
+  readonly toolbar: Locator;
+  readonly toolFloor: Locator;
+  readonly toolWall: Locator;
+  readonly toolColumn: Locator;
+  readonly toolEraser: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -23,6 +28,21 @@ export class VenuePage {
     this.heightInput = page.getByTestId("grid-height-input");
     this.applyButton = page.getByTestId("grid-resize-apply");
     this.sizeError = page.getByTestId("grid-size-error");
+    this.toolbar = page.getByTestId("venue-toolbar");
+    this.toolFloor = page.getByTestId("tool-floor");
+    this.toolWall = page.getByTestId("tool-wall");
+    this.toolColumn = page.getByTestId("tool-column");
+    this.toolEraser = page.getByTestId("tool-eraser");
+  }
+
+  /** Select a tool from the toolbar by its data-testid ("tool-wall" etc). */
+  async selectTool(testId: "tool-floor" | "tool-wall" | "tool-column" | "tool-eraser") {
+    await this.page.getByTestId(testId).click();
+  }
+
+  /** aria-pressed value ("true"/"false") for a given toolbar button. */
+  async toolPressed(testId: "tool-floor" | "tool-wall" | "tool-column" | "tool-eraser") {
+    return this.page.getByTestId(testId).getAttribute("aria-pressed");
   }
 
   async navigate() {

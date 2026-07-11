@@ -1,96 +1,87 @@
-# QA Report — 建立 2D 網格編輯器基礎
-> Generated: 2026-07-12T13:00:00+08:00 | QA iteration: 1
-> Story: 場地白模產生器 (階段一) | Task 1 of 5 | Type: FRONTEND
+# QA Report — 擴充工具列:新增「畫牆壁」「畫柱子」「擦除」工具 (Task 2 of 5)
+> Generated: 2026-07-12T16:00:00+08:00 | QA iteration: 1
+> Story: 場地白模產生器 (階段一) | Task 2 of 5 | Type: FRONTEND
 
 ## Summary
-- Tests executed: 10 acceptance criteria + 5 edge cases + 2 error states + regression + security = 19 checks
-- Passed: 19
+- Tests executed: 24 (11 ACs + 4 edge cases + 4 regression checks + 3 build gates + 2 security checks)
+- Passed: 24
 - Failed: 0
 - Blocked: 0
 
-## Scope note
-Per AGENTS.md ("No JS test framework installed — verification is manual"; "For FRONTEND tasks, Playwright is the acceptance gate at the `playwright` stage, not here"), this QA pass is **static/code-level verification**: source read against every acceptance criterion, edge case, and error state in orchestrator-output.md, plus targeted logic replays (Node) of `validateGridSize` for input classes not easily eyeballed. Real-browser interactive confirmation (pointer drag feel, actual click sequencing) is the next pipeline stage's (`playwright`) job and is not claimed here.
-
 ## Recommendation
-**APPROVED** — proceed to `playwright` stage.
+APPROVED — all 11 acceptance criteria verified against the implementation (`src/lib/venue/grid.ts`, `src/components/venue/GridEditor.tsx`), all edge cases hold, Task 1 regression suite is 9/9 green, manual checklist covers the new toolbar scenarios, and lint/tsc/build all pass. This is a FRONTEND task — the live-browser acceptance gate for the new Task 2 toolbar scenarios (Playwright) is the next stage; this QA pass is the static/code-level verification per the pipeline's FRONTEND QA convention.
 
 ## Acceptance Criteria Results
-| Criterion | Result | Notes |
-|---|---|---|
-| Page loads → 10×10 grid, all empty | ✅ PASS | `GridEditor.tsx`: `size` initialized to `DEFAULT_GRID_SIZE` (`{widthM:10, heightM:10}`), `cells` initialized to empty `Map`. Render loop produces `heightM×widthM` = 100 cells, all `data-cell-state="empty"` since `cells.has(key)` is false for all keys. |
-| Resize (valid width/height) re-renders + clears floor cells | ✅ PASS | `handleResizeSubmit`: on `result.ok`, calls `setSize(result.size)` then `setCells(new Map())` unconditionally — matches spec ("clears/resets all existing floor-cell selections", no partial preservation). |
-| Resize exceeding 50m or 2,500 cells → rejected with clear message | ✅ PASS | `validateGridSize` checks `widthM > MAX_DIMENSION_M \|\| heightM > MAX_DIMENSION_M \|\| widthM*heightM > MAX_TOTAL_CELLS` → returns Traditional Chinese message `最大網格為 50m × 50m（2,500 格）`; verified via Node replay: 51×10 → rejected, 50×51 → rejected (2550 cells). `setSize`/`setCells` never called on `!result.ok` path — grid dimensions untouched. |
-| Empty cell click → floor (light blue) | ✅ PASS | `handleCellPointerDown`: `mode = cells.has(key) ? "empty" : "floor"` → for an empty cell this evaluates to `"floor"`, `applyPaint` sets it; render class `bg-sky-300 border-sky-400` (light blue) per spec. |
-| Floor cell click → empty | ✅ PASS | Same handler; for a painted cell `cells.has(key)` is true → mode `"empty"` → `applyPaint` deletes the key; render falls back to `bg-white border-gray-300`. |
-| Drag from empty cell paints all entered cells to floor regardless of prior state | ✅ PASS | Stroke mode is decided once at `pointerdown` (`paintModeRef.current = mode`) and `handleCellPointerEnter` unconditionally calls `applyPaint(key, paintModeRef.current)` for every entered cell — no per-cell re-toggle, exactly matching "state decision made once at drag start." |
-| Drag from floor cell erases all entered cells regardless of prior state | ✅ PASS | Same mechanism, mode `"empty"` branch. |
-| Stroke ends cleanly on pointerup/leave — no further cells affected | ✅ PASS | Grid container `onPointerUp`/`onPointerLeave` both null the ref; a `window`-level `pointerup` listener (registered in `useEffect`) nulls it too as a safety net for release-outside-grid. `handleCellPointerEnter` early-returns when `paintModeRef.current === null`, so no cell is affected after any of the three exits fire. |
-| Non-contiguous/irregular floor shapes preserved, no auto-fill/validation | ✅ PASS | `cells` is an unconstrained sparse `Map`; nothing in `applyPaint`/render enforces contiguity or shape validation — multiple independent strokes simply union/subtract keys. |
-| Reload → no persisted state | ✅ PASS | All state (`size`, `cells`, inputs, error) is component-local `useState`/`useRef`; no `localStorage`/`sessionStorage`/cookie/API call anywhere in `grid.ts` or `GridEditor.tsx` (grepped — none present). Reload always re-mounts to `DEFAULT_GRID_SIZE` + empty `Map`. |
+| # | Criterion | Result | Notes |
+|---|---|---|---|
+| AC1 | 畫地板 pre-selected on mount/after resize | ✅ PASS | `useState<Tool>("floor")` (GridEditor.tsx:30); `handleResizeSubmit` never writes `activeTool` (58-68) |
+| AC2 | Selecting a toolbar tool makes it sole active tool, radio semantics | ✅ PASS | Single `activeTool` state + `aria-pressed={activeTool === tool.id}` (166-186) guarantees exactly one filled button at all times |
+| AC3 | Paint tool on empty cell → sets that type | ✅ PASS | `handleCellPointerDown` (80-88): `current` undefined, `!== activeTool` (non-eraser) → `mode = activeTool` |
+| AC4 | Paint tool on same-type cell → reverts to empty | ✅ PASS | `current === activeTool → mode = "empty"`; `applyPaint` deletes the key |
+| AC5 | Paint tool on different occupied type → direct overwrite | ✅ PASS | `current !== activeTool` (not eraser, not same-type) → `mode = activeTool`; `applyPaint` sets new type directly, no forced erase step |
+| AC6 | 擦除 on any occupied cell → empty | ✅ PASS | `activeTool === "eraser" → mode = "empty"` unconditionally |
+| AC7 | 擦除 on already-empty cell → no-op | ✅ PASS | `mode = "empty"`; `applyPaint`'s `next.delete(key)` on an absent key is a Map no-op — no error, no visual change |
+| AC8 | Drag stroke applies first-cell-resolved action to every cell entered | ✅ PASS | `mode` computed once in `handleCellPointerDown`, stored in `paintModeRef.current`; `handleCellPointerEnter` (91-94) applies the ref value verbatim with no re-evaluation |
+| AC9 | Pointer release anywhere ends stroke cleanly; new stroke re-evaluates | ✅ PASS | Grid `onPointerUp`/`onPointerLeave` (100-102) and window-level `pointerup` listener (36-44) all null `paintModeRef.current`; unchanged from Task 1, confirmed still wired |
+| AC10 | 地板/牆壁/柱子/空白 each a distinct, easily distinguishable color | ✅ PASS | `CELL_CLASSES` (17-22): floor `bg-sky-300`/`border-sky-400`, wall `bg-amber-700`/`border-amber-800`, column `bg-gray-500`/`border-gray-600`, empty `bg-white`/`border-gray-300` — four visually distinct literal Tailwind classes (no dynamic class concatenation, v4-scanner-safe) |
+| AC11 | Resize clears cell Map but keeps active tool | ✅ PASS | `handleResizeSubmit` calls `setCells(new Map())` only; `activeTool` untouched, so a subsequently-selected non-floor tool survives a resize |
 
 ## Edge Case Results
 | Edge Case | Result | Notes |
 |---|---|---|
-| Resize smaller than current → all selections discarded (not just out-of-range) | ✅ PASS | `setCells(new Map())` is unconditional on any successful resize, regardless of whether new dims are larger or smaller — satisfies "discard all, not just out-of-bounds." |
-| Resize input 0 / negative / non-numeric → rejected with message, sensible min enforced | ✅ PASS | Node replay: `"0"`→rejected, `"-5"`→rejected, `"abc"`→rejected (NaN fails `Number.isInteger`), all via the `MIN_DIMENSION_M` / integer check, generic Traditional-Chinese message `寬度與高度必須是至少 1 的整數公尺數`. Decimal (`"3.5"`) also rejected (fails `Number.isInteger`) — stricter than required, still correct per spec ("do not silently clamp"). |
-| Drag leaves grid mid-stroke then re-enters without new pointerdown → does not resume painting | ✅ PASS | `onPointerLeave` nulls `paintModeRef.current`; `handleCellPointerEnter` re-checks `paintModeRef.current === null` on every entry, so re-entering with the ref already null paints nothing until a fresh `pointerdown`. |
-| Rapid clicking (zero-distance drag) → clean single toggle, not no-op/double-toggle | ✅ PASS | `pointerdown` decides mode from current cell state and applies it immediately (not deferred to a matching `pointerup`), so each discrete click independently toggles based on the state at the moment of that click. No double-apply since `pointerenter` never fires without movement. |
-| Touch/pointer-events preference (nice-to-have) | ✅ PASS | All handlers use `onPointerDown`/`onPointerEnter`/`onPointerUp`/`onPointerLeave` (Pointer Events), plus `touchAction: "none"` on the grid container — future-proofed as suggested, not a blocking requirement. |
+| Tool switch mid-drag has no effect on locked stroke | ✅ PASS | Mode is captured once at pointerdown into `paintModeRef`; `activeTool` state changes from toolbar clicks during an in-flight drag are never re-read by `handleCellPointerEnter` |
+| Eraser dragged across mixed floor/wall/column/empty cells | ✅ PASS | `mode` is fixed to `"empty"` for the whole stroke once resolved at pointerdown (since `activeTool === "eraser"` is stroke-invariant); every occupied cell entered gets deleted, already-empty cells are no-ops via the same `delete` call |
+| Re-click already-active toolbar button | ✅ PASS | `onClick={() => setActiveTool(tool.id)}` with an unchanged value — React's state-update bailout means no re-render, no flicker, consistent with spec's "no-op" requirement |
+| Resize while a non-floor tool is active | ✅ PASS | Same code path as AC11 — `setCells` only, `activeTool` state is independent of the resize handler and is not part of `handleResizeSubmit`'s closure writes |
 
 ## Error State Results
-| Error State | Result | Notes |
-|---|---|---|
-| Resize exceeds max grid guard → rejected, inline message, grid stays at previous valid dims | ✅ PASS | `sizeError` state set to the max-guard message and rendered via `data-testid="grid-size-error"` (`role="alert"`, red text `text-red-600`); `size`/`cells` state untouched since `setSize`/`setCells` only run on the `ok:true` branch. |
-| Resize input invalid (non-numeric/zero/negative) → rejected, inline message, grid unchanged | ✅ PASS | Same code path, message `寬度與高度必須是至少 1 的整數公尺數`; same untouched-state guarantee. |
+No new error states introduced by this task (per orchestrator-output.md — painting is synchronous local state, no async/network paths). `validateGridSize` behavior is unchanged from Task 1; re-verified no diff in that function's logic in `grid.ts`.
 
 ## Regression Check
-| Feature | Result |
-|---|---|
-| `src/proxy.ts` (auth gate / page-route protection) | ✅ PASS — byte-for-byte untouched (confirmed via `git status`: no entry for `src/proxy.ts`; the new `/venue` route is simply outside `config.matcher` and is public by omission, per plan Decision 3) |
-| `/login`, `/register`, `/profile`, `/api/*` routes | ✅ PASS — zero files under these paths touched; diff is additive-only (`src/lib/venue/`, `src/components/venue/`, `src/app/venue/`, `manual-tests/venue-grid-editor.md`) |
-| Build route table | ✅ PASS — `npm run build` output shows `/venue` as a new static (○) route; all pre-existing routes (`/`, `/login`, `/register`, `/profile`, `/api/auth/*`, `/api/profile`) unchanged in the table |
+| Feature | Result | Notes |
+|---|---|---|
+| Task 1 floor toggle / drag paint / drag erase | ✅ PASS | Re-ran `npx playwright test playwright-tests/venue-grid-editor.spec.ts` against a live dev server (this session, not just trusting the review report) — **9/9 passed**, zero spec/page-object modifications (`git status` confirms `playwright-tests/` has no diff for this task) |
+| Resize validation (min/max/cap/non-integer) | ✅ PASS | Covered by Task 1 suite ACs 5–7, all green; `validateGridSize` untouched in `grid.ts` |
+| Pointer capture handling (`releasePointerCapture`) | ✅ PASS | `handleCellPointerDown` (74-79) retains the exact Task 1 capture-release logic, untouched |
+| `src/app/venue/page.tsx` | ✅ PASS | Confirmed no diff — toolbar lives entirely inside `GridEditor`, as planned |
+| `playwright-tests/venue-grid-editor.spec.ts` and `playwright-tests/pages/` | ✅ PASS | Confirmed no diff via `git status` (only `.claude/pipeline/*`, `manual-tests/venue-grid-editor.md`, `src/components/venue/GridEditor.tsx`, `src/lib/venue/grid.ts` are modified) |
 
 ## Security Test
-- Sensitive data exposure: PASS — no logging anywhere in new files; no secrets/tokens/credentials; nothing sent to a server (feature is 100% client-local state)
-- Input validation: PASS — the one boundary (resize meter inputs) is validated via pure `validateGridSize`, which rejects (never silently clamps) NaN/non-integer/<1/>50/>2,500-cell combinations with a Traditional-Chinese message, exactly per spec and AGENTS.md security rules
-- Auth boundary: N/A — page is intentionally public; verified no Supabase client import in any new file (`grid.ts`, `GridEditor.tsx`, `venue/page.tsx`) and `src/proxy.ts` untouched, so no auth-adjacent risk introduced
+- Sensitive data exposure: PASS — no logging added, no data emitted beyond client-side DOM (`data-cell-state`), purely local UI state
+- Input validation: PASS — only boundary is `validateGridSize` (unchanged); painting has no external input surface
+- Auth boundary: N/A — confirmed zero diff on `src/proxy.ts`, `src/app/api/**`, `src/lib/supabase/**` (`git status` shows none of these paths touched); no Supabase client imports added to `GridEditor.tsx` or `grid.ts`
 
 ## Bugs Found
-None. 0 Critical / 0 High / 0 Medium / 0 Low.
-
-(For completeness: the PR review stage logged 4 non-blocking 💡 suggestions — redundant no-op `Map` copies when dragging over already-painted cells, `Number()` accepting exotic literals like `"0x10"`/`"1e1"`, doubled interior gridlines from per-cell borders, no keyboard/AT affordance on cells. None affect any acceptance criterion, edge case, or error state; QA concurs these are log-only and do not block sign-off.)
+None.
 
 ## Test Coverage
-- New code coverage: manual checklist (`manual-tests/venue-grid-editor.md`) covers all 11 items mapping 1:1 to the 10 acceptance criteria + all 5 edge cases + both error states; Playwright hooks (`data-testid="venue-grid"`, `data-x`, `data-y`, `data-cell-state`, `grid-width-input`, `grid-height-input`, `grid-resize-apply`, `grid-size-error`) all present in `GridEditor.tsx`, ready for the `playwright` stage's page-object assertions and simulated drag sequences.
-- Minimum required (per AGENTS.md): manual checklist for new logic — satisfied (no JS unit-test framework installed; `validateGridSize` written as a pure function, trivially unit-testable the day a framework lands, per architect plan).
-- Status: PASS
-
-## Build/Static Gate Re-verification (this QA pass)
-- `npm run lint` → PASS (no errors/warnings)
-- `npx tsc --noEmit` → PASS (no errors)
-- `npm run build` → PASS (`/venue` compiled as a new static route; Proxy middleware output unchanged)
+- Manual checklist (`manual-tests/venue-grid-editor.md`): Task 2 section added with 13 items covering default tool, radio switching, re-click no-op, all four paint colors, same-type toggle, cross-type overwrite, eraser on occupied/empty, per-tool drag stroke lock (including eraser over mixed cells), mid-drag toolbar-click isolation, and resize-keeps-tool — matches every AC and edge case above.
+- Playwright: existing Task 1 suite (9 ACs) verified green this session; new Task 2 coverage (`playwright-tests/venue-toolbar.spec.ts` + `VenuePage` additions) is deferred to the `playwright` pipeline stage per the architect plan — this is the designated next stage, not a gap.
+- Build gates: `npm run lint` clean, `npx tsc --noEmit` clean, `npm run build` succeeds (`/venue` still statically prerendered).
+- Status: PASS — new logic (toolbar, generalized paint semantics, per-type colors) has manual-checklist coverage now and a scheduled live-browser gate next; no new logic shipped without any test coverage, satisfying the AGENTS.md QA requirement.
 
 ## Playwright E2E Results
-> Executed: 2026-07-12T14:00:00+08:00
+> Executed: 2026-07-12T16:30:00+08:00 (against `npm run dev`, local, no auth/Supabase involved)
 
 | Test | Acceptance Criterion | Result | Duration |
 |---|---|---|---|
-| AC1 | /venue loads with default 10x10 grid, all cells empty | ✅ PASS | 1.1s |
-| AC2 | Single click toggles a cell floor <-> empty | ✅ PASS | 843ms |
-| AC3 | Drag from empty cell paints every cell passed over as floor | ✅ PASS | 902ms |
-| AC4 | Drag from floor cell erases every cell passed over | ✅ PASS | 1.0s |
-| AC5 | Valid resize (15x8) rebuilds grid, clears painted cells | ✅ PASS | 892ms |
-| AC6 | Invalid resize input (0/non-numeric/>50) shows error, grid untouched | ✅ PASS | 945ms |
-| AC7 | 2500-cell cap — 50x50 accepted, exceeding cap rejected | ✅ PASS | 1.1s |
-| AC8 | Non-contiguous painting — two separate areas preserved | ✅ PASS | 926ms |
-| AC9 | Reload does not persist prior grid state | ✅ PASS | 1.4s |
+| AC1: 畫地板 is the default active tool on load | Default tool on mount is 畫地板, others `aria-pressed=false` | ✅ PASS | 766ms |
+| AC2: selecting 畫牆壁 makes it the sole active tool and paints wall on empty cell | Selecting a tool makes it sole active; wall paints empty cell | ✅ PASS | 889ms |
+| AC3: wall tool on existing wall cell toggles back to empty | Same-type click reverts to empty | ✅ PASS | 894ms |
+| AC3b: wall tool on a floor cell overwrites directly to wall | Different-type click overwrites directly, no forced erase | ✅ PASS | 902ms |
+| AC4: 畫柱子 paints column cells | Column tool paints/toggles column cells | ✅ PASS | 898ms |
+| AC5: 擦除 clears occupied cells and no-ops on empty | Eraser clears floor/wall; no-op on already-empty | ✅ PASS | 1.0s |
+| AC7: drag with wall tool paints every cell in stroke | Stroke-lock applies wall to every dragged-over cell | ✅ PASS | 953ms |
+| AC8: drag with eraser across mixed floor/wall/column clears all | Eraser stroke-lock clears mixed-type run uniformly | ✅ PASS | 1.1s |
+| AC9/AC11: resize clears cells but keeps selected tool active | Resize clears Map, tool selection persists (wall stays active and paintable) | ✅ PASS | 985ms |
+| AC10: floor/wall/column/empty render with distinct color classes | 4 distinct `bg-*` classes present, one per cell type | ✅ PASS | 960ms |
 
-9/9 passed, 0 failed. Run against local dev server (`npm run dev`), no Supabase/auth involvement (public page).
+**Regression — Task 1 suite (`playwright-tests/venue-grid-editor.spec.ts`, zero modifications):** 9/9 PASS (AC1–AC9, default grid, click toggle, drag paint, drag erase, resize valid/invalid, 2500-cell cap, non-contiguous painting, no persistence on reload).
 
-### Notes
-- Drag scenarios used raw `page.mouse.down()/move()/up()` sequences (per developer's note that pointer capture is deliberately released on `pointerdown` so `pointerenter` fires on intermediate cells during a real drag) rather than Playwright's locator drag helpers.
-- The 2,500-cell total cap and the 50m per-dimension cap are mathematically inseparable in this implementation (50×50 = 2,500 exactly, the maximum achievable product with both dimensions ≤ 50), so no input combination exercises the total-cell guard independently of the per-dimension guard — both reject via the same validation branch. This is expected given the chosen limits, not a gap.
-- No console errors observed during any run.
+**Totals: 19/19 passed, 0 failures.**
 
 ### Failures
 None.
+
+## Outcome
+✅ Playwright E2E complete — all 11 acceptance criteria verified in browser, Task 1 regression suite green, no bugs found.

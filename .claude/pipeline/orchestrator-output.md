@@ -1,66 +1,73 @@
-# Orchestrator Output — 建立 2D 網格編輯器基礎
-> Story: 場地白模產生器 (階段一) | Task 1 of 5 | Generated: 2026-07-12
+# Orchestrator Output — 擴充工具列:新增「畫牆壁」「畫柱子」「擦除」工具
+> Story: 場地白模產生器 (階段一) | Task 2 of 5 | Generated: 2026-07-12T14:10:00+08:00
 
 ## Task Type
 FRONTEND
 
 ## Refined Requirement
-Build the foundational 2D grid editor for the venue whitebox generator. This is a pure frontend, single-session feature (no persistence, no backend/API involvement, no database). It establishes:
+Extend the Task 1 grid editor (`src/components/venue/GridEditor.tsx`, `src/lib/venue/grid.ts`) from a single implicit "paint floor" tool into a 4-tool palette: **畫地板 / 畫牆壁 / 畫柱子 / 擦除**. The user selects one tool at a time from a toolbar; the currently selected tool determines what cell type clicking/dragging on the grid produces. All four tools reuse the exact interaction model already built in Task 1 (pointerdown locks the stroke's effective action for that drag, pointerenter during an active drag applies the same action, window-level pointerup safety net, click-to-toggle for a single cell).
 
-1. **Grid rendering**: A 2D grid where each cell represents exactly 1 meter × 1 meter (fixed scale, non-configurable in this task or any future task).
-2. **Outer bounding box sizing**: The grid renders immediately on page load with a default size of **10m × 10m** (i.e., a 10×10 cell grid). The user can resize the grid afterward via width/height (meter) controls. Resizing the grid **clears/resets all existing floor-cell selections** — no attempt to preserve or truncate prior selections across a resize. A **maximum grid size guard** of **50m × 50m, or 2,500 total cells, whichever is more restrictive** is enforced — the resize control must reject/clamp input beyond this bound with a clear message to the user (see Error States).
-3. **Floor tool (only tool in this task)**: Exactly one tool exists in this task — "畫地板" (paint floor). No toolbar/tool-switching UI is required yet (that's Task 2) — a single implicit tool is active for the whole grid.
-4. **Interaction model (click + drag-paint)** — this model must be implemented generically enough that Task 2 (wall/column/eraser tools) can reuse it without rework:
-   - **Single click (no drag)** on a cell toggles that one cell: empty → floor, or floor → empty.
-   - **Click-and-drag**: on `pointerdown`/`mousedown`, record the state of the first cell touched. If it was empty, the drag paints all cells the pointer passes over to "floor." If it was floor, the drag paints all cells the pointer passes over to "empty" (erase). The state decision is made once at drag start and applied consistently to every cell entered during that same drag stroke — cells are not re-toggled individually as the pointer passes over them.
-   - Drag ends on `pointerup`/`mouseup` (or pointer leaving the grid area, per standard drag-to-paint conventions — architect/developer may choose the precise event handling, but behavior must match: releasing or leaving ends the paint stroke).
-   - Non-contiguous / irregular floor shapes must be achievable (e.g., via multiple separate click or drag strokes) — this task does not need to validate contiguity, and irregular shapes are explicitly allowed per story scope.
-5. **Cell types this task cares about**: only "floor" and "empty" (unselected). Wall and column cell types are out of scope (Task 2).
-6. **Visual/color spec** (explicit, developer must use these unless a stronger design-system reason emerges — flag to architect if so):
-   - Empty (unselected) cell: neutral light gray/white fill with a subtle border/gridline (e.g., light gray border on a white or very-light-gray fill) — must work in both light and dark viewing contexts if the app has a dark mode; if no dark mode exists yet, plain light theme is fine.
-   - Floor cell: light blue fill (chosen to leave tan/beige and gray open for wall/column cell types in Task 2, avoiding color collisions).
-   - Gridlines/cell borders must be visible enough to distinguish individual 1m cells at the default 10×10 size.
-7. **Real-world scale indication**: this task does not require a full ruler/axis-label system (that's Task 3's job), but since 1 cell = 1 meter is a fixed, load-bearing fact of this feature, the grid should be visually recognizable as a grid of unit cells (e.g., uniform cell sizing) so Task 3 can add scale/axis labels on top without restructuring the grid rendering.
+Type-system change: `CellType` in `src/lib/venue/grid.ts` becomes `"floor" | "wall" | "column"` (empty/unpainted stays "not in the Map", exactly as today — no `"empty"` variant is added to `CellType` itself). The Map remains `Map<string, CellType>` keyed by `cellKey(x,y)`.
+
+Toolbar behavior:
+- 4 buttons, text-label style consistent with the existing `套用尺寸` button (`GridEditor.tsx` lines 139-145) — rounded, clear active/selected state (visually distinct, e.g. filled vs outline).
+- 畫地板 (floor) is the default-selected tool on mount / after resize, matching current Task 1 behavior with no toolbar.
+- Exactly one tool is active at a time (radio-button semantics, not toggle-buttons-that-can-all-be-off).
+- No keyboard shortcuts in this task.
+
+Per-cell paint semantics when a tool is active and the user interacts with a cell (click, or drag-enter during a locked stroke):
+- Target cell is **empty** (not in Map) → set to the active tool's type (floor/wall/column). Eraser on an already-empty cell is a no-op.
+- Target cell already holds the **same type** as the active tool → clear it back to empty (toggle-off, same UX as Task 1's floor toggle). This applies to 畫地板/畫牆壁/畫柱子 tools; it does not apply to 擦除, whose only behavior is "always empty."
+- Target cell holds a **different** type than the active tool (e.g. wall tool clicked on a floor cell) → overwrite directly to the active tool's type. No requirement to erase first.
+- 擦除 (eraser) on any occupied cell (floor/wall/column) → clears to empty. 擦除 is idempotent — same result regardless of prior cell type.
+- The "lock stroke mode from first cell" behavior from Task 1 must be preserved: whichever of (set-to-type / clear-to-empty) the first cell in a drag resolves to is what gets applied to every subsequent cell entered during that same drag, without re-evaluating per-cell semantics per cell. (Same as Task 1's existing `paintModeRef` pattern — extend its type rather than replace its design.)
+
+Placement constraint: walls and columns may be painted on any cell regardless of whether it currently holds floor or is empty — no requirement that a wall/column sit "on top of" floor. This is a deliberate simplification confirmed for this grid-cell model (see Assumptions).
+
+Color coding (must be visually distinct from each other and from empty/border):
+- 地板 (floor): light blue — reuse existing `bg-sky-300` / `border-sky-400` from Task 1, unchanged.
+- 牆壁 (wall): tan/brown — e.g. `bg-amber-700` / `border-amber-800` (exact Tailwind shade left to architect/developer discretion within the tan-brown family; must have sufficient contrast against floor blue, column gray, and empty white).
+- 柱子 (column): gray — e.g. `bg-gray-500` / `border-gray-600` (must be visually distinct from the existing empty-cell border gray, `border-gray-300` — pick a noticeably darker/saturated gray).
+- 空白 (empty/unpainted): unchanged — `bg-white` / `border-gray-300`.
+- Update `data-cell-state` attribute (`GridEditor.tsx` line 98) to reflect all four states (`floor` / `wall` / `column` / `empty`) for testability (Playwright already relies on this pattern).
 
 ## Clarified Acceptance Criteria
-- [ ] Given the page loads, when no user interaction has occurred yet, then a 10m × 10m grid (10×10 cells) renders by default, all cells in the "empty" state.
-- [ ] Given the grid is rendered, when the user provides new width/height values (in meters) via resize controls, then the grid re-renders at the new dimensions and all previously-painted floor cells are cleared/reset.
-- [ ] Given the user enters a width or height exceeding 50m, or a combination exceeding 2,500 total cells, when they attempt to apply the resize, then the resize is rejected (or clamped) and a clear message is shown explaining the limit.
-- [ ] Given an empty cell, when the user clicks it (no drag), then it becomes a floor cell (visually shown in light blue).
-- [ ] Given a floor cell, when the user clicks it (no drag), then it becomes empty again (visually shown in light gray/white).
-- [ ] Given the user presses down on an empty cell and drags across multiple cells, when the drag is in progress, then every cell the pointer passes over becomes a floor cell (regardless of that cell's prior state).
-- [ ] Given the user presses down on a floor cell and drags across multiple cells, when the drag is in progress, then every cell the pointer passes over becomes empty (erased), regardless of that cell's prior state.
-- [ ] Given a drag stroke is released (pointer up) or leaves the grid boundary, when this occurs, then the paint stroke ends cleanly — no further cells are affected until a new click/drag begins.
-- [ ] Given the user paints floor cells in a non-contiguous or irregular pattern (multiple disconnected strokes), when they do so, then the resulting shape is preserved with no automatic connection, filling, or validation applied.
-- [ ] Given the user has painted floor cells and then navigates away from or reloads the page, when they return, then no prior grid state is restored (no persistence in this task/stage).
+- [ ] Given the grid editor is loaded, when it first renders (or after a resize), then 畫地板 is the pre-selected active tool.
+- [ ] Given a tool is selected in the toolbar, when the user clicks it, then it becomes the sole active tool (visually indicated) and any previously active tool is deselected.
+- [ ] Given 畫地板/畫牆壁/畫柱子 is active, when the user clicks an empty cell, then that cell becomes the corresponding type.
+- [ ] Given 畫地板/畫牆壁/畫柱子 is active, when the user clicks a cell already of that same type, then the cell reverts to empty.
+- [ ] Given 畫地板/畫牆壁/畫柱子 is active, when the user clicks a cell of a *different* occupied type, then the cell is overwritten to the active tool's type (no forced erase step).
+- [ ] Given 擦除 is active, when the user clicks any occupied cell (floor/wall/column), then the cell becomes empty.
+- [ ] Given 擦除 is active, when the user clicks an already-empty cell, then nothing changes (no-op, no error).
+- [ ] Given any tool is active, when the user pointerdowns on a cell and drags across multiple cells without releasing, then every cell entered during the drag receives the same action (set-to-type or clear-to-empty) that was resolved for the first cell in the drag — matching Task 1's stroke-lock behavior.
+- [ ] Given a drag stroke is in progress, when the pointer is released anywhere (including outside the grid, via the existing window-level pointerup listener), then the stroke ends cleanly and a new click/drag starts a fresh stroke evaluation.
+- [ ] Given cells of all three painted types exist on the grid, when viewing the grid, then 地板/牆壁/柱子/空白 are each rendered in a distinct, easily distinguishable color.
+- [ ] Given the grid size is changed via 套用尺寸, when the resize is applied, then the cell Map is cleared (existing Task 1 behavior, unchanged) and the active tool remains whatever was selected (tool selection is not reset by resize — only cell data is cleared).
 
 ## Edge Cases to Handle
-- Resizing to a smaller grid than the current one: existing selections are discarded entirely (not just the out-of-bounds ones) — simplest, consistent behavior per user decision.
-- Resize input of 0, negative, or non-numeric values: must be rejected with a validation message (do not silently clamp to some arbitrary minimum without telling the user); a sensible minimum (e.g., 1m × 1m) should be enforced.
-- Drag starting on one cell and the pointer leaving the grid entirely mid-drag, then re-entering: treat as drag ended when pointer left; re-entering without a new pointerdown should not resume painting (avoids surprising behavior) — flag to architect/developer as the expected default, but this is a minor UX nuance they may confirm.
-- Rapid clicking (click interpreted as a zero-distance drag): must still behave as a single toggle, not a no-op or double-toggle.
-- Touch input (mobile/tablet): not a hard requirement for this task's acceptance criteria, but if trivially supportable via pointer events, developer should prefer `pointerdown`/`pointermove`/`pointerup` over mouse-only events for future-proofing. Not blocking if out of reach this task.
+- Rapid tool switching mid-drag is not a concern — Task 1's model already locks the mode at pointerdown; switching the toolbar selection has no effect on a stroke already in progress (the drag uses whatever was locked at its start).
+- Eraser dragged across a mix of floor/wall/column/empty cells: all occupied cells become empty; already-empty cells are no-ops; this is uniform regardless of what type each cell held.
+- Clicking the already-active toolbar button again: no-op (still selected, no visual flicker).
+- Grid resize while a non-floor tool is active: cell data clears (existing behavior) but tool selection persists — user doesn't have to re-select 畫牆壁 after resizing.
 
 ## Error States
-- Resize exceeds max grid guard (50m × 50m or 2,500 cells) → resize is not applied; inline validation message shown (e.g., "Maximum grid size is 50m × 50m (2,500 cells)"), grid remains at its previous valid dimensions.
-- Resize input invalid (non-numeric, zero, negative) → resize is not applied; inline validation message shown, grid remains at its previous valid dimensions.
+- None new. No validation/error states are introduced by this task — grid-size validation (`validateGridSize`) is unchanged from Task 1. Painting actions cannot fail (no async/network calls; purely local state).
 
 ## Out of Scope
-- Wall, column, and eraser tools (Task 2).
-- Toolbar / tool-switching UI (Task 2 introduces the first toolbar; this task has exactly one implicit tool, no UI chrome for tool selection).
-- Scale ruler / axis meter labels (Task 3).
-- Explicit non-contiguous shape validation/rendering polish (Task 3 confirms this works correctly; this task just must not prevent it).
-- 3D model generation, Three.js/react-three-fiber integration, orbit controls (Task 4/5).
-- Any persistence (database, localStorage, session storage) of grid state — out of scope for the entire story's Stage 1, not just this task.
-- Any backend/API route work — this is 100% client-side/frontend state (e.g., component state or a client-side store), no `/api/*` involvement.
-- Undo/redo functionality (not mentioned anywhere in story; do not add speculatively).
+- Real-world scale labels / axis rulers (Task 3).
+- Validating irregular/non-contiguous floor shapes explicitly (Task 3, though this task's overwrite/toggle logic must not accidentally prevent non-contiguous shapes).
+- 3D whitebox generation from the grid data (Task 4).
+- Any persistence/database storage (explicitly out of scope for the whole story, per story architecture notes).
+- Door/window concepts or variable wall/column height (explicitly excluded by story-level decision — fixed height only, applies to Task 4's 3D extrusion, not this task).
+- Keyboard shortcuts for tool switching.
 
 ## Assumptions Made
-- Default grid size of 10m × 10m chosen as a reasonable, immediately-usable starting point (user deferred to orchestrator's judgment).
-- Max grid guard of 50m × 50m / 2,500 cells chosen as a performance-safe upper bound for DOM-based or canvas-based cell rendering at this stage (user deferred to orchestrator's judgment); architect may adjust the technical enforcement mechanism but should not change the numeric limits without flagging back.
-- Floor color chosen as light blue (vs. tan/beige) specifically to avoid future collision with likely wall (tan/brown) and column (gray) colors in Task 2 — this is a product/design judgment call, not yet reviewed by a designer; acceptable to adjust later if it clashes with an established design system.
-- No dark-mode requirement is confirmed to exist elsewhere in this codebase; color spec assumes light theme is sufficient unless the architect finds an existing dark-mode convention to align with.
-- Drag-to-paint ending on pointer-leaving-grid (not just pointer-up) is assumed the expected behavior; if the architect/developer finds this awkward to implement cleanly, it's a minor point they may raise, not a blocking requirement.
+(No human was available to answer interactively this session; each item below is a low-risk default rather than a scope decision — flag at review if any should change.)
+1. **Overwrite over occupied cells is direct**, not gated behind erasing first — this is the standard paint-tool UX convention and matches "quick whitebox sketching" intent of the story.
+2. **Toggle-back-to-empty on same-type click** is preserved per-tool (not just for floor) for consistency with Task 1, even though a dedicated eraser now exists — this avoids removing an established interaction pattern for floor.
+3. **畫地板 is an explicit toolbar button**, not an implicit default with no button — the toolbar now uniformly exposes all 4 actions as equal peers, which is simpler to reason about and test than "3 buttons + 1 implicit mode."
+4. **Text-label buttons**, no icons, no keyboard shortcuts — matches the plain, functional style of the existing 套用尺寸 button and avoids icon-design decisions this task doesn't need to make.
+5. **Free placement** — walls/columns do not require an underlying floor cell. The grid-cell model (per story architecture notes) treats each cell's type independently; adding a "floor-required" constraint would be a new business rule not stated in the story and would complicate Task 4's 3D extrusion logic (which just needs to know each cell's type, not layering).
 
 ## Security Notes
-None applicable — this task involves no auth, no API routes, no data persistence, and no user input beyond client-side grid dimension numbers (which must be validated as described above, but there is no injection/security surface since nothing is sent to a server or stored).
+None. Purely client-side UI state, no auth/session/data changes, no API calls involved in this task.

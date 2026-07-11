@@ -5,12 +5,21 @@ import {
   CELL_SIZE_PX,
   cellKey,
   DEFAULT_GRID_SIZE,
+  TOOLS,
   type CellType,
   type GridSize,
+  type Tool,
   validateGridSize,
 } from "@/lib/venue/grid";
 
-type PaintMode = "floor" | "empty" | null;
+type PaintMode = CellType | "empty" | null;
+
+const CELL_CLASSES: Record<CellType | "empty", string> = {
+  floor: "border border-sky-400 bg-sky-300",
+  wall: "border border-amber-800 bg-amber-700",
+  column: "border border-gray-600 bg-gray-500",
+  empty: "border border-gray-300 bg-white",
+};
 
 export default function GridEditor() {
   const [size, setSize] = useState<GridSize>(DEFAULT_GRID_SIZE);
@@ -18,6 +27,7 @@ export default function GridEditor() {
   const [widthInput, setWidthInput] = useState(String(DEFAULT_GRID_SIZE.widthM));
   const [heightInput, setHeightInput] = useState(String(DEFAULT_GRID_SIZE.heightM));
   const [sizeError, setSizeError] = useState("");
+  const [activeTool, setActiveTool] = useState<Tool>("floor");
 
   // 目前這一次拖曳筆畫要套用的模式，不用 state 是因為改變它不需要觸發 re-render。
   const paintModeRef = useRef<PaintMode>(null);
@@ -33,13 +43,13 @@ export default function GridEditor() {
     };
   }, []);
 
-  function applyPaint(key: string, mode: "floor" | "empty") {
+  function applyPaint(key: string, mode: CellType | "empty") {
     setCells((prev) => {
       const next = new Map(prev);
-      if (mode === "floor") {
-        next.set(key, "floor");
-      } else {
+      if (mode === "empty") {
         next.delete(key);
+      } else {
+        next.set(key, mode);
       }
       return next;
     });
@@ -67,7 +77,13 @@ export default function GridEditor() {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
-    const mode: "floor" | "empty" = cells.has(key) ? "empty" : "floor";
+    const current = cells.get(key);
+    const mode: CellType | "empty" =
+      activeTool === "eraser"
+        ? "empty"
+        : current === activeTool
+          ? "empty"
+          : activeTool;
     paintModeRef.current = mode;
     applyPaint(key, mode);
   }
@@ -89,20 +105,16 @@ export default function GridEditor() {
   for (let y = 0; y < size.heightM; y++) {
     for (let x = 0; x < size.widthM; x++) {
       const key = cellKey(x, y);
-      const isFloor = cells.has(key);
+      const state = cells.get(key) ?? "empty";
       rows.push(
         <div
           key={key}
           data-x={x}
           data-y={y}
-          data-cell-state={isFloor ? "floor" : "empty"}
+          data-cell-state={state}
           onPointerDown={(e) => handleCellPointerDown(e, key)}
           onPointerEnter={() => handleCellPointerEnter(key)}
-          className={
-            isFloor
-              ? "border border-sky-400 bg-sky-300"
-              : "border border-gray-300 bg-white"
-          }
+          className={CELL_CLASSES[state]}
         />
       );
     }
@@ -150,6 +162,28 @@ export default function GridEditor() {
           {sizeError}
         </p>
       )}
+
+      <div data-testid="venue-toolbar" role="toolbar" className="flex flex-wrap gap-2">
+        {TOOLS.map((tool) => {
+          const isActive = activeTool === tool.id;
+          return (
+            <button
+              key={tool.id}
+              type="button"
+              data-testid={tool.testId}
+              aria-pressed={isActive}
+              onClick={() => setActiveTool(tool.id)}
+              className={
+                isActive
+                  ? "h-11 rounded-full bg-foreground px-5 font-medium text-background transition-colors"
+                  : "h-11 rounded-full border border-black/12 bg-transparent px-5 font-medium text-zinc-800 transition-colors hover:border-zinc-500"
+              }
+            >
+              {tool.label}
+            </button>
+          );
+        })}
+      </div>
 
       <div
         data-testid="venue-grid"

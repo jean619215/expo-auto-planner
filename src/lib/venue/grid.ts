@@ -1,9 +1,17 @@
 // 場地白模產生器 — 網格共用型別與純函式。
 // 無 React 依賴，供 GridEditor 與未來 Task 4 的 3D 產生器共用。
 
-// 目前只有「地板」一種格子類型；Task 2 會擴充為
-// "floor" | "wall" | "column"，屆時 Map 的 value 型別即為擴充點。
-export type CellType = "floor";
+export type CellType = "floor" | "wall" | "column";
+
+/** 工具列可選擇的工具：三種畫格子類型，加上擦除。 */
+export type Tool = CellType | "eraser";
+
+export const TOOLS: ReadonlyArray<{ id: Tool; label: string; testId: string }> = [
+  { id: "floor", label: "畫地板", testId: "tool-floor" },
+  { id: "wall", label: "畫牆壁", testId: "tool-wall" },
+  { id: "column", label: "畫柱子", testId: "tool-column" },
+  { id: "eraser", label: "擦除", testId: "tool-eraser" },
+];
 
 export type GridSize = {
   widthM: number;

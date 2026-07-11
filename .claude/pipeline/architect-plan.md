@@ -1,145 +1,143 @@
-# Architect Plan — 建立 2D 網格編輯器基礎 (場地白模產生器 Task 1)
+# Architect Plan — 擴充工具列:新增「畫牆壁」「畫柱子」「擦除」工具
 
-> Story: 場地白模產生器 (階段一) | Task type: FRONTEND | Generated: 2026-07-12T10:30:00+08:00
+> Story: 場地白模產生器 (階段一) | Task type: FRONTEND | Task 2 of 5 | Generated: 2026-07-12T14:30:00+08:00
 
 ## Overview
 
-Build a new public `/venue` page hosting a pure client-side 2D grid editor: a DOM/CSS-grid of 1m×1m cells with resize controls (default 10×10m, max 50×50m / 2,500 cells) and a single implicit "paint floor" tool using click-toggle + drag-paint pointer interaction. Shared types and pure helpers go in `src/lib/venue/grid.ts` so Tasks 2–5 (more tools, labels, 3D generation) extend rather than restructure.
+Widen the pure grid module's `CellType` to `"floor" | "wall" | "column"`, add a shared `Tool` type (`CellType | "eraser"`), and extend `GridEditor.tsx` with a 4-button radio-style toolbar plus a generalized `paintModeRef` stroke lock — the locked stroke action becomes "set to type X" or "clear to empty", resolved once from the first cell and the active tool. Purely client-side; no API, proxy, or auth changes.
 
 ## Task Type Confirmed
 
-FRONTEND — consistent with orchestrator-output.md. Zero `/api/*`, database, or persistence involvement. No contradictions found.
-
-## Key Design Decisions (with justification)
-
-1. **Rendering: DOM grid (CSS Grid), not canvas.**
-   - Max 2,500 cells is trivially within DOM comfort range; each cell is a single `<div>` with a class swap on state change — React reconciliation at this scale is cheap.
-   - Per-cell DOM nodes give free hit-testing for drag-paint (pointer events per cell), free accessibility hooks, and free `data-*` attributes for Playwright assertions — canvas would force manual coordinate math for all three.
-   - Task 3's dimension labels compose naturally around a CSS grid (flank it with label rows/columns); a canvas would need its own label drawing.
-   - Cell size fixed in px (e.g. 24px per 1m cell) via inline `gridTemplateColumns: repeat(width, 24px)` — inline style is required here because Tailwind cannot express dynamic repeat counts; this is the one sanctioned inline-style spot.
-
-2. **Route: `/venue`** (`src/app/venue/page.tsx`). Verified against `node_modules/next/dist/docs/01-app/01-getting-started/03-layouts-and-pages.md` — folder + `page.tsx` default export is unchanged in Next.js 16.2.10. `05-server-and-client-components.md` confirms the `"use client"` boundary convention is unchanged.
-
-3. **Public page — NO `src/proxy.ts` change.** The story imposes no login requirement, so `/venue` is public. `src/proxy.ts`'s `config.matcher` is a static literal `["/api/:path*", "/profile", "/login", "/register"]` — `/venue` is simply not matched, the proxy never runs for it, and it is public by default. **Explicitly: do not touch `src/proxy.ts`** (any edit there is auto-🔴 per AGENTS.md). If a later story decides this feature requires login, that becomes its own auth-adjacent task.
-
-4. **State shape: sparse `Map<string, CellType>`** keyed `"x,y"` (col,row; 0-indexed; key built by a `cellKey(x, y)` helper), where absence = empty.
-   - `CellType = "floor"` today, widening to `"floor" | "wall" | "column"` in Task 2 with zero structural change (a 2D array of booleans would need re-typing; a `Set` couldn't hold cell types at all).
-   - Resize-clears-everything is `new Map()` — matches the spec's "discard all selections on resize" exactly.
-   - Task 4's 3D generator iterates `for y in 0..height, for x in 0..width` and looks up `cells.get(cellKey(x,y))` — deterministic and O(1) per cell.
-   - Grid dimensions live separately as `{ widthM: number; heightM: number }` state (meters == cells, 1:1 fixed scale).
-
-5. **Client-component boundary:** `src/app/venue/page.tsx` stays a server component (title/shell only) and renders `<GridEditor />`, which carries `"use client"`. All state, pointer handling, and validation UI live in `GridEditor`. One component file for now — no toolbar/panel split yet (AGENTS.md: don't invent premature patterns; Task 2 introduces the toolbar and will extract what it needs).
+FRONTEND — confirmed. No route handlers, no `src/proxy.ts` changes (`/venue` is already a public page from Task 1), no Supabase involvement.
 
 ## Files to Create
 
 | File path | Purpose |
 | --------- | ------- |
-| `src/lib/venue/grid.ts` | Shared types + pure helpers for the whole feature: `CellType` union, `cellKey(x, y)`, `GridSize` type, constants (`DEFAULT_GRID_SIZE = 10`, `MIN_DIMENSION_M = 1`, `MAX_DIMENSION_M = 50`, `MAX_TOTAL_CELLS = 2500`, `CELL_SIZE_PX`), and `validateGridSize(widthInput, heightInput)` returning `{ ok: true; size: GridSize } \| { ok: false; error: string }` with Traditional-Chinese error messages. No React imports — pure functions, reusable by Task 4's 3D generator. |
-| `src/components/venue/GridEditor.tsx` | `"use client"` component: grid + resize controls + floor-paint interaction (full behavior in Implementation Steps). |
-| `src/app/venue/page.tsx` | Server component page: heading (e.g. 「場地規劃」) + `<GridEditor />`. Optional `metadata` title per existing page conventions. |
-| `manual-tests/venue-grid-editor.md` | Manual verification checklist for this feature area (see Test Plan). New top-level `manual-tests/` directory — `supabase/tests/` is auth/API-specific and wrong home for a pure-frontend feature; future frontend feature checklists also go here. |
+| _None_    | All changes extend existing Task 1 files. |
 
 ## Files to Modify
 
 | File path | What changes |
 | --------- | ------------ |
-| — none — | No existing file changes. Explicitly: `src/proxy.ts` untouched (see Decision 3); no nav link added to `src/components/AuthNav.tsx` or the home page (not in scope/acceptance criteria — flag to product if discoverability is wanted later). |
+| `src/lib/venue/grid.ts` | Widen `CellType` to `"floor" \| "wall" \| "column"`; add shared `Tool` type and a `TOOLS` metadata array (id, Chinese label, testid). Stays React-free. |
+| `src/components/venue/GridEditor.tsx` | Add `activeTool` state + toolbar UI (4 buttons above the grid); generalize `PaintMode`, `applyPaint`, and `handleCellPointerDown` to the semantics table; per-type cell colors; `data-cell-state` reflects all four states. |
+| `manual-tests/venue-grid-editor.md` | Append Task 2 checklist items (tool switching, per-tool paint/toggle/overwrite, eraser, drag lock, resize keeps tool). |
+| `playwright-tests/pages/VenuePage.ts` | Add tool-button locators, `selectTool()`, and per-type cell-count helpers (done at the playwright stage; listed here so the page object plan is agreed up front). |
+
+`src/app/venue/page.tsx` needs **no change** — the toolbar lives inside `GridEditor`.
+`playwright-tests/venue-grid-editor.spec.ts` (Task 1 suite) needs **no change** — 畫地板 is the default-selected tool on mount, and floor click/drag toggle semantics are byte-for-byte identical to Task 1, so all 9 existing ACs must still pass unmodified. Treat any Task 1 spec failure as a regression in the implementation, not a test to update.
 
 ## Implementation Steps
 
-1. **Create `src/lib/venue/grid.ts`** with:
-   - `export type CellType = "floor";` (a one-member union, with a comment noting Task 2 widens it to `"floor" | "wall" | "column"`).
-   - `export type GridSize = { widthM: number; heightM: number };`
-   - Constants: `DEFAULT_GRID_SIZE: GridSize = { widthM: 10, heightM: 10 }`, `MIN_DIMENSION_M = 1`, `MAX_DIMENSION_M = 50`, `MAX_TOTAL_CELLS = 2500`, `CELL_SIZE_PX = 24`.
-   - `export function cellKey(x: number, y: number): string` → `` `${x},${y}` ``.
-   - `export function validateGridSize(widthInput: string, heightInput: string): { ok: true; size: GridSize } | { ok: false; error: string }` — parse with `Number()`, reject NaN/non-integer/<1 (「寬度與高度必須是至少 1 的整數公尺數」-style message), reject dimension > 50 or width×height > 2,500 (「最大網格為 50m × 50m(2,500 格)」-style message). Reject, don't clamp, per spec ("do not silently clamp… without telling the user").
+1. **`src/lib/venue/grid.ts` — widen `CellType`.** Change `export type CellType = "floor";` to `export type CellType = "floor" | "wall" | "column";` and update/remove the now-obsolete Task 2 forward-looking comment above it. `Map<string, CellType>`, `cellKey`, `validateGridSize`, and all constants are unchanged.
 
-2. **Create `src/components/venue/GridEditor.tsx`** (`"use client"`), following the state/handler style of `src/app/profile/page.tsx`:
-   - State: `size: GridSize` (init `DEFAULT_GRID_SIZE`), `cells: Map<string, CellType>` (init empty `Map`), `widthInput: string` / `heightInput: string` (controlled inputs, init `"10"`), `sizeError: string`.
-   - Ref (not state — no re-render needed): `paintModeRef: "floor" | "empty" | null` for the active drag stroke.
+2. **`src/lib/venue/grid.ts` — add shared `Tool` type + metadata.** Below `CellType`, add:
+   - `export type Tool = CellType | "eraser";`
+   - `export const TOOLS: ReadonlyArray<{ id: Tool; label: string; testId: string }>` with, in this order:
+     - `{ id: "floor",  label: "畫地板", testId: "tool-floor" }`
+     - `{ id: "wall",   label: "畫牆壁", testId: "tool-wall" }`
+     - `{ id: "column", label: "畫柱子", testId: "tool-column" }`
+     - `{ id: "eraser", label: "擦除",   testId: "tool-eraser" }`
 
-3. **Resize controls** (top of component): two labeled numeric text inputs (寬/公尺, 高/公尺) + 「套用尺寸」 button. On submit: call `validateGridSize`; on `ok: false` set `sizeError` (rendered inline, red text, and keep grid at previous valid dimensions); on `ok: true` set `size`, `setCells(new Map())` (full reset per spec), clear `sizeError`.
+   Rationale: keeps `grid.ts` the single React-free source of truth for grid vocabulary. Task 4's 3D generator imports `CellType` only and never sees `Tool`; the Playwright page object can reference the same testid strings.
 
-4. **Grid rendering**: a container `<div>` with `style={{ display: "grid", gridTemplateColumns: repeat(size.widthM, CELL_SIZE_PX px), gridTemplateRows: repeat(size.heightM, CELL_SIZE_PX px) }}`, plus `touch-action: none` (pointer-event drag on touch) and `select-none` (no text-selection during drag). Render `size.heightM × size.widthM` cell `<div>`s (row-major), each with:
-   - `key={cellKey(x, y)}`
-   - Tailwind classes — empty: `bg-white border border-gray-300` (or `bg-gray-50`); floor: `bg-sky-300 border border-sky-400` (light blue per spec; light theme only — no dark-mode convention exists in this codebase, confirmed assumption in orchestrator-output.md).
-   - Playwright hooks: `data-x={x} data-y={y} data-cell-state={"floor" | "empty"}` and the grid container gets `data-testid="venue-grid"`; resize inputs/button and error message get stable `data-testid`s too (`grid-width-input`, `grid-height-input`, `grid-resize-apply`, `grid-size-error`).
+3. **`GridEditor.tsx` — generalize the stroke-lock type.** Replace `type PaintMode = "floor" | "empty" | null;` with `type PaintMode = CellType | "empty" | null;` (import `Tool` alongside the existing imports). `paintModeRef` keeps its exact role and lifecycle: set once at pointerdown, applied verbatim on pointerenter, nulled by grid pointerup / grid pointerleave / the window-level pointerup safety net. Do not touch the `useEffect` listener or the `releasePointerCapture` call.
 
-5. **Pointer interaction** (per-cell handlers; the generic model Task 2 reuses — Task 2 only changes *what value* gets painted, not the stroke mechanics):
-   - Cell `onPointerDown`: `event.preventDefault()`; determine stroke mode from the first cell's current state — `paintModeRef.current = cells.has(key) ? "empty" : "floor"` — then immediately apply it to that cell. This makes a zero-distance click a single clean toggle (edge case: rapid clicking).
-   - **Pointer-capture pitfall (must implement)**: browsers implicitly capture the pointer to the `pointerdown` target, which would stop `pointerenter` firing on other cells mid-drag. In `onPointerDown`, call `event.currentTarget.releasePointerCapture(event.pointerId)` (guarded with `hasPointerCapture` check) so enter events flow to sibling cells.
-   - Cell `onPointerEnter`: if `paintModeRef.current !== null`, apply that mode to the entered cell (set or delete in a new `Map` copy). Never re-toggle per cell — the mode decided at stroke start applies to every cell entered.
-   - Stroke end: grid container `onPointerUp` and `onPointerLeave` both set `paintModeRef.current = null`. Also register a `window`-level `pointerup` listener (in a `useEffect`) as a safety net for release outside the grid. Pointer leaving then re-entering without a new pointerdown does NOT resume painting (mode already nulled) — matches the orchestrator's expected default.
-   - Apply helper: `applyPaint(key)` builds `new Map(prev)` then `set(key, "floor")` or `delete(key)` — immutable update so React re-renders only on real changes.
+4. **`GridEditor.tsx` — add tool-selection state.** `const [activeTool, setActiveTool] = useState<Tool>("floor");` — 畫地板 pre-selected on mount, satisfying AC1. Do NOT reset it in `handleResizeSubmit` (resize keeps tool selection; only `setCells(new Map())` clears data — existing line, unchanged), satisfying the last AC. Clicking the already-active button calls `setActiveTool` with the same value — React bails out on identical state, so it is a natural no-op (edge case covered).
 
-6. **Create `src/app/venue/page.tsx`**: server component exporting default `VenuePage` rendering a page heading and `<GridEditor />`; import via `@/components/venue/GridEditor`. Add `export const metadata = { title: ... }` consistent with existing pages if they do so (developer: check `src/app/login/page.tsx` siblings; if they don't, skip).
+5. **`GridEditor.tsx` — generalize `applyPaint`.** Signature becomes `applyPaint(key: string, mode: CellType | "empty")`: `mode === "empty"` → `next.delete(key)` (already a no-op for absent keys, which covers "eraser on empty cell"); otherwise `next.set(key, mode)`. Same immutable `new Map(prev)` pattern.
 
-7. **Create `manual-tests/venue-grid-editor.md`**: checklist covering every acceptance criterion + edge case (contents listed in Test Plan below).
+6. **`GridEditor.tsx` — resolve stroke mode in `handleCellPointerDown` per the semantics table.** Replace the current two-way ternary with:
 
-8. **Verify**: `npm run lint`, `npx tsc --noEmit`, `npm run build` all pass; `npm run dev` and manually run the checklist happy path. No TODOs, no debug logs, no commented-out code.
+   ```
+   current = cells.get(key)            // CellType | undefined
+   mode =
+     activeTool === "eraser" → "empty"                     // always clear, idempotent
+     current === activeTool  → "empty"                     // same-type toggle-off
+     otherwise               → activeTool                  // empty→set, different-type→overwrite
+   ```
+
+   Then, exactly as today: `paintModeRef.current = mode; applyPaint(key, mode);`. Everything else in the handler (preventDefault, pointer-capture release) is untouched. `handleCellPointerEnter` is untouched — it already applies the locked mode without re-evaluation, which is precisely the required stroke-lock behavior (tool switching mid-drag has no effect on the in-flight stroke, since the mode was captured at pointerdown).
+
+7. **`GridEditor.tsx` — per-type cell rendering.** In the cell loop, replace `const isFloor = cells.has(key)` with `const state = cells.get(key) ?? "empty";`, set `data-cell-state={state}`, and pick classes from a module-level lookup:
+
+   | state    | classes |
+   | -------- | ------- |
+   | `floor`  | `border border-sky-400 bg-sky-300` (unchanged from Task 1) |
+   | `wall`   | `border border-amber-800 bg-amber-700` (tan/brown) |
+   | `column` | `border border-gray-600 bg-gray-500` (clearly darker than the empty-cell `border-gray-300`) |
+   | `empty`  | `border border-gray-300 bg-white` (unchanged) |
+
+   Define this as a `const CELL_CLASSES: Record<CellType | "empty", string>` at module scope (full literal class strings — never build Tailwind class names dynamically by string concatenation, or the v4 scanner won't emit them).
+
+8. **`GridEditor.tsx` — toolbar UI.** Insert a toolbar between the resize form and the grid container (order: form → error → toolbar → grid): a `<div data-testid="venue-toolbar" role="toolbar" className="flex flex-wrap gap-2">` mapping over `TOOLS`. Each button:
+   - `type="button"` (must not submit anything; it sits outside the form, but be explicit),
+   - `data-testid={tool.testId}`,
+   - `aria-pressed={activeTool === tool.id}` (machine-checkable active state for Playwright + a11y),
+   - `onClick={() => setActiveTool(tool.id)}`,
+   - style consistent with the existing 套用尺寸 button family: rounded-full, `px-5`, ~`h-11`, `font-medium`, `transition-colors`. Active = filled (`bg-foreground text-background`, mirroring 套用尺寸); inactive = outline (`border border-black/12 bg-transparent text-zinc-800 hover:border-zinc-500`). Exactly one button renders as filled at all times (radio semantics come free from single `activeTool` state).
+
+9. **`manual-tests/venue-grid-editor.md` — append Task 2 checklist.** Add a `## Task 2 — 工具列（畫地板/畫牆壁/畫柱子/擦除）` section with numbered items covering: default tool is 畫地板 (filled state visible); switching tools moves the single active highlight; clicking the active button again does nothing visible; each paint tool sets empty cells to its color (地板淺藍 / 牆壁棕褐 / 柱子深灰, all distinguishable from each other and from empty); same-type click toggles back to empty; different-type click overwrites directly without erasing first; 擦除 clears any occupied type and no-ops on empty; drag with each tool applies the first-cell-resolved action to the whole stroke (including eraser dragged across mixed cells); mid-drag toolbar clicks don't alter the in-flight stroke; resize clears cells but keeps the selected tool (e.g. select 畫牆壁, resize, paint — still wall).
+
+10. **Verify.** Run `npm run lint` and `npx tsc --noEmit`; run the existing Task 1 Playwright suite (`npx playwright test playwright-tests/venue-grid-editor.spec.ts`) against a dev server and confirm 9/9 still pass with zero spec edits; walk the new manual checklist in a browser.
 
 ## Data Flow
 
 ```
-User input (resize form)         User input (pointer on cells)
-        │                                   │
-        ▼                                   ▼
-validateGridSize (pure, lib)      onPointerDown → decide stroke mode (ref)
-   ok? ──no──► sizeError state    onPointerEnter → applyPaint(mode)
-   │yes                           onPointerUp/Leave → mode = null
-   ▼                                        │
-setSize + setCells(new Map())               ▼
-        │                     setCells(new Map(prev) ± key)
-        └────────────┬──────────────────────┘
-                     ▼
-        render: width×height cell divs,
-        class from cells.get(cellKey(x,y))
+toolbar click ──> setActiveTool (React state, persists across resize)
+                       │
+cell pointerdown ──────┴──> resolve mode ONCE from (activeTool, cells.get(key)):
+                              eraser → "empty" | same type → "empty" | else → activeTool
+                            paintModeRef.current = mode; applyPaint(key, mode)
+cell pointerenter (drag) ──> applyPaint(key, paintModeRef.current)   // no re-evaluation
+pointerup / pointerleave / window pointerup ──> paintModeRef.current = null
+                       │
+cells: Map<string, CellType> ──> render: data-cell-state + CELL_CLASSES per cell
 ```
-All state is component-local; nothing leaves the browser. (Task 4 will later consume `size` + `cells` to generate the 3D model — this shape is the contract.)
+
+Empty remains "absent from the Map" — no `"empty"` variant enters `CellType`, keeping Task 4's 3D extrusion input model (iterate Map entries, extrude by type) intact.
 
 ## Test Plan
 
-No JS unit-test framework exists (per AGENTS.md) — verification is manual checklist now + Playwright at the pipeline's playwright stage.
+Per AGENTS.md: no JS unit framework — verification is the manual checklist (developer + QA stage) plus Playwright as the FRONTEND acceptance gate (playwright stage).
 
-- **Manual checklist** (`manual-tests/venue-grid-editor.md`), one item per acceptance criterion + edge case from orchestrator-output.md:
-  1. Page load → 10×10 grid, all empty.
-  2. Resize to valid size (e.g. 20×15) → grid re-renders, prior floor cells cleared.
-  3. Resize to smaller than current → all selections discarded.
-  4. Resize width 51 / height 51 / 50×51-style >2,500-cell combos → rejected, inline max-size message, grid unchanged.
-  5. Resize 0 / negative / non-numeric / decimal → rejected, inline validation message, grid unchanged.
-  6. Single click empty cell → light blue floor; single click floor cell → back to empty.
-  7. Drag starting on empty cell across mixed cells → all become floor; drag starting on floor cell → all become empty.
-  8. Rapid clicking one cell → clean toggles (no double-toggle/no-op).
-  9. Pointer up / pointer leaving grid ends stroke; re-entering without new press paints nothing.
-  10. Multiple disconnected strokes → non-contiguous shape preserved, no auto-fill/validation.
-  11. Reload page → all state gone (no persistence).
-- **Playwright (acceptance gate, playwright stage)**: the `data-testid`/`data-x`/`data-y`/`data-cell-state` hooks in step 4 are placed specifically so a page object (`playwright-tests/pages/` pattern) can assert cell states and simulate `mouse.down()/move()/up()` drags. Spec file lands at the playwright stage, not this task's implement stage — but the hooks land now.
-- **Unit tests**: none possible (no framework); `validateGridSize` is written as a pure function so it becomes trivially unit-testable the day a framework is added.
+- **Manual checklist (developer must update + walk before handoff):** the new items from Step 9, plus a regression pass of the existing Task 1 items 1–11 (floor behavior must be unchanged).
+- **Playwright (playwright stage) — regression:** existing `venue-grid-editor.spec.ts` runs unmodified, 9/9 green.
+- **Playwright (playwright stage) — new coverage** (new spec file, e.g. `playwright-tests/venue-toolbar.spec.ts`, reusing `VenuePage`):
+  - Page object additions: `toolButton(tool)` via the `tool-floor|wall|column|eraser` testids, `selectTool(tool)`, `activeTool()` reading `aria-pressed`, `cellsCountByState(state)` generalizing `floorCellsCount()`.
+  - Default tool is floor (`tool-floor` has `aria-pressed="true"` on load and Task-1-style click paints floor).
+  - Tool switching: exactly one `aria-pressed="true"` at a time.
+  - Wall/column paint on empty cell → `data-cell-state="wall"/"column"` + `bg-amber-700` / `bg-gray-500` class assertions.
+  - Same-type toggle-off for wall and column; different-type overwrite (floor→wall in one click); eraser clears each occupied type and no-ops on empty.
+  - Drag stroke lock per tool using the existing `dragPaint` raw-mouse helper (including eraser drag across a mixed floor/wall/column/empty run → all empty).
+  - Resize keeps tool: select 畫牆壁, resize, paint a cell → wall.
+
+Edge cases from orchestrator-output.md (mid-drag tool switch, eraser over mixed cells, re-click active button, resize with non-floor tool active) are all covered across the manual + Playwright items above.
 
 ## Architecture Notes
 
-- **New feature module layout** established here: `src/lib/venue/` (pure logic/types) + `src/components/venue/` (client components) + `src/app/venue/` (route). Tasks 2–5 add to these three folders (e.g. Task 4: `src/lib/venue/whitebox.ts` consuming `GridSize` + `Map<string, CellType>`).
-- **Deviation from "no inline styles" instinct**: dynamic `gridTemplateColumns/Rows` must be inline (Tailwind can't generate dynamic repeat counts). Confined to the grid container.
-- **`CellType` as a one-member union** looks odd today but is deliberate — it makes the `Map` value type the extension point Task 2 needs.
-- **Performance**: 2,500 divs with immutable `Map` copies per painted cell is fine; each `pointerenter` triggers one state update max. If drag feel ever degrades at 50×50, memoizing rows is the escape hatch — do not pre-optimize now.
-- **Numeric limits (50m / 2,500 cells / default 10×10)** kept exactly as the orchestrator set them — no change flagged.
-- Colors are Tailwind light-theme only; no dark-mode convention exists in this codebase (checked — nothing else implements one), matching the orchestrator's assumption.
+- **No deviations** from Task 1's established patterns — this is a deliberate type-widening of the existing `paintModeRef` design, exactly the extension point the Task 1 code comment in `grid.ts` reserved.
+- `Tool` lives in `grid.ts` rather than `GridEditor.tsx`: slightly wider than strictly necessary for rendering, but it keeps label/testid vocabulary in one React-free module shared with the Playwright page object, and `TOOLS` ordering doubles as the toolbar order spec. Task 4 remains unaffected (imports `CellType` only).
+- Performance: unchanged profile — one `Map` copy per painted cell, max 2500 cells, no memoization needed (same conclusion as Task 1's review). The class lookup is a static object; no per-render allocation concerns.
+- Risk areas: (a) Tailwind class emission — use full literal strings in `CELL_CLASSES` (Step 7 note); (b) Task 1 Playwright regression is the guardrail that floor semantics didn't drift — run it before handoff, not just at the playwright stage.
 
 ## Security Checklist
 
-- [ ] No hardcoded secrets or credentials (nothing secret exists in this task at all)
-- [ ] Input validation implemented at system boundaries — resize inputs validated client-side via `validateGridSize`; this is the only boundary (no server round-trip exists)
-- [ ] Auth/permission checks — N/A: intentionally public page; `src/proxy.ts` untouched (verify in review that the diff contains no proxy/auth changes)
-- [ ] No sensitive data logged — no logging at all in this task
-- [ ] No Supabase client usage anywhere in the new files (feature is 100% client-local; AGENTS.md rule "frontend never calls Supabase directly" trivially satisfied by calling nothing)
+- [ ] No hardcoded secrets or credentials (none involved — no network calls at all)
+- [ ] Input validation implemented at system boundaries (only boundary is `validateGridSize`, unchanged)
+- [ ] Auth/permission checks in place — N/A; `/venue` remains a public page, `src/proxy.ts` untouched (verify zero diff at review)
+- [ ] No sensitive data logged (no logging added)
+- [ ] No Supabase client usage introduced in frontend code (AGENTS.md rule — this task must not import from `src/lib/supabase/`)
+- [ ] No new localStorage/persistence introduced (story-level: no persistence)
 
 ## Definition of Done
 
-- [ ] All implementation steps 1–8 complete
-- [ ] All 11 manual checklist items written in `manual-tests/venue-grid-editor.md` and the happy path hand-verified against `npm run dev`
-- [ ] All 10 acceptance criteria in orchestrator-output.md satisfiable via the checklist
-- [ ] `npm run lint`, `npx tsc --noEmit`, `npm run build` all pass
+- [ ] All implementation steps 1–10 complete
+- [ ] All 11 acceptance criteria in orchestrator-output.md demonstrably satisfied
+- [ ] Manual checklist updated (Step 9) and walked in a real browser
+- [ ] Existing Task 1 Playwright suite passes 9/9 with zero spec modifications
+- [ ] `npm run lint` and `npx tsc --noEmit` pass
 - [ ] No TODOs, commented-out code, or debug logs
-- [ ] `@/*` import alias used throughout; code style matches `src/app/profile/page.tsx` conventions
-- [ ] `src/proxy.ts` and all existing files untouched
+- [ ] `src/proxy.ts`, `src/app/api/**`, `src/lib/supabase/**` have zero diff
 - [ ] Security checklist passed

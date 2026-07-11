@@ -1,11 +1,39 @@
-# Code Review Report — 建立 2D 網格編輯器基礎 (場地白模產生器 Task 1)
-> Generated: 2026-07-12T11:45:00+08:00 | Review iteration: 1
+# Code Review Report — 擴充工具列:新增「畫牆壁」「畫柱子」「擦除」工具 (Task 2 of 5)
+> Generated: 2026-07-12T15:35:00+08:00 | Review iteration: 1
 
 ## Overall Assessment
 APPROVED
 
 ## Summary
-Clean, plan-faithful implementation. All four expected files were created (`src/lib/venue/grid.ts`, `src/components/venue/GridEditor.tsx`, `src/app/venue/page.tsx`, `manual-tests/venue-grid-editor.md`) and **no existing file was modified** — critically, `src/proxy.ts` is byte-for-byte untouched (verified via `git diff HEAD -- src/proxy.ts` and `git status`: no entry). Lint, `tsc --noEmit`, and `npm run build` all pass; `/venue` builds as a static route outside the proxy matcher, so it is public by omission exactly as the plan specified.
+Clean, minimal type-widening implementation that follows the architect plan step-for-step with zero deviations. Paint semantics, stroke lock, toolbar radio behavior, colors, and testability attributes all match the spec exactly; lint, tsc, and production build pass, and the unmodified Task 1 Playwright suite is 9/9 green against a live dev server, confirming no floor-behavior regression.
+
+## Verification Detail
+
+### Paint semantics (spec table) — MATCH
+`handleCellPointerDown` (GridEditor.tsx:80-88) resolves the mode exactly once per stroke: `eraser → "empty"` (always, idempotent — `next.delete` on absent key is a no-op, covering eraser-on-empty); `current === activeTool → "empty"` (same-type toggle-off; unreachable for eraser since `"eraser"` never equals a `CellType`); otherwise `→ activeTool` (empty-set and different-type overwrite in one branch). `paintModeRef.current = mode` then `applyPaint(key, mode)` — identical lifecycle to Task 1. `handleCellPointerEnter` (91-94) applies the locked mode verbatim with no per-cell re-evaluation; grid pointerup/pointerleave and the window-level pointerup safety net are untouched. Mid-drag tool switching cannot affect an in-flight stroke (mode captured at pointerdown).
+
+### grid.ts — MATCH
+`CellType = "floor" | "wall" | "column"`; `Tool = CellType | "eraser"`; `TOOLS: ReadonlyArray<{id, label, testId}>` in the planned order (floor/wall/column/eraser) with the exact labels and `tool-*` testids. Module remains React-free (no React imports; only types + constants). Obsolete Task-2 forward-looking comment removed. `cellKey`, `validateGridSize`, constants unchanged. Empty stays "absent from the Map" — no `"empty"` variant leaked into `CellType`, preserving Task 4's extrusion input model.
+
+### Toolbar — MATCH
+Single `activeTool` state gives radio semantics for free (exactly one `aria-pressed="true"` at all times); default `"floor"` on mount (AC1). Buttons: `type="button"`, `data-testid={tool.testId}`, `aria-pressed`, filled-vs-outline styles consistent with 套用尺寸. Clicking the active button calls `setActiveTool` with the identical value — React bails out, natural visual no-op. `role="toolbar"` + `data-testid="venue-toolbar"` present. Order: form → error → toolbar → grid, as planned.
+
+### Colors / data-cell-state — MATCH
+`CELL_CLASSES` at module scope with full literal Tailwind strings (v4 scanner-safe): floor `bg-sky-300/border-sky-400` (unchanged from Task 1), wall `bg-amber-700/border-amber-800`, column `bg-gray-500/border-gray-600` (clearly darker than empty's `border-gray-300`), empty unchanged. `data-cell-state` now reports all four states via `cells.get(key) ?? "empty"`.
+
+### Resize behavior — MATCH
+`handleResizeSubmit` clears cells (`setCells(new Map())`) and does NOT touch `activeTool` — tool selection persists across resize (last AC).
+
+### Task 1 regression — PASS
+`playwright-tests/` has zero diff (spec and page object byte-identical). Re-ran `npx playwright test playwright-tests/venue-grid-editor.spec.ts` against a live dev server: **9/9 passed** with zero spec modifications.
+
+### Build gates — PASS
+- `npm run lint` — clean
+- `npx tsc --noEmit` — clean
+- `npm run build` — succeeds; `/venue` still prerendered static
+
+### Manual checklist — UPDATED
+`manual-tests/venue-grid-editor.md` gains a 13-item Task 2 section covering every planned scenario: default tool, radio switching, active-button re-click no-op, per-tool paint colors, same-type toggle, cross-type overwrite, eraser on occupied/empty, per-tool drag stroke lock (incl. eraser over mixed cells), mid-drag toolbar clicks, and resize-keeps-tool.
 
 ## 🔴 Critical Issues (Must Fix — Pipeline Paused)
 None.
@@ -15,45 +43,29 @@ None.
 
 ## 💡 Suggestions (Consider — No Action Required)
 
-### Suggestion 1 — Redundant state updates when dragging over already-painted cells
-- **File**: src/components/venue/GridEditor.tsx:75-78
-- **Note**: `handleCellPointerEnter` calls `applyPaint` even when the cell is already in the target state, producing a new `Map` and a full re-render per entered cell. Within the plan's accepted perf envelope ("one state update max per pointerenter" — satisfied), so log-only. A short-circuit when the cell already matches the stroke mode would skip no-op renders if 50×50 drag feel ever degrades.
+### Suggestion 1
+- **File**: src/components/venue/GridEditor.tsx:178
+- **Issue**: The active toolbar button omits the `hover:bg-[#383838]` hover treatment that the visually identical 套用尺寸 button has. Arguably deliberate (hover feedback on an already-selected radio button is noise), but noting the one-class divergence from the "mirror 套用尺寸" style family for consistency awareness.
+- **Impact**: Cosmetic only.
 
-### Suggestion 2 — `Number()` accepts exotic numeric literals
-- **File**: src/lib/venue/grid.ts:36-37
-- **Note**: `Number("0x10")` → 16 and `Number("1e1")` → 10 pass validation as legal integers. Behavior is still safe (result is a valid in-range integer; NaN/decimal/out-of-range are all rejected, never clamped), so this is cosmetic. A `/^\d+$/` pre-check would make input semantics stricter.
-
-### Suggestion 3 — Doubled gridlines between adjacent cells
-- **File**: src/components/venue/GridEditor.tsx:101-105
-- **Note**: Each cell carries its own 1px border, so interior gridlines render 2px. Acceptance only requires cells be visually distinguishable (they are). Task 3 (rulers/labels) is the natural time to revisit if a designer cares.
-
-### Suggestion 4 — No keyboard/AT affordance on cells
-- **Note**: Cells are plain `<div>`s with pointer handlers only. Not in scope or acceptance criteria for this task; flag to product if accessibility becomes a requirement for the editor.
+### Suggestion 2
+- **File**: src/lib/venue/grid.ts:10
+- **Issue**: `TOOLS` is a `ReadonlyArray` (per plan), but its element objects remain mutable. Appending `as const` (or `Readonly<{...}>` elements) would make the metadata fully immutable.
+- **Impact**: Theoretical only; no code mutates it.
 
 ## Security Assessment
-- Secrets scan: PASS (no secrets, env vars, tokens, or credentials anywhere in new files)
-- Input validation: PASS (resize inputs validated via pure `validateGridSize`; rejects — never clamps — NaN/non-integer/<1/>50/>2,500 cells with Traditional-Chinese messages; grid retains previous valid size on rejection)
-- Auth/authz: N/A by design — and verified: `src/proxy.ts` untouched, no Supabase client imports in any new file, zero `/api/*` involvement, no logging at all
-- Test coverage: manual checklist `manual-tests/venue-grid-editor.md` covers all 11 plan test items / all 10 acceptance criteria; Playwright hooks (`data-testid="venue-grid"`, `data-x`/`data-y`/`data-cell-state`, `grid-width-input`, `grid-height-input`, `grid-resize-apply`, `grid-size-error`) in place for the playwright stage
+- Secrets scan: PASS (no secrets, tokens, env access, or network calls — purely local UI state)
+- Input validation: N/A (only boundary is `validateGridSize`, unchanged)
+- Auth/authz: N/A — `src/proxy.ts`, `src/app/api/**`, `src/lib/supabase/**` verified zero diff; no Supabase imports in frontend code
+- No new localStorage/persistence introduced
+- Test coverage: manual checklist updated (13 new items); Playwright regression 9/9 green; new Playwright coverage scheduled for the playwright stage per plan
 
 ## Plan Compliance
-- [x] All architect plan steps implemented (steps 1–8 verified item by item)
-- [x] Implementation matches plan intent:
-  - Sparse `Map<string, CellType>` state, `CellType = "floor"` one-member union with Task 2 widening comment
-  - `src/lib/venue/grid.ts` is pure — no React imports; all constants (`DEFAULT_GRID_SIZE` 10×10, `MIN_DIMENSION_M` 1, `MAX_DIMENSION_M` 50, `MAX_TOTAL_CELLS` 2500, `CELL_SIZE_PX` 24) present
-  - Stroke mode locked at `pointerdown` from first cell's state via `paintModeRef`; single click = clean toggle
-  - Implicit-pointer-capture pitfall handled: `releasePointerCapture` guarded by `hasPointerCapture` (GridEditor.tsx:67-69)
-  - Stroke end: grid `onPointerUp` + `onPointerLeave` + window-level `pointerup` safety net in `useEffect`; leave-and-re-enter does not resume painting (mode already nulled)
-  - Resize applies via `validateGridSize` and does `setCells(new Map())` — full clear per spec
-  - DOM/CSS-grid rendering; only dynamic inline styles are `gridTemplateColumns`/`gridTemplateRows` (+ plan-mandated `touch-action: none`); Tailwind for everything else
-  - Colors match spec: empty `bg-white border-gray-300`, floor `bg-sky-300 border-sky-400` (light blue)
-  - `@/*` alias used throughout; component style consistent with `src/app/profile/page.tsx`; no `metadata` export — correct, sibling pages (`login`, `register`, `profile`) don't export one and the plan made it conditional
-  - Server-component page shell (`src/app/venue/page.tsx`) rendering client `<GridEditor />`
-- [x] No unauthorised scope additions (no nav link, no persistence, no toolbar, no extra tools — all correctly out of scope)
-- [x] Verification: `npm run lint` PASS, `npx tsc --noEmit` PASS, `npm run build` PASS (`/venue` static, Proxy middleware unchanged)
-- [x] No TODOs, debug logs, or commented-out code
+- [x] All architect plan steps (1–10) implemented
+- [x] Implementation matches plan intent (`VenuePage.ts` additions correctly deferred to the playwright stage per the plan)
+- [x] No unauthorised scope additions (only the 3 planned files changed; `page.tsx` untouched as specified)
 
 ## Conversation Log
 | Issue | Developer Response | Resolution |
 |---|---|---|
-| — | — | No exchanges needed; zero 🔴/🟡 findings |
+| — | No exchanges needed; zero critical or should-fix findings. | — |
