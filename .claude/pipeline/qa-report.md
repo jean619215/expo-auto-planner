@@ -1,66 +1,71 @@
-# QA Report — /api/auth/resend (Task 8, 會員系統)
-> Generated: 2026-07-11T07:51:00Z | QA iteration: 1
+# QA Report — 登入頁「重新寄送驗證信」按鈕 + 60 秒冷卻
+> Generated: 2026-07-11T11:00:00+08:00 | QA iteration: 1
+> Story: 會員系統 | Task 9 of 9 | Type: FRONTEND
 
 ## Summary
-- Tests executed: 17
-- Passed: 17
+- Tests executed: 18 (static/code-level, per manual checklist section 10) + 6 regression checks
+- Passed: 24
 - Failed: 0
-- Blocked: 0
+- Blocked: 0 (real-browser Playwright run intentionally deferred — see note below)
 
-## Test Method Note
-No local Docker/Supabase CLI stack was available in this environment (`supabase` CLI not installed, `docker ps` fails — daemon not running), so the manual checklist's Inbucket-based email-content assertions could not be exercised. `.env.local` points at a real (cloud) Supabase project, and `npm run dev` was runnable against it, so **live HTTP requests were used wherever they were safe to run** (structural validation, and a disposable real test account using a `+qa<timestamp>` alias of the developer's own inbox to get one genuine "registered but unverified" account without spamming a third party). Everything below is marked **[LIVE]** (actual `curl` against the running dev server + real cloud Supabase) or **[CODE]** (static code inspection) per check.
+## Important note on scope of this QA stage
+Per the user's explicit standing decision recorded in this pipeline (task-log.md 2026-07-10 / 2026-07-11 entries for Task 7 and Task 9), the actual browser/Playwright acceptance run for the login-page resend button + cooldown (this task) is **deferred and will be executed together with the still-outstanding Task 7 playwright backlog** (`supabase/tests/auth_routes_manual.md` §9.3) in a single combined playwright pass, rather than run separately at this QA stage. This QA pass is therefore **static/code-level verification only** — reading the actual implementation against every acceptance criterion, edge case, and error state, plus the manual checklist (§10) that was authored for this task. This is consistent with AGENTS.md ("No JS test framework — verification is manual: checklists... For FRONTEND tasks, Playwright is the acceptance gate (pipeline `playwright` stage)").
+
+No interactive/browser-driven claim is made in this report beyond what static code inspection can support.
 
 ## Recommendation
-APPROVED — All acceptance criteria, edge cases, and error states pass, including live verification of the critical anti-enumeration behavior (the exact bug class QA caught in Task 2). No Critical/High/Medium bugs found. One Low/informational note logged below (does not block sign-off, mirrors an already-accepted pattern from Task 2).
+**APPROVED** — proceed to `playwright` stage (combined run covering Task 7 backlog + Task 9 scenarios).
 
 ## Acceptance Criteria Results
 | Criterion | Result | Notes |
 |---|---|---|
-| 合法 email (已註冊未驗證) POST → 200 通用訊息,實際重寄驗證信 | ✅ PASS | [LIVE] Registered `jean619215+qa<ts>@gmail.com` via `/api/auth/register` (real 200, account created), then POSTed resend → `200 {"message":"若該信箱已註冊且尚未驗證，驗證信已重新寄出"}`. Server log confirmed Supabase's GoTrue was actually invoked (the *second* resend call hit the real `over_email_send_rate_limit` path, proving the flow reaches Supabase for real). |
-| 不存在的 email POST → 同樣 200 同一句訊息 (防枚舉) | ✅ PASS | [LIVE] `qa-nonexistent-probe-zzz@example.com` and a second nonexistent address both returned `HTTP/1.1 200 OK` + byte-identical body `{"message":"若該信箱已註冊且尚未驗證，驗證信已重新寄出"}` as the real-account case. Diffed status line + body across 3 runs (real-unverified ×2, nonexistent ×1) — identical. |
-| 已驗證的 email POST → 同樣 200 通用訊息 | ✅ PASS (verified by code inspection) | [CODE] No Inbucket access to click a real confirmation link in this environment, so this exact scenario wasn't driven end-to-end live. Verified in `src/app/api/auth/resend/route.ts:44-49`: **every** `error` returned by `supabase.auth.resend()` (which is exactly how GoTrue reports "already confirmed" — no separate success/failure code path exists) is funneled into the same `console.error` + `200 {message: GENERIC_RESEND_MESSAGE}` branch as the success path. There is no conditional on error type/code before the generic response, so "already verified" cannot structurally produce a different response than any other case. |
-| 被 rate limit (max_frequency 內重複) → 對外仍 200,server log 記錯誤碼 | ✅ PASS | [LIVE] Real 429 reproduced: second resend call against the just-registered account produced server log `[auth/resend] resend error: status=429 code=over_email_send_rate_limit message=For security purposes, you can only request this after 43 seconds.` while the HTTP response was still `200` with the exact same generic body. Confirmed log line contains **no email address**. |
-| 缺 email / 格式錯 → 400 | ✅ PASS | [LIVE] `{}` → `400 {"error":"缺少 email"}`; `{"email":123}` → `400 {"error":"缺少 email"}`; `{"email":""}` → `400 {"error":"缺少 email"}`; `{"email":"not-an-email"}` → `400 {"error":"email 格式錯誤"}`. |
-| 未登入可呼叫 (在 proxy 白名單內) | ✅ PASS | [LIVE] All curl calls above were sent with no cookies at all and never received `401`. [CODE] Confirmed `"/api/auth/resend"` is present in `PUBLIC_API_PATHS` in `src/proxy.ts:12`, and `config.matcher` (`src/proxy.ts:78`) already covers `/api/:path*` so no matcher change was needed — matches architect plan exactly. |
-| 不 log email/token/session 於錯誤訊息外洩層級 | ✅ PASS | [LIVE] Inspected full `npm run dev` log for the whole test session: only line present is `[auth/resend] resend error: status=429 code=over_email_send_rate_limit message=...`. No email, token, cookie value, or session data logged. `console.error` call in `route.ts:45-47` only interpolates `error.status`/`error.code`/`error.message`, never `email`. |
+| 403 email_not_confirmed → 按鈕額外顯示 (idle) | ✅ PASS | `login/page.tsx:94` `setShowResend(result.error === EMAIL_NOT_CONFIRMED_ERROR)`; `EMAIL_NOT_CONFIRMED_ERROR` in `auth-client.ts:17` matches `login/route.ts:38` string exactly (byte-for-byte compared) |
+| 點擊 idle 按鈕 → 立即呼叫 resend,body 用當下 email,進入 loading/disabled | ✅ PASS | `handleResendClick` (`login/page.tsx:102-120`) reads `email` from the enclosing render's state (live, not a stale snapshot); `resendLoading` set true immediately, button `disabled={resendLoading || inCooldown}` |
+| 200 → 逐字顯示後端訊息 + 啟動 60 秒冷卻 + 按鈕文字含剩餘秒數 + disabled 直到歸零 | ✅ PASS | `setResendMessage(result.message ?? "")` — no string concatenation/rewriting; backend `GENERIC_RESEND_MESSAGE` in `resend/route.ts:5-6` is `"若該信箱已註冊且尚未驗證，驗證信已重新寄出"`, identical to the string frontend renders raw |
+| 400 / 網路錯誤 → 顯示重寄專屬錯誤,不進冷卻,立即恢復 idle | ✅ PASS | `postJson` (`auth-client.ts:19-47`) collapses both 4xx JSON errors and fetch-reject/network failure into `{ ok:false, error }`; `handleResendClick`'s `else` branch only calls `setResendError(...)`, never touches `cooldownEndsAt`/`writeCooldownEndsAt`; `finally` unconditionally resets `resendLoading` to false |
+| 重整頁面 → 從 localStorage 到期時間戳算剩餘秒數繼續倒數 (非重給滿 60 秒) | ✅ PASS | mount `useEffect` (`login/page.tsx:32-41`) calls `readCooldownEndsAt()` and sets `cooldownEndsAt` to the **stored absolute timestamp**, not `Date.now() + 60000`; render then derives `remainingSeconds` from that real value, so a reload mid-cooldown shows the actual remaining time |
+| 倒數歸零 → 自動轉 idle + 清除 localStorage | ✅ PASS | third `useEffect` (`login/page.tsx:55-62`) fires when `now >= cooldownEndsAt`, calls `setCooldownEndsAt(null)` and `clearCooldownEndsAt()` with no user interaction required |
+| 冷卻全域 (不分 email),換 email 仍顯示剩餘秒數 disabled | ✅ PASS | `RESEND_COOLDOWN_STORAGE_KEY` is a single fixed key (no email in it); `handleSubmit`'s 403 branch resets `resendMessage`/`resendError`/`showResend` but deliberately never touches `cooldownEndsAt` |
 
 ## Edge Case Results
 | Edge Case | Result | Notes |
 |---|---|---|
-| 非 JSON body → 400 不 500 | ✅ PASS | [LIVE] `-d 'not-json'` → `400 {"error":"請求格式錯誤"}` (caught by the `try/catch` around `request.json()` in `route.ts:9-14`). |
-| proxy 白名單漏加 → 未登入呼叫會 401 | ✅ PASS (not reproduced — whitelist confirmed present) | [CODE + LIVE] Whitelist entry confirmed present (see AC row above); live calls without cookies never hit 401, so this bug class does not manifest. |
-| manual checklist + Insomnia 檔各加 resend 請求 | ✅ PASS | [CODE] `supabase/tests/auth_routes_manual.md` §4B (lines 226-327) covers all 8 sub-scenarios including the explicit "compare status+body byte-for-byte" instruction. `supabase/tests/insomnia_auth.json` has request `req_resend` (lines 117-130) with correct URL/body/description. |
+| Loading 中重複點擊防重複送出 | ✅ PASS | `if (resendLoading || inCooldown) return;` guard at top of `handleResendClick`, plus `disabled` attribute on the button |
+| localStorage 值格式異常/被竄改 (非數字、極舊時間) → 視為已到期,不 crash | ✅ PASS | `readCooldownEndsAt` (`resend-cooldown.ts:10-20`): `Number(raw)` on a non-numeric string yields `NaN`; `!Number.isFinite(value) || value <= 0` catches both `NaN` and any non-positive/past value → returns `null`, which the caller treats as expired/idle |
+| localStorage 不可用 (無痕限制) → try/catch,不 throw,in-memory 倒數仍可用 | ✅ PASS | All three exported functions (`readCooldownEndsAt`/`writeCooldownEndsAt`/`clearCooldownEndsAt`) wrap the `window.localStorage.*` call in `try { } catch { }` with an empty/`null`-returning catch body — a thrown `DOMException` from a disabled storage API cannot propagate; in-memory `cooldownEndsAt`/`now` state still updates normally within the page lifetime |
+| 背景分頁節流 → 倒數用「目前時間 vs 到期時間戳」重算,非遞減計數器 | ✅ PASS | `remainingSeconds = Math.max(0, Math.ceil((cooldownEndsAt - now) / 1000))` recomputed from `Date.now()` on every tick (`login/page.tsx:64-67`); no `count - 1` style decrement anywhere in the file — confirmed by full-file review, not just a code comment claiming it |
+| Email 欄位在按鈕出現後被修改 → 送出的是當下值,非 403 快照 | ✅ PASS | `handleResendClick` is a plain function defined in the component body, re-created each render, closing over the current `email` state variable — there is no `useCallback`/ref snapshot capturing an earlier value, so it always reads the latest `email` at click time |
+| 非 email_not_confirmed 的 403/401 (帳密錯誤) → 不顯示重寄按鈕 | ✅ PASS | `setShowResend(result.error === EMAIL_NOT_CONFIRMED_ERROR)` is a strict equality check — any other error string (e.g. generic 401 "帳號或密碼錯誤") evaluates to `false`; existing red-error-only behavior preserved |
 
 ## Error State Results
 | Error State | Result | Notes |
 |---|---|---|
-| Supabase returns any error (incl. 429) | ✅ PASS | See rate-limit row above — real 429 observed and correctly masked. |
-| Malformed/non-object body | ✅ PASS | `null`, non-object, and missing-key cases all return 400 (see edge cases). |
+| `/api/auth/resend` 400 (缺 email/格式錯) | ✅ PASS | Falls into `postJson`'s `res.ok === false` path → `{ ok:false, status, error }`; `handleResendClick` displays `result.error`, no cooldown started |
+| 網路層失敗 (fetch reject/timeout) | ✅ PASS | `postJson`'s outer `try/catch` returns `{ ok:false, status:0, error: NETWORK_ERROR }` (`"連線失敗，請稍後再試"`) on fetch rejection — same non-cooldown code path as the 400 case |
 
 ## Regression Check
-| Feature | Result |
-|---|---|
-| `/api/auth/register` (unaffected by this task) | ✅ PASS — [LIVE] still returns 200 generic message; test account creation succeeded (verified indirectly via successful subsequent resend/rate-limit behavior). |
-| `/api/auth/login` (proxy passthrough for auth-page routing) | ✅ PASS — [LIVE] wrong password against the real test account correctly returned `401 {"error":"帳號或密碼錯誤"}` — not affected by the new proxy whitelist entry. |
-| `/api/auth/logout` | ✅ PASS — [LIVE] returns `200`, no errors. |
-| `src/proxy.ts` matcher/whitelist change scope | ✅ PASS — [CODE] diff is the single added line noted in the architect plan; no other logic touched. |
+| Feature | Result | Notes |
+|---|---|---|
+| Login form fields/submit stay fully usable while resend block is shown | ✅ PASS | Diff confirms email/password inputs and `<button type="submit">` JSX are byte-identical to before Task 9; the new `showResend` block is inserted as an additional sibling `<div>` between the existing `errorMsg` block and the submit button — nothing is replaced or overlaid |
+| `src/app/register/page.tsx` | ✅ PASS | Not touched by this task (confirmed via `git diff HEAD~1 --stat` — file absent from the changed list); read in full, logic/JSX unchanged from Task 5 baseline |
+| `src/app/api/auth/logout` / `AuthNav.tsx` (logout flow) | ✅ PASS | Neither file appears in `git status`/diff for this task; no code path in `login/page.tsx` touches logout state |
+| `src/proxy.ts` public allowlist for `/api/auth/resend` | ✅ PASS | Untouched by this task (added in Task 8, verified still present at line 12); this task makes zero changes to `proxy.ts` |
+| `npm run lint` | ✅ PASS | Clean exit, no warnings/errors |
+| `npx tsc --noEmit` | ✅ PASS | Clean exit, no type errors |
 
 ## Security Test
-- Sensitive data exposure: **PASS** — response body across all 200s is exactly `{"message": "..."}`; no session/token/user-existence data ever exposed. `console.error` never includes email (verified live).
-- Input validation: **PASS** — JSON parse, type, empty-string, and regex checks all enforced at the boundary before any Supabase call (`route.ts:9-28`).
-- Auth boundary: **PASS** — route is intentionally public (unauthenticated resend is the feature); confirmed reachable without cookies and not blocked by proxy.
-- Anti-enumeration (project's specific focus per AGENTS.md / Task 2 lesson): **PASS** — status code and body are byte-identical across: (a) real registered-but-unverified account, (b) nonexistent account, (c) rate-limited real account. This is the exact bug class QA caught in Task 2 (differing status codes leaking account existence), and it does not recur here.
+- Sensitive data exposure: **PASS** — `resend-cooldown.ts` persists only a numeric timestamp under a single global key (no email, no token); no new `console.*` calls introduced in this task's diff; `resendMessage`/`resendError` render the backend's literal strings verbatim with no client-side branching that could leak account-existence signal
+- Input validation: **PASS** — no new user-facing input surface added (email reused from existing form field, validated server-side per Task 8); localStorage read path treats any malformed/out-of-range value as "expired" rather than trusting it
+- Auth boundary: **N/A** — `/api/auth/resend` is an already-approved public allowlisted route (Task 8); this task adds no new authorization surface
 
 ## Test Coverage
-- New code coverage: manual checklist (8 sub-cases in `auth_routes_manual.md` §4B) + Insomnia request — matches AGENTS.md's "no JS framework, manual checklist counts" bar.
-- Minimum required: manual checklist/Insomnia entry present for new logic (per AGENTS.md Testing Requirements).
+- New code coverage: manual checklist `supabase/tests/auth_routes_manual.md` §10 (18 numbered steps, §10.1–§10.8) maps 1:1 onto all 7 acceptance criteria + 6 edge cases + 2 error states; Insomnia collection unaffected (this task has no new HTTP endpoint)
+- Minimum required (per AGENTS.md): manual checklist counts as coverage for new logic — satisfied
 - Status: **PASS**
 
 ## Bugs Found
-None — Critical/High/Medium: 0.
+None. 0 Critical / 0 High / 0 Medium / 0 Low.
 
-One **informational (non-blocking) observation**, logged for awareness only, not filed as a bug:
-- `src/app/api/auth/resend/route.ts` has no `try/catch` around the `supabase.auth.resend(...)` call itself (only the `request.json()` parse is wrapped). If the SDK call were to *throw* rather than return `{ error }` (e.g. a genuine network-level failure to reach the Supabase project), the route would surface an unhandled exception → framework default 500, which would be a status-code difference from the 200 given to every other case, technically breaking the anti-enumeration invariant for that one failure mode. In practice `supabase-js`'s `resend()` wraps network/HTTP-level failures into a returned `AuthError` rather than throwing, so this was not reproducible live. This exact pattern (no try/catch around the SDK call) already exists in `register/route.ts` and was accepted in Task 2's QA pass — so this is a **pre-existing, previously-accepted risk shape**, not a regression introduced by Task 8. Not blocking sign-off; flagging for the human/architect's awareness only, in case a follow-up hardening pass across all auth routes is ever scheduled.
-
-## Cloud Dashboard Reminder (per architect Definition of Done)
-Per the architect plan, the `max_frequency = "60s"` change in `supabase/config.toml` **only affects the local Docker stack**. This environment doesn't have a local stack, and the config.toml change cannot govern the cloud project used above. **A human must still manually set the email rate-limit interval to 60s in the cloud project's Dashboard → Authentication → Rate Limits.** (Observed default cloud rate limit during live testing was already ~43-60s, per the real `over_email_send_rate_limit` message, but this should not be relied upon in place of the explicit Dashboard setting.)
+## Outstanding (non-blocking, carried from review-report.md)
+- `Design.pdf` remains untracked at repo root (flagged in Task 8 and Task 9 reviews) — unrelated to this task's scope, not a QA blocker.
+- Review Suggestion 2 (theoretical same-tick double-click race window on `handleResendClick`) — same pattern as the existing `handleSubmit`/`submitting` guard, backend resend is idempotent, no user-facing impact. Logged, not blocking.

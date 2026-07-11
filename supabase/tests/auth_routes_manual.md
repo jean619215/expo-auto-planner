@@ -653,9 +653,11 @@ curl -i "http://localhost:3000/api/auth/../profile"
         refresh)未遺失(比對 request 前後 cookie 值)。
 12. [ ] Console / server log 全程無 token、session、cookie 值輸出。
 
-### 9.3 延後至 Task 9 合併跑的 playwright 情境清單
+### 9.3 併入第 10 節一併跑的 playwright 情境清單
 
-以下情境本 task 不跑 playwright(依 orchestrator 決議,Task 7/9 一次合併跑瀏覽器驗收),先記錄供 Task 9 完成後一併執行:
+以下情境本 task 不跑 playwright(依 orchestrator 決議,Task 7/9 一次合併跑瀏覽器驗收),
+清單詳見「第 10 節」的 §10.8（第 9 節本身情境）與 §10.1–§10.7（Task 9 resend 按鈕情境），
+由 playwright agent 統一跑一輪:
 
 - 未登入 `page.goto('/profile')` → 斷言 URL 為 `/login` 且看得到登入表單。
 - 走完登入流程後 `page.goto('/login')` → 斷言 URL 為 `/`;
@@ -664,7 +666,82 @@ curl -i "http://localhost:3000/api/auth/../profile"
 - 未登入 `page.goto('/')`、`/login`、`/register` → 皆正常渲染,無非預期 redirect。
 - API context 檢查:未登入打 `/api/profile` → status 401、body 為 JSON。
 - 登出後 reload `/profile` → 導回 `/login`。
-- (與 Task 9 resend 驗證信按鈕情境一併執行,由 playwright agent 統一跑一輪)
+
+---
+
+## 10. 登入頁「重新寄送驗證信」按鈕 (`src/app/login/page.tsx`,Task 9)
+
+> 前置:dev server 運行、一組**已註冊但尚未完成 email 驗證**的測試帳號（可重用
+> 現有帳號、或以新 email 重新走一次 1.1 的註冊流程但先不去 Inbucket 點驗證連結）。
+> 冷卻狀態存在瀏覽器 localStorage 的 `auth:resend_cooldown_ends_at` key,測試前後
+> 可用 DevTools Application 面板清除該 key 以重置狀態。
+
+### 10.1 按鈕出現條件（idle 狀態）
+
+1. [ ] 用未驗證帳號的 email + 正確密碼登入 → 提交後除既有紅色錯誤文字「請先至
+       信箱完成驗證再登入」外,額外出現「重新寄送驗證信」按鈕,可點擊(非
+       disabled)。
+2. [ ] 用**錯誤密碼**登入(帳密錯誤,非 email_not_confirmed 分支)→ 只顯示紅色
+       「帳號或密碼錯誤」文字,**不**出現重寄按鈕。
+
+### 10.2 點擊 → loading → 200 成功
+
+3. [ ] 點擊「重新寄送驗證信」→ 按鈕立即變為 disabled,文字顯示「寄送中…」。
+4. [ ] 回應返回後,按鈕下方（獨立於紅色錯誤文字的區塊）出現中性樣式（非紅色）
+       文字,內容逐字為「若該信箱已註冊且尚未驗證，驗證信已重新寄出」,不多不少、
+       不加工。
+5. [ ] 登入表單的 email/password 輸入框與「登入」按鈕全程仍可見、可操作，未被
+       任何取代畫面蓋掉。
+
+### 10.3 冷卻啟動與倒數
+
+6. [ ] 成功後按鈕文字變為「重新寄送驗證信 (60 秒後可重試)」且視覺灰階
+       disabled；每秒遞減一次，觀察數字持續變化（例如 59、58、57…）。
+7. [ ] 倒數期間點擊按鈕（嘗試點擊 disabled 按鈕）→ 不會觸發任何新的網路請求
+       （DevTools Network 面板確認）。
+8. [ ] 倒數歸零時，按鈕自動（不需重新整理或任何互動）恢復為「重新寄送驗證信」
+       可點擊狀態。
+
+### 10.4 400 / 網路錯誤 → 不進冷卻
+
+9. [ ] 用 DevTools Network 面板將 `/api/auth/resend` 設為離線（Offline）後點擊
+       按鈕 → 顯示錯誤訊息（如「連線失敗，請稍後再試」），按鈕立即恢復 idle
+       可點擊，**不**進入 60 秒冷卻（可再次點擊，不用等待）。
+10. [ ] 錯誤訊息與成功訊息視覺樣式可區分（顏色不同），且與登入本身的紅色錯誤
+        文字並存、不互相覆蓋。
+
+### 10.5 冷卻持久化（重整頁面）
+
+11. [ ] 觸發一次成功重寄，倒數中途（例如剩 40 秒左右）重新整理頁面 → 按鈕直接
+        以「重新寄送驗證信 (約 40 秒後可重試)」的 disabled 狀態渲染（不是重新給滿
+        60 秒），且繼續倒數。
+12. [ ] 等到倒數真正歸零後重新整理頁面 → 按鈕以 idle 狀態渲染（localStorage 中
+        對應 key 已被清除，可用 DevTools Application 面板確認）。
+
+### 10.6 localStorage 異常情境
+
+13. [ ] 用 DevTools Application 面板手動把 `auth:resend_cooldown_ends_at` 改成
+        非數字字串（例如 `"abc"`）後重新整理頁面 → 按鈕以 idle 狀態渲染，頁面
+        不 crash，Console 無未捕捉例外。
+14. [ ] 把該 key 改成很久以前的過去時間戳（例如 `1`）後重新整理頁面 → 視為已
+        到期，按鈕以 idle 狀態渲染。
+15. [ ] （可選，模擬 localStorage 不可用）於無痕視窗停用網站資料儲存後操作 →
+        頁面內倒數仍正常運作（in-memory），僅重整後會遺失冷卻狀態，不視為
+        阻斷性 bug，且不 throw 造成頁面錯誤。
+
+### 10.7 換 email 不重置冷卻 / 送出當下 email 值
+
+16. [ ] 觸發一次成功重寄（冷卻中）後，**清空並改填另一個 email**（維持在
+        email_not_confirmed 分支或重新登入觸發），確認按鈕仍顯示剩餘秒數的
+        disabled 狀態（不因換了 email 而重置為可點擊）。
+17. [ ] 觸發 403 分支後，在按鈕出現後修改 email 輸入框內容，再點擊「重新寄送
+        驗證信」→ 用 DevTools Network 面板確認送出的 request body 是**修改後**
+        的新 email，而非觸發 403 當下的舊值。
+
+### 10.8 不 log 敏感資訊
+
+18. [ ] 完成 10.1–10.7 全程觀察瀏覽器 Console 與 `npm run dev` 終端輸出：不得
+        出現 token、session、cookie 內容。
 
 ---
 

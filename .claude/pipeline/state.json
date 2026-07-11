@@ -1,9 +1,9 @@
 {
   "story_file": "stories/membership-system.md",
   "story_title": "會員系統",
-  "task_index": 7,
-  "current_task": "[BACKEND] 建立 /api/auth/resend API,通用200防枚舉,429/錯誤只記server log,max_frequency 60s",
-  "task_type": "BACKEND",
+  "task_index": 8,
+  "current_task": "[FRONTEND] 登入頁「請先驗證」分支顯示「重寄驗證信」按鈕,呼叫 /api/auth/resend,含 60 秒倒數冷卻",
+  "task_type": "FRONTEND",
   "iteration": {
     "review": 1,
     "qa": 1
@@ -15,13 +15,14 @@
     "implement": "completed",
     "review": "completed",
     "qa": "completed",
-    "playwright": "n/a"
+    "playwright": "pending"
   },
   "flags": {
     "review_critical_pending": false,
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "stage": "complete",
-  "last_updated": "2026-07-11T15:51:00+08:00"
+  "stage": "playwright",
+  "last_updated": "2026-07-11T11:00:00+08:00",
+  "notes": "QA static/code-level verification APPROVED (24/24 checks pass, 0 bugs). Actual Playwright browser run for this task is deferred per user's standing instruction and will be executed combined with the outstanding Task 7 playwright backlog (auth_routes_manual.md §9.3) plus this task's §10 scenarios in a single pass."
 }

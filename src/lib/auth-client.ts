@@ -12,6 +12,10 @@ export type AuthResult = {
 
 const NETWORK_ERROR = "連線失敗，請稍後再試";
 
+// 與 src/app/api/auth/login/route.ts 的 email_not_confirmed 分支固定字串一致，
+// 供 login/page.tsx 判斷是否顯示「重新寄送驗證信」按鈕，而不必自行硬編字串。
+export const EMAIL_NOT_CONFIRMED_ERROR = "請先至信箱完成驗證再登入";
+
 async function postJson(
   path: string,
   body?: Record<string, unknown>
@@ -58,4 +62,8 @@ export function loginRequest(
 
 export function logoutRequest(): Promise<AuthResult> {
   return postJson("/api/auth/logout");
+}
+
+export function resendVerificationRequest(email: string): Promise<AuthResult> {
+  return postJson("/api/auth/resend", { email });
 }
