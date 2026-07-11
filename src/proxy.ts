@@ -9,6 +9,7 @@ const PUBLIC_API_PATHS = new Set([
   "/api/auth/login",
   "/api/auth/confirm",
   "/api/auth/logout",
+  "/api/auth/resend",
 ]);
 
 const NOT_LOGGED_IN_ERROR = "請先登入"; // aligned with src/app/api/profile/route.ts

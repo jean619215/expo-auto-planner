@@ -27,7 +27,7 @@
 - [x] [FRONTEND] 建立註冊/登入頁面表單,呼叫自己的 `/api/auth/*`,不直接呼叫 Supabase client
 - [x] [FRONTEND] 建立個人資料頁面 (顯示/編輯暱稱等欄位),呼叫 `/api/profile`
 - [x] [FRONTEND] 建立路由保護邏輯:未登入時導向登入頁,已登入時登入/註冊頁導向首頁
-- [ ] [BACKEND] 建立 `/api/auth/resend` API,包 `supabase.auth.resend({type:'signup'})`,一律回通用 200 防枚舉,429/錯誤只記 server log;正式環境 `config.toml` `max_frequency` 調為 60s
+- [x] [BACKEND] 建立 `/api/auth/resend` API,包 `supabase.auth.resend({type:'signup'})`,一律回通用 200 防枚舉,429/錯誤只記 server log;正式環境 `config.toml` `max_frequency` 調為 60s
 - [ ] [FRONTEND] 登入頁「請先驗證」分支顯示「重寄驗證信」按鈕,呼叫 `/api/auth/resend`,含 60 秒倒數冷卻 (localStorage 持久化,重整頁面不繞過)
 
 <!--

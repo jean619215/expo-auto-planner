@@ -223,6 +223,110 @@ curl -i -X POST http://localhost:3000/api/auth/logout
 
 ---
 
+## 4B. 重寄驗證信 (`POST /api/auth/resend`)
+
+> 防枚舉核心：以下三種 200 情境（已註冊未驗證 / 不存在 / 已驗證）必須回**逐字
+> 完全一致**的 status code 與 body，不是「看起來差不多」——請實際複製兩次 curl
+> 的完整輸出（含 status line）比對字元是否相同。
+
+### 4B.1 已註冊未驗證 email → 200，實際重寄驗證信
+
+用 1.1 註冊但尚未完成 2.1 驗證的帳號：
+
+```bash
+curl -i -X POST http://localhost:3000/api/auth/resend \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com"}'
+```
+
+- 預期 status：`200`
+- 預期 body：`{"message":"若該信箱已註冊且尚未驗證，驗證信已重新寄出"}`
+- 於 Inbucket（http://127.0.0.1:54324）確認該信箱收到新一封驗證信，信中連結
+  指向 `/api/auth/confirm`，點擊可正常完成驗證（同 2.1 流程）。
+
+### 4B.2 不存在的 email → 200，與 4B.1 逐字相同
+
+```bash
+curl -i -X POST http://localhost:3000/api/auth/resend \
+  -H "Content-Type: application/json" \
+  -d '{"email":"never-registered@example.com"}'
+```
+
+- ⚠️ **關鍵防枚舉斷言**：此回應的 status code 與 body 必須與 4B.1 **逐字完全
+  一致**（皆為 `200` + 同一句訊息字串）。若有任何差異（哪怕只是多一個空白），
+  即代表客戶端可藉此推斷該 email 是否已註冊 → 視為 fail。
+
+### 4B.3 已驗證的 email → 200，與 4B.1 逐字相同
+
+用已完成 2.1 驗證的帳號（例如 3.2 使用的帳號）：
+
+```bash
+curl -i -X POST http://localhost:3000/api/auth/resend \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com"}'
+```
+
+- 預期 status/body 與 4B.1、4B.2 **逐字相同**（Supabase 端不會實際寄信，但對外
+  不可區分）。
+- 確認 Inbucket **沒有**收到新的信件（因為該帳號已驗證，Supabase 不會寄）。
+
+### 4B.4 60 秒內重複打同一 email → 對外仍 200，server log 記錯誤但不含 email
+
+延續 4B.1 的帳號，在 60 秒內（`config.toml` `max_frequency = "60s"`）再送一次：
+
+```bash
+curl -i -X POST http://localhost:3000/api/auth/resend \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com"}'
+```
+
+- 預期 status/body 仍與 4B.1 **逐字相同**（`200` + 同一句通用訊息）。
+- 觀察 `npm run dev` 終端輸出：應出現一行 `[auth/resend] resend error: status=...
+  code=... message=...`，**不含 email 字串**。
+- 於 Inbucket 確認第二封信**未**寄出（被 rate limit 擋下）。
+
+### 4B.5 缺 email / 格式錯 / 非 JSON body → 400
+
+```bash
+curl -i -X POST http://localhost:3000/api/auth/resend \
+  -H "Content-Type: application/json" \
+  -d '{}'
+
+curl -i -X POST http://localhost:3000/api/auth/resend \
+  -H "Content-Type: application/json" \
+  -d '{"email":"not-an-email"}'
+
+curl -i -X POST http://localhost:3000/api/auth/resend \
+  -H "Content-Type: application/json" \
+  -d 'not-json'
+```
+
+- 三者皆預期 status `400`（**非** `500`），body 含 `error` 訊息。
+
+### 4B.6 未登入可呼叫（proxy 白名單）
+
+```bash
+curl -i -X POST http://localhost:3000/api/auth/resend \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com"}'
+```
+
+- 不帶任何 cookie，預期**不是** `401`（`src/proxy.ts` 的 `PUBLIC_API_PATHS` 已
+  加入 `/api/auth/resend`）——應正常走到 route handler 回應（依上述情境為
+  `200` 或 `400`）。
+
+### 4B.7 回歸：既有 auth checklist 不受影響
+
+- 抽測第 1、2、3、4 節（register / confirm / login / logout）任一情境，確認
+  `src/proxy.ts` 白名單改動未影響既有行為。
+
+### 4B.8 不 log 敏感資訊
+
+- 完成 4B.1–4B.7 全程觀察 `npm run dev` 終端輸出：不得出現完整 email、token、
+  session、cookie 內容（僅 4B.4 的錯誤碼/訊息屬預期）。
+
+---
+
 ## 5. Profile 自動建立驗證 (DB trigger)
 
 於 Supabase Studio SQL Editor 執行：

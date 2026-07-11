@@ -1,96 +1,66 @@
-# QA Report — 路由保護邏輯 (會員系統 Task 7)
-> Generated: 2026-07-11T02:10:00Z | QA iteration: 1
-> Story: 會員系統 | Task 7 of 9 | Type: FRONTEND
-> Method: 靜態驗收 (逐行比對 `src/proxy.ts` 與 `supabase/tests/auth_routes_manual.md` 第 9 節)。瀏覽器實測依 orchestrator 決議延後至 Task 9 完成後合併跑 playwright。
+# QA Report — /api/auth/resend (Task 8, 會員系統)
+> Generated: 2026-07-11T07:51:00Z | QA iteration: 1
 
 ## Summary
-- Tests executed: 15 (静態比對項目,對應下方各表)
-- Passed: 15
+- Tests executed: 17
+- Passed: 17
 - Failed: 0
-- Blocked: 0 (playwright 情境非本次範圍,已於 checklist 9.3 記錄延後清單,非 blocked)
+- Blocked: 0
+
+## Test Method Note
+No local Docker/Supabase CLI stack was available in this environment (`supabase` CLI not installed, `docker ps` fails — daemon not running), so the manual checklist's Inbucket-based email-content assertions could not be exercised. `.env.local` points at a real (cloud) Supabase project, and `npm run dev` was runnable against it, so **live HTTP requests were used wherever they were safe to run** (structural validation, and a disposable real test account using a `+qa<timestamp>` alias of the developer's own inbox to get one genuine "registered but unverified" account without spamming a third party). Everything below is marked **[LIVE]** (actual `curl` against the running dev server + real cloud Supabase) or **[CODE]** (static code inspection) per check.
 
 ## Recommendation
-APPROVED — 靜態驗收全數通過,無 Critical/High/Medium bug。playwright 欠帳已依決議記錄,不影響本 task 簽核。
+APPROVED — All acceptance criteria, edge cases, and error states pass, including live verification of the critical anti-enumeration behavior (the exact bug class QA caught in Task 2). No Critical/High/Medium bugs found. One Low/informational note logged below (does not block sign-off, mirrors an already-accepted pattern from Task 2).
 
 ## Acceptance Criteria Results
 | Criterion | Result | Notes |
 |---|---|---|
-| 未登入直接開 `/profile` → 導向 `/login`,不顯示 profile 內容 | ✅ PASS | `!user && matchesPage(pathname, PROTECTED_PAGES)` → `NextResponse.redirect(new URL(LOGIN_PATH, ...))`;API 分支獨立,不會渲染頁面內容。checklist 9.1-1 已列。 |
-| 已登入開 `/login` → 導向 `/` | ✅ PASS | `user && matchesPage(pathname, AUTH_PAGES)` 命中 `/login` → redirect `/`。checklist 9.1-6。 |
-| 已登入開 `/register` → 導向 `/` | ✅ PASS | 同上邏輯,`AUTH_PAGES` 含 `/register`。checklist 9.1-7。 |
-| 未登入開 `/login`、`/register`、`/` → 正常顯示 | ✅ PASS | 未登入時 `user && ...` 條件為 false,不進入 redirect,falls through 回傳原 `response`;`/` 不在 matcher,proxy 不執行。checklist 9.1-2/3/4。 |
-| 已登入開 `/profile` → 正常顯示 | ✅ PASS | `!user` 為 false,且 `/profile` 不在 `AUTH_PAGES`,falls through 正常回應。checklist 9.1-5。 |
-| API 行為不變: 未登入打 `/api/profile` 仍 401 JSON | ✅ PASS | `isApiRequest` 分支與頁面分支互斥(`if (!isApiRequest) {...; return response;}` 先行 return),401 JSON 分支程式碼與 Task 4 一致,未被觸及。checklist 9.1-8。 |
-| 靜態資源 (_next、favicon、圖片) 不受影響 | ✅ PASS | `config.matcher` 為靜態陣列 `["/api/:path*","/profile","/login","/register"]`,不含 `_next`/`favicon`/`public` 路徑,故不經 proxy。checklist 9.2-10。 |
-| redirect 不進入無限迴圈 | ✅ PASS | 見下方「無 redirect 迴圈」真值表分析。 |
+| 合法 email (已註冊未驗證) POST → 200 通用訊息,實際重寄驗證信 | ✅ PASS | [LIVE] Registered `jean619215+qa<ts>@gmail.com` via `/api/auth/register` (real 200, account created), then POSTed resend → `200 {"message":"若該信箱已註冊且尚未驗證，驗證信已重新寄出"}`. Server log confirmed Supabase's GoTrue was actually invoked (the *second* resend call hit the real `over_email_send_rate_limit` path, proving the flow reaches Supabase for real). |
+| 不存在的 email POST → 同樣 200 同一句訊息 (防枚舉) | ✅ PASS | [LIVE] `qa-nonexistent-probe-zzz@example.com` and a second nonexistent address both returned `HTTP/1.1 200 OK` + byte-identical body `{"message":"若該信箱已註冊且尚未驗證，驗證信已重新寄出"}` as the real-account case. Diffed status line + body across 3 runs (real-unverified ×2, nonexistent ×1) — identical. |
+| 已驗證的 email POST → 同樣 200 通用訊息 | ✅ PASS (verified by code inspection) | [CODE] No Inbucket access to click a real confirmation link in this environment, so this exact scenario wasn't driven end-to-end live. Verified in `src/app/api/auth/resend/route.ts:44-49`: **every** `error` returned by `supabase.auth.resend()` (which is exactly how GoTrue reports "already confirmed" — no separate success/failure code path exists) is funneled into the same `console.error` + `200 {message: GENERIC_RESEND_MESSAGE}` branch as the success path. There is no conditional on error type/code before the generic response, so "already verified" cannot structurally produce a different response than any other case. |
+| 被 rate limit (max_frequency 內重複) → 對外仍 200,server log 記錯誤碼 | ✅ PASS | [LIVE] Real 429 reproduced: second resend call against the just-registered account produced server log `[auth/resend] resend error: status=429 code=over_email_send_rate_limit message=For security purposes, you can only request this after 43 seconds.` while the HTTP response was still `200` with the exact same generic body. Confirmed log line contains **no email address**. |
+| 缺 email / 格式錯 → 400 | ✅ PASS | [LIVE] `{}` → `400 {"error":"缺少 email"}`; `{"email":123}` → `400 {"error":"缺少 email"}`; `{"email":""}` → `400 {"error":"缺少 email"}`; `{"email":"not-an-email"}` → `400 {"error":"email 格式錯誤"}`. |
+| 未登入可呼叫 (在 proxy 白名單內) | ✅ PASS | [LIVE] All curl calls above were sent with no cookies at all and never received `401`. [CODE] Confirmed `"/api/auth/resend"` is present in `PUBLIC_API_PATHS` in `src/proxy.ts:12`, and `config.matcher` (`src/proxy.ts:78`) already covers `/api/:path*` so no matcher change was needed — matches architect plan exactly. |
+| 不 log email/token/session 於錯誤訊息外洩層級 | ✅ PASS | [LIVE] Inspected full `npm run dev` log for the whole test session: only line present is `[auth/resend] resend error: status=429 code=over_email_send_rate_limit message=...`. No email, token, cookie value, or session data logged. `console.error` call in `route.ts:45-47` only interpolates `error.status`/`error.code`/`error.message`, never `email`. |
 
 ## Edge Case Results
 | Edge Case | Result | Notes |
 |---|---|---|
-| 登出後停在 `/profile` 再重新整理 → 導向 `/login` | ✅ PASS | 登出清除 session 後 `user` 為 null,下一次請求命中 `!user && matchesPage(PROTECTED)` → redirect。checklist 9.1-9 已列為驗收步驟。 |
-| redirect 用 server 端 3xx,不用 window.location 硬跳 | ✅ PASS | 兩處皆為 `NextResponse.redirect(new URL(...))`,產生標準 307,無 client-side `window.location` 使用。 |
-| 不 log token/session | ✅ PASS | `grep -n "console\." src/proxy.ts` 無結果;整檔無任何 log 語句。checklist 9.2-12。 |
+| 非 JSON body → 400 不 500 | ✅ PASS | [LIVE] `-d 'not-json'` → `400 {"error":"請求格式錯誤"}` (caught by the `try/catch` around `request.json()` in `route.ts:9-14`). |
+| proxy 白名單漏加 → 未登入呼叫會 401 | ✅ PASS (not reproduced — whitelist confirmed present) | [CODE + LIVE] Whitelist entry confirmed present (see AC row above); live calls without cookies never hit 401, so this bug class does not manifest. |
+| manual checklist + Insomnia 檔各加 resend 請求 | ✅ PASS | [CODE] `supabase/tests/auth_routes_manual.md` §4B (lines 226-327) covers all 8 sub-scenarios including the explicit "compare status+body byte-for-byte" instruction. `supabase/tests/insomnia_auth.json` has request `req_resend` (lines 117-130) with correct URL/body/description. |
 
 ## Error State Results
 | Error State | Result | Notes |
 |---|---|---|
-| API 未登入 (無 session cookie) 打受保護路徑 | ✅ PASS | 回 401 JSON `{"error":"請先登入"}`,非 redirect,與 Task 4 契約一致。 |
-| PUBLIC_API_PATHS 白名單放行 (未登入) | ✅ PASS | 本 task 未變更第 7 節既有邏輯,`PUBLIC_API_PATHS.has(pathname)` 分支維持在頁面分流之後、401 判斷之前,順序未動。 |
-
-## 真值表逐格核對 (無 redirect 迴圈)
-| pathname | 登入狀態 | 結果 |
-|---|---|---|
-| `/profile` | 未登入 | → 307 `/login` |
-| `/profile` | 已登入 | → 正常顯示 (fall through) |
-| `/login` | 未登入 | → 正常顯示 (fall through) |
-| `/login` | 已登入 | → 307 `/` |
-| `/register` | 未登入 | → 正常顯示 (fall through) |
-| `/register` | 已登入 | → 307 `/` |
-| `/` | 任一 | → 不在 matcher,proxy 不執行,正常顯示 |
-| `/profile/xxx` (子路徑) | 未登入 | → 307 `/login` (matchesPage 前綴比對 + matcher anchoring 涵蓋,已用 `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/proxy.md:130` 「`/about` matches `/about` and `/about/team`」核實此版本 anchoring 語義) |
-| `/profilexyz` (非子路徑,誤判風險) | 未登入 | → 不匹配 (`matchesPage` 要求 `===` 或以 `p+"/"` 開頭,`/profilexyz` 兩者皆不成立) → 正常放行,無誤擋 |
-
-結論: 兩個 redirect 目標分別為 `/login`(僅未登入放行,已登入時走的是別條分支不受影響)與 `/`(不在 matcher,不會再次觸發 proxy 判斷)。不存在「redirect 目標又被同一 proxy 邏輯導回原頁」的組合,無迴圈。
-
-## Redirect 安全 / Cookie 核對
-| 項目 | Result | Notes |
-|---|---|---|
-| redirect 目標無 open redirect | ✅ PASS | `LOGIN_PATH`/`HOME_PATH` 為模組內固定常數字串;`new URL(LOGIN_PATH, request.url)` 中 `request.url` 僅提供 origin,不含使用者可控 query/header 影響路徑。 |
-| 帶 session 刷新 cookie | ✅ PASS | 兩個 redirect 分支皆經 `withCookiesFrom(response, NextResponse.redirect(...))`,把 `updateSession` 產生的 `response` 上的 cookie(含刷新後的 session)逐一複製到最終回應,不遺失 `Set-Cookie`。 |
-
-## matcher / 子路徑核對
-| 項目 | Result | Notes |
-|---|---|---|
-| matcher 靜態陣列與 PROTECTED_PAGES/AUTH_PAGES 常數同步 | ✅ PASS | `PROTECTED_PAGES=["/profile"]`、`AUTH_PAGES=["/login","/register"]`,`config.matcher=["/api/:path*","/profile","/login","/register"]`,三者項目一致,且程式碼中兩處均有「新增頁面需同步」註解提醒。 |
-| 子路徑 fail-closed | ✅ PASS | 見上方真值表 `/profile/xxx` 一列;matcher 與 `matchesPage` 的 anchoring 語義經官方文件核實一致,不會漏保護子路徑。 |
-
-## Checklist 涵蓋度 (`supabase/tests/auth_routes_manual.md` 第 9 節)
-| 項目 | Result | Notes |
-|---|---|---|
-| 9.1 (9 項) 涵蓋全部真值表格子 + 登出後重新整理 + API 401 不變 | ✅ PASS | 逐項比對 orchestrator 驗收條件,一一對應,無遺漏。 |
-| 9.2 (3 項) 迴圈防護 / 靜態資源 / Set-Cookie / 不 log | ✅ PASS | 涵蓋 DevTools Network 迴圈檢查、`_next/static`+favicon 200、cookie 比對、log 稽核。 |
-| 9.3 playwright 延後清單已定義 | ✅ PASS | 明列 6 項情境對應 Task 9 合併驗收,並註明與 Task 9 resend 按鈕情境一併執行。 |
+| Supabase returns any error (incl. 429) | ✅ PASS | See rate-limit row above — real 429 observed and correctly masked. |
+| Malformed/non-object body | ✅ PASS | `null`, non-object, and missing-key cases all return 400 (see edge cases). |
 
 ## Regression Check
 | Feature | Result |
 |---|---|
-| Task 4 API 401 auth gate (`/api/*`) | ✅ PASS — 分支邏輯與程式碼位置未變,仍為原本 allowlist → 401 → 放行三段 |
-| Task 5 login/register 頁面渲染 (client 邏輯) | ✅ PASS — page 檔案本身零改動 (git diff 僅觸及 `src/proxy.ts` 與 checklist) |
-| Task 6 `/profile` 頁面 (nickname 編輯) | ✅ PASS — page 檔案零改動;未登入情境行為由「顯示登入提示」升級為「導向 /login」,屬本 task 預期行為變更,非回歸 |
+| `/api/auth/register` (unaffected by this task) | ✅ PASS — [LIVE] still returns 200 generic message; test account creation succeeded (verified indirectly via successful subsequent resend/rate-limit behavior). |
+| `/api/auth/login` (proxy passthrough for auth-page routing) | ✅ PASS — [LIVE] wrong password against the real test account correctly returned `401 {"error":"帳號或密碼錯誤"}` — not affected by the new proxy whitelist entry. |
+| `/api/auth/logout` | ✅ PASS — [LIVE] returns `200`, no errors. |
+| `src/proxy.ts` matcher/whitelist change scope | ✅ PASS — [CODE] diff is the single added line noted in the architect plan; no other logic touched. |
 
 ## Security Test
-- Sensitive data exposure: PASS — 無新增 log、redirect response body 為空,無敏感資料
-- Input validation: PASS — pathname 由 Next.js normalize,`matchesPage` 僅用等值/前綴比對常數,無使用者輸入影響分支邏輯
-- Auth boundary: PASS — fail-closed 維持;子路徑、未知路徑均不會意外放行受保護頁面;無 open redirect
-
-## Bugs Found
-無。
+- Sensitive data exposure: **PASS** — response body across all 200s is exactly `{"message": "..."}`; no session/token/user-existence data ever exposed. `console.error` never includes email (verified live).
+- Input validation: **PASS** — JSON parse, type, empty-string, and regex checks all enforced at the boundary before any Supabase call (`route.ts:9-28`).
+- Auth boundary: **PASS** — route is intentionally public (unauthenticated resend is the feature); confirmed reachable without cookies and not blocked by proxy.
+- Anti-enumeration (project's specific focus per AGENTS.md / Task 2 lesson): **PASS** — status code and body are byte-identical across: (a) real registered-but-unverified account, (b) nonexistent account, (c) rate-limited real account. This is the exact bug class QA caught in Task 2 (differing status codes leaking account existence), and it does not recur here.
 
 ## Test Coverage
-- New code coverage: 手動 checklist 第 9 節 12 項 (9.1×9 + 9.2×3),逐項對應全部驗收條件、edge case 與安全項目
-- Minimum required: 依 AGENTS.md — 無 JS test framework,手動 checklist 視為合格覆蓋
-- Status: PASS
+- New code coverage: manual checklist (8 sub-cases in `auth_routes_manual.md` §4B) + Insomnia request — matches AGENTS.md's "no JS framework, manual checklist counts" bar.
+- Minimum required: manual checklist/Insomnia entry present for new logic (per AGENTS.md Testing Requirements).
+- Status: **PASS**
 
-## Playwright 欠帳 (依決議,非本次 blocker)
-- 已於 checklist 9.3 明確列出 6 項延後情境,將於 Task 9 完成後與 Task 9 情境合併跑一輪 playwright。
-- 已於 task-log.md 記錄本 task stage 直接標記 complete、playwright 欠帳待 Task 9。
+## Bugs Found
+None — Critical/High/Medium: 0.
+
+One **informational (non-blocking) observation**, logged for awareness only, not filed as a bug:
+- `src/app/api/auth/resend/route.ts` has no `try/catch` around the `supabase.auth.resend(...)` call itself (only the `request.json()` parse is wrapped). If the SDK call were to *throw* rather than return `{ error }` (e.g. a genuine network-level failure to reach the Supabase project), the route would surface an unhandled exception → framework default 500, which would be a status-code difference from the 200 given to every other case, technically breaking the anti-enumeration invariant for that one failure mode. In practice `supabase-js`'s `resend()` wraps network/HTTP-level failures into a returned `AuthError` rather than throwing, so this was not reproducible live. This exact pattern (no try/catch around the SDK call) already exists in `register/route.ts` and was accepted in Task 2's QA pass — so this is a **pre-existing, previously-accepted risk shape**, not a regression introduced by Task 8. Not blocking sign-off; flagging for the human/architect's awareness only, in case a follow-up hardening pass across all auth routes is ever scheduled.
+
+## Cloud Dashboard Reminder (per architect Definition of Done)
+Per the architect plan, the `max_frequency = "60s"` change in `supabase/config.toml` **only affects the local Docker stack**. This environment doesn't have a local stack, and the config.toml change cannot govern the cloud project used above. **A human must still manually set the email rate-limit interval to 60s in the cloud project's Dashboard → Authentication → Rate Limits.** (Observed default cloud rate limit during live testing was already ~43-60s, per the real `over_email_send_rate_limit` message, but this should not be relied upon in place of the explicit Dashboard setting.)

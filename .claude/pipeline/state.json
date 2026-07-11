@@ -1,9 +1,9 @@
 {
   "story_file": "stories/membership-system.md",
   "story_title": "會員系統",
-  "task_index": 6,
-  "current_task": "[FRONTEND] 建立路由保護邏輯:未登入時導向登入頁,已登入時登入/註冊頁導向首頁",
-  "task_type": "FRONTEND",
+  "task_index": 7,
+  "current_task": "[BACKEND] 建立 /api/auth/resend API,通用200防枚舉,429/錯誤只記server log,max_frequency 60s",
+  "task_type": "BACKEND",
   "iteration": {
     "review": 1,
     "qa": 1
@@ -11,11 +11,11 @@
   "checkpoints": {
     "scan": "completed",
     "orchestrate": "completed",
-    "architect": "completed",
+    "architect": "approved",
     "implement": "completed",
     "review": "completed",
     "qa": "completed",
-    "playwright": "deferred_to_task9"
+    "playwright": "n/a"
   },
   "flags": {
     "review_critical_pending": false,
@@ -23,5 +23,5 @@
     "escalated": false
   },
   "stage": "complete",
-  "last_updated": "2026-07-11T02:10:00Z"
+  "last_updated": "2026-07-11T15:51:00+08:00"
 }

@@ -114,6 +114,21 @@
       "metaSortKey": -60
     },
     {
+      "_id": "req_resend",
+      "_type": "request",
+      "parentId": "fld_auth",
+      "name": "6. POST resend (重寄驗證信, 防枚舉一律 200)",
+      "method": "POST",
+      "url": "{{ _.base_url }}/api/auth/resend",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"email\": \"{{ _.email }}\"\n}"
+      },
+      "headers": [{ "name": "Content-Type", "value": "application/json" }],
+      "description": "已註冊未驗證 / 不存在 / 已驗證三種情況皆回相同 200 + 通用訊息 (逐字比對). 60 秒內重複打同一 email → 仍 200, server log 記錯誤但不含 email. 缺 email / 格式錯 → 400.",
+      "metaSortKey": -55
+    },
+    {
       "_id": "fld_profile",
       "_type": "request_group",
       "parentId": "wrk_auth_expo",

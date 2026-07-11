@@ -1,41 +1,38 @@
-# Orchestrator Output — Task 7
+# Orchestrator Output — Task 8
 
-> Story: 會員系統 | Task 7 of 9 | Type: FRONTEND
+> Story: 會員系統 | Task 8 of 9 | Type: BACKEND
 
 ## Task
-[FRONTEND] 建立路由保護邏輯:未登入時導向登入頁,已登入時登入/註冊頁導向首頁。
+[BACKEND] 建立 `/api/auth/resend` API,包 `supabase.auth.resend({type:'signup'})`,一律回通用 200 防枚舉,429/錯誤只記 server log;正式環境 `config.toml` `max_frequency` 調為 60s。
 
-## Confirmed Decisions (from user)
-1. 未登入造訪受保護頁面 (`/profile`,及未來新增的受保護頁) → 自動 redirect 到 `/login`。
-2. 已登入造訪 `/login` 或 `/register` → 自動 redirect 到首頁 `/`。
-3. 首頁 `/` 維持公開 (登入與否都可看)。
-4. **驗收方式**: 使用者選擇 Task 7/8/9 完成後一次手動驗收;playwright 瀏覽器驗收延後到 Task 9 完成後合併跑 (一次涵蓋 7+9 的前端情境)。本 task QA 後 stage 直接標 complete,playwright 欠帳記在 task-log。
+## Confirmed Decisions (story 追加時已與使用者確認)
+1. `POST /api/auth/resend` — body `{email}`。呼叫 `supabase.auth.resend({ type: "signup", email })` 重寄驗證信。
+2. **防枚舉**: 無論 email 是否存在/已驗證/被 rate limit,一律回 **200 + 同一句通用訊息** (對齊 register 的防枚舉模式,含 status code 一致)。
+3. 429/其他 Supabase 錯誤: 只記 server log (`console.error`,不含 email/token),對外仍通用 200。
+4. `supabase/config.toml` `[auth.email]` 的 `max_frequency` 設 60s (伺服器端冷卻,防濫發)。前端 60 秒倒數是 Task 9。
+5. 此 route 是**公開 API** — 必須加進 `src/proxy.ts` 的 `PUBLIC_API_PATHS` 白名單 (未登入者才需要重寄驗證信)。
 
-## 實作位置 (architect 評估)
-兩個選項,architect 擇一並說明:
-- **選項 A**: 擴充 `src/proxy.ts` — matcher 加頁面路徑,對頁面請求做 redirect (API 維持 401 JSON)。優點: 集中一處、server 端擋、無閃爍;缺點: matcher 變複雜,要小心不誤擋靜態資源。
-- **選項 B**: 頁面層處理 — `/profile` 已有 401 顯示邏輯改成 router.replace("/login");login/register 頁載入時查登入狀態導回首頁。優點: proxy 不動;缺點: client 端判斷有載入閃爍、每頁自己處理易漏。
-> 傾向 A (集中、fail-closed 精神一致),但由 architect 依 Next.js 16 proxy 文件確認頁面 redirect 的正確做法後定案。
-
-## Backend/既有契約
-- proxy 已對 `/api/*` 做 401 (Task 4),頁面路徑目前不在 matcher 內。
-- `updateSession(request)` 回 `{response, user}`,可直接判斷登入狀態。
-- 受保護頁面清單目前僅 `/profile`;設計需讓未來新增頁面容易 (常數清單)。
+## Backend 契約 (供 Task 9 前端對齊)
+- `POST /api/auth/resend` body `{"email": "..."}`
+  - 缺 email / 格式錯 → 400 `{"error":"..."}` (輸入驗證,對齊 register 風格)
+  - 其他一律 → 200 `{"message":"若該信箱已註冊且尚未驗證，驗證信已重新寄出"}` (通用訊息,固定一句)
+- 用哪個 client: register 用的是 admin client (signUp);resend 評估用 server (anon) client 即可 — 由 architect 依 supabase-js resend API 需求定案。
+- 註: emailRedirectTo 需與 register 一致 (`${NEXT_PUBLIC_SITE_URL}/api/auth/confirm`),讓重寄的信也走同一 confirm 流程。
 
 ## Acceptance Criteria
-- 未登入瀏覽器直接開 `/profile` → 被導向 `/login` (URL 變為 /login),不顯示 profile 內容。
-- 已登入開 `/login` → 導向 `/`;已登入開 `/register` → 導向 `/`。
-- 未登入開 `/login`、`/register`、`/` → 正常顯示,不受影響。
-- 已登入開 `/profile` → 正常顯示。
-- API 行為不變: 未登入打 `/api/profile` 仍回 401 JSON (不是 redirect)。
-- 靜態資源 (_next、favicon、圖片) 不受影響。
-- redirect 不進入無限迴圈 (login→/→login 之類)。
+- 合法 email (已註冊未驗證) POST → 200 通用訊息,實際重寄驗證信。
+- 不存在的 email POST → **同樣 200 同一句訊息** (status + body 完全一致,防枚舉)。
+- 已驗證的 email POST → 同樣 200 通用訊息 (Supabase 端不會寄,對外不可區分)。
+- 被 rate limit (max_frequency 內重複) → 對外仍 200 通用訊息,server log 記錯誤碼。
+- 缺 email / 格式錯 → 400。
+- 未登入可呼叫 (在 proxy 白名單內)。
+- 不 log email/token/session 於錯誤訊息外洩層級 (server log 僅錯誤碼/訊息)。
 
 ## Edge Cases / Notes for QA
-- 登出後停在 `/profile` 再重新整理 → 導向 `/login`。
-- redirect 用 3xx (server 端) 或 router.replace (client 端),不可用 window.location 硬跳造成歷史紀錄污染 (依所選方案)。
-- 不 log token/session。
+- 非 JSON body → 400 不 500。
+- proxy 白名單漏加 → 未登入呼叫會 401,直接違反驗收 — QA 必查 proxy.ts。
+- manual checklist + Insomnia 檔各加 resend 請求。
 
 ## Out of Scope
-- 登入後導回原本想去的頁面 (returnTo/redirect query) — 之後有需要再加。
-- Task 8/9 (resend API 與按鈕)。
+- 前端按鈕與倒數 (Task 9)。
+- 忘記密碼重寄 (type 只做 signup)。
