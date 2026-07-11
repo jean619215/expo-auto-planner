@@ -47,3 +47,6 @@ next-env.d.ts
 
 # personal local permissions, not shared project config
 .claude/settings.local.json
+
+# personal file, not project-related
+/Design.pdf
