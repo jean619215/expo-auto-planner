@@ -24,6 +24,11 @@ export const MAX_DIMENSION_M = 50;
 export const MAX_TOTAL_CELLS = 2500;
 export const CELL_SIZE_PX = 24;
 
+// 座標軸標籤密度規則：維度 ≤ 20 公尺時每公尺標一次；> 20 公尺時每 5 公尺標一次
+// （最後一個邊緣值一律附加，確保總長度永遠看得到）。寬/高各自獨立判斷。
+export const AXIS_LABEL_DENSE_MAX = 20;
+export const AXIS_LABEL_STEP = 5;
+
 /** 建立 Map 的 key："x,y"（0-indexed，col,row）。 */
 export function cellKey(x: number, y: number): string {
   return `${x},${y}`;
@@ -68,4 +73,37 @@ export function validateGridSize(
   }
 
   return { ok: true, size: { widthM, heightM } };
+}
+
+/**
+ * 回傳某一軸（寬或高）的座標軸「邊緣」標籤值（0-based，尺規慣例：
+ * 標的是格線邊緣，不是格子中心）。
+ * - dimension ≤ AXIS_LABEL_DENSE_MAX：回傳 0..dimension 每一個整數。
+ * - dimension > AXIS_LABEL_DENSE_MAX：回傳 0, 5, 10, … 的倍數，並在
+ *   dimension 本身不是 AXIS_LABEL_STEP 倍數時，額外附加 dimension，
+ *   確保總長度的邊緣一律看得到（例：23 → 0,5,10,15,20,23）。
+ */
+export function axisLabels(dimension: number): number[] {
+  if (dimension <= AXIS_LABEL_DENSE_MAX) {
+    return Array.from({ length: dimension + 1 }, (_, i) => i);
+  }
+  const labels: number[] = [];
+  for (let v = 0; v <= dimension; v += AXIS_LABEL_STEP) {
+    labels.push(v);
+  }
+  if (labels[labels.length - 1] !== dimension) {
+    labels.push(dimension);
+  }
+  return labels;
+}
+
+/** 依 cells Map 統計各類型（地板/牆壁/柱子）目前已佔用的格數。 */
+export function countCellTypes(
+  cells: ReadonlyMap<string, CellType>
+): Record<CellType, number> {
+  const counts: Record<CellType, number> = { floor: 0, wall: 0, column: 0 };
+  for (const type of cells.values()) {
+    counts[type] += 1;
+  }
+  return counts;
 }

@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  axisLabels,
   CELL_SIZE_PX,
   cellKey,
+  countCellTypes,
   DEFAULT_GRID_SIZE,
   TOOLS,
   type CellType,
@@ -101,6 +103,10 @@ export default function GridEditor() {
     paintModeRef.current = null;
   }
 
+  const stats = countCellTypes(cells);
+  const topLabels = axisLabels(size.widthM);
+  const leftLabels = axisLabels(size.heightM);
+
   const rows = [];
   for (let y = 0; y < size.heightM; y++) {
     for (let x = 0; x < size.widthM; x++) {
@@ -186,19 +192,89 @@ export default function GridEditor() {
       </div>
 
       <div
-        data-testid="venue-grid"
-        onPointerUp={handleGridPointerUp}
-        onPointerLeave={handleGridPointerLeave}
+        data-testid="venue-grid-frame"
         style={{
           display: "grid",
-          gridTemplateColumns: `repeat(${size.widthM}, ${CELL_SIZE_PX}px)`,
-          gridTemplateRows: `repeat(${size.heightM}, ${CELL_SIZE_PX}px)`,
-          touchAction: "none",
+          gridTemplateColumns: "auto auto",
+          gridTemplateRows: "auto auto",
         }}
         className="w-fit select-none"
       >
-        {rows}
+        <div />
+        <div
+          data-testid="grid-ruler-top"
+          style={{
+            position: "relative",
+            width: size.widthM * CELL_SIZE_PX,
+            height: "1rem",
+          }}
+        >
+          {topLabels.map((v) => (
+            <span
+              key={v}
+              data-axis-value={v}
+              style={{
+                position: "absolute",
+                left: v * CELL_SIZE_PX,
+                transform: "translateX(-50%)",
+              }}
+              className="text-[10px] text-zinc-500"
+            >
+              {v}
+            </span>
+          ))}
+        </div>
+        <div
+          data-testid="grid-ruler-left"
+          style={{
+            position: "relative",
+            width: "1.5rem",
+            height: size.heightM * CELL_SIZE_PX,
+          }}
+        >
+          {leftLabels.map((v) => (
+            <span
+              key={v}
+              data-axis-value={v}
+              style={{
+                position: "absolute",
+                top: v * CELL_SIZE_PX,
+                right: "0.25rem",
+                transform: "translateY(-50%)",
+              }}
+              className="text-[10px] text-zinc-500"
+            >
+              {v}
+            </span>
+          ))}
+        </div>
+        <div
+          data-testid="venue-grid"
+          onPointerUp={handleGridPointerUp}
+          onPointerLeave={handleGridPointerLeave}
+          style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${size.widthM}, ${CELL_SIZE_PX}px)`,
+            gridTemplateRows: `repeat(${size.heightM}, ${CELL_SIZE_PX}px)`,
+            touchAction: "none",
+          }}
+        >
+          {rows}
+        </div>
       </div>
+
+      <p data-testid="grid-scale-legend" className="text-sm text-zinc-600">
+        每格 = 1 公尺
+      </p>
+
+      <p data-testid="grid-stats" className="text-sm text-zinc-600">
+        地板 <span data-testid="stats-floor">{stats.floor}</span> 格（
+        {stats.floor} 平方公尺）・牆壁{" "}
+        <span data-testid="stats-wall">{stats.wall}</span> 格（{stats.wall}{" "}
+        平方公尺）・柱子{" "}
+        <span data-testid="stats-column">{stats.column}</span> 格（
+        {stats.column} 平方公尺）
+      </p>
     </div>
   );
 }

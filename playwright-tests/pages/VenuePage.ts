@@ -20,6 +20,14 @@ export class VenuePage {
   readonly toolWall: Locator;
   readonly toolColumn: Locator;
   readonly toolEraser: Locator;
+  readonly gridFrame: Locator;
+  readonly rulerTop: Locator;
+  readonly rulerLeft: Locator;
+  readonly legend: Locator;
+  readonly stats: Locator;
+  readonly statsFloor: Locator;
+  readonly statsWall: Locator;
+  readonly statsColumn: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -33,6 +41,44 @@ export class VenuePage {
     this.toolWall = page.getByTestId("tool-wall");
     this.toolColumn = page.getByTestId("tool-column");
     this.toolEraser = page.getByTestId("tool-eraser");
+    this.gridFrame = page.getByTestId("venue-grid-frame");
+    this.rulerTop = page.getByTestId("grid-ruler-top");
+    this.rulerLeft = page.getByTestId("grid-ruler-left");
+    this.legend = page.getByTestId("grid-scale-legend");
+    this.stats = page.getByTestId("grid-stats");
+    this.statsFloor = page.getByTestId("stats-floor");
+    this.statsWall = page.getByTestId("stats-wall");
+    this.statsColumn = page.getByTestId("stats-column");
+  }
+
+  /** All `[data-axis-value]` numeric labels rendered inside a ruler, in DOM order. */
+  async rulerValues(ruler: Locator): Promise<number[]> {
+    const spans = ruler.locator("[data-axis-value]");
+    const count = await spans.count();
+    const values: number[] = [];
+    for (let i = 0; i < count; i++) {
+      const raw = await spans.nth(i).getAttribute("data-axis-value");
+      values.push(Number(raw));
+    }
+    return values;
+  }
+
+  /** Locator for a specific axis label span by its numeric value. */
+  rulerLabel(ruler: Locator, value: number): Locator {
+    return ruler.locator(`[data-axis-value="${value}"]`);
+  }
+
+  async statsCounts(): Promise<{ floor: number; wall: number; column: number }> {
+    const [floor, wall, column] = await Promise.all([
+      this.statsFloor.textContent(),
+      this.statsWall.textContent(),
+      this.statsColumn.textContent(),
+    ]);
+    return {
+      floor: Number(floor),
+      wall: Number(wall),
+      column: Number(column),
+    };
   }
 
   /** Select a tool from the toolbar by its data-testid ("tool-wall" etc). */

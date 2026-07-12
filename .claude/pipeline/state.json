@@ -1,8 +1,8 @@
 {
   "story_file": "stories/venue-whitebox-generator.md",
   "story_title": "場地白模產生器 (階段一)",
-  "task_index": 1,
-  "current_task": "[FRONTEND] 擴充工具列:新增「畫牆壁」「畫柱子」「擦除」工具,可切換目前工具即時繪製對應格子類型,不同類型格子顏色區分清楚",
+  "task_index": 2,
+  "current_task": "[FRONTEND] 網格真實尺寸標示(比例尺/座標軸公尺數標籤),確認不規則(非連續、凹凸)地板圈選範圍運作正常",
   "task_type": "FRONTEND",
   "iteration": {
     "review": 1,
@@ -23,5 +23,5 @@
     "escalated": false
   },
   "stage": "complete",
-  "last_updated": "2026-07-12T16:30:00+08:00"
+  "last_updated": "2026-07-12T20:05:00+08:00"
 }
