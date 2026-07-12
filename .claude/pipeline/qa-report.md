@@ -1,110 +1,106 @@
-# QA Report — 網格真實尺寸標示 + 不規則形狀驗證 (Task 3 of 5)
-> Generated: 2026-07-12T19:15:00+08:00 | QA iteration: 1
-> Story: 場地白模產生器 (階段一) | Task 3 of 5 | Type: FRONTEND
+# QA Report — 建立 Konva 平面圖編輯器基礎
+> Generated: 2026-07-12T23:45:00+08:00 | QA iteration: 1
+> Story: 場地白模產生器 (階段一) | Task 1 of 5 | Task type: FRONTEND
 
 ## Summary
-- Tests executed: 27 (9 ACs + 3 edge cases + 5 boundary node-replay checks + 4 regression checks + 3 build gates + 3 security checks)
-- Passed: 27
+- Tests executed: 30 (9 AC checks + 4 edge cases + 2 error-state checks + 6 regression checks + 21 node-replay boundary assertions on `plan.ts`, itemized under Test Coverage)
+- Passed: 30
 - Failed: 0
-- Blocked: 0
+- Blocked: 0 (live-browser interaction/visual assertions deferred to the `playwright` stage per pipeline design — this pass is static/code-level verification as instructed)
 
 ## Recommendation
-APPROVED — all 9 acceptance criteria verified against the implementation (`src/lib/venue/grid.ts`, `src/components/venue/GridEditor.tsx`), all edge cases and node-replayed boundary values hold, existing 19-test Playwright suite (Task 1+2) re-run and green with zero spec modifications, lint/tsc/build all pass, and `proxy.ts`/`api/**`/`supabase/**` show zero diff. This is a FRONTEND task — the live-browser acceptance gate for the new Task 3 ruler/legend/stats/irregular-shape scenarios (`venue-scale-stats.spec.ts`) is the next stage; this QA pass is the static/code-level verification per the pipeline's FRONTEND QA convention.
+APPROVED — QA sign-off granted for static/code-level verification. Both review Should-Fix issues are confirmed fixed. No new Critical/High/Medium bugs found. Proceed to `playwright` stage for live-browser acceptance gate.
 
 ## Acceptance Criteria Results
-| # | Criterion | Result | Notes |
-|---|---|---|---|
-| AC1 | 預設 10x10 網格,頂部與左側各顯示 0..10 標籤,與格線對齊 | ✅ PASS | `axisLabels(10)` (≤20 branch) returns `[0..10]` — 11 values (`dimension+1` length). `grid-ruler-top`/`grid-ruler-left` (GridEditor.tsx:204-250) render one `<span data-axis-value>` per value, positioned at `v * CELL_SIZE_PX` with `translateX(-50%)`/`translateY(-50%)` — same `CELL_SIZE_PX` constant the `venue-grid` cells use for their own `gridTemplateColumns/Rows`, so alignment is structurally guaranteed, not coincidental. |
-| AC2 | Resize 後標籤跟著新尺寸重新渲染並保持對齊 | ✅ PASS | `topLabels`/`leftLabels` (line 107-108) are recomputed every render from `axisLabels(size.widthM)`/`axisLabels(size.heightM)` — no memoization or stale closure. `handleResizeSubmit` (60-70) calls `setSize(result.size)` on success, the sole input to both calls, so labels refresh automatically alongside the grid's own dimensions. |
-| AC3 | 尺寸 > 20(例如 25x8):寬軸每 5m,高軸 ≤20 仍每格 | ✅ PASS | `axisLabels` is a pure, per-dimension function called independently for width and height (line 107-108) with no cross-axis coupling anywhere in `grid.ts` or `GridEditor.tsx`. Node replay: `axisLabels(21)=[0,5,10,15,20,21]` vs `axisLabels(20)=[0..20]` (21 values) confirms the density switch triggers exactly at `>20` and each axis decides independently. |
-| AC4 | 圖例「每格 = 1 公尺」文字存在 | ✅ PASS | `<p data-testid="grid-scale-legend">每格 = 1 公尺</p>` present verbatim (GridEditor.tsx:266-268). |
-| AC5 | 統計顯示地板/牆壁/柱子各自格數(=㎡),各自獨立累計 | ✅ PASS | `countCellTypes` (grid.ts:101-109) does a single pass over `cells.values()` with independent counters per `CellType`; `stats-floor`/`stats-wall`/`stats-column` spans (GridEditor.tsx:270-277) render the counts directly — 1 cell = 1 count = 1 ㎡ by definition, no unit-conversion arithmetic to get wrong. |
-| AC6 | 擦除/覆蓋後統計即時更新 | ✅ PASS | `const stats = countCellTypes(cells)` (line 106) is computed in the render body itself, not in an effect or memo — any `setCells` call (paint, erase, overwrite, or resize's `new Map()`) forces a fresh count on the very next render with nothing to invalidate. |
-| AC7 | 非連續兩塊地板區域可正常繪製,統計為兩塊面積之和 | ✅ PASS | No contiguity/flood-fill/adjacency validation exists anywhere in `applyPaint`, `handleCellPointerDown`, or `handleCellPointerEnter` (unchanged from Task 1/2) — `cells` is a plain sparse `Map<string, CellType>` keyed by independent `"x,y"` strings, so two disjoint regions are simply two disjoint sets of map entries and `countCellTypes` sums every entry regardless of position. Confirmed live via the still-passing Task 1 regression test AC8 (`venue-grid-editor.spec.ts:112`, "non-contiguous painting"). |
-| AC8 | L 形(凹形)與中空(牆圍一圈)形狀可正常繪製 | ✅ PASS (code-level) | Same reasoning as AC7 — per-cell independent Map entries with zero shape/connectivity constraint anywhere in the paint pipeline mean any cell combination (L-shape, or a wall ring with an untouched empty interior) is representable and counted correctly; there is no code path that could reject or auto-fill such shapes. Per architect-plan Test Plan items 6-8, the live-browser confirmation of this is a Playwright scenario deferred to the `playwright` stage — code-level verification here finds nothing that would make it fail. |
-| AC9 | 既有 19 個 Playwright 測試(Task 1+2)全部維持通過 | ✅ PASS | Re-ran `npx playwright test playwright-tests/venue-grid-editor.spec.ts playwright-tests/venue-toolbar.spec.ts` against a live local dev server this session — **19/19 passed**, zero spec/page-object modifications (`git status`/`git diff --stat` show no changes under `playwright-tests/`). |
+| Criterion | Result | Notes |
+|---|---|---|
+| 1. Canvas loads with gridlines + scale indication | ✅ PASS | `PlanEditor.tsx` renders `Rect` background (#fafaf9), 1m/5m `Line` gridlines (`buildGridLines`), axis tick labels every 5m, and a 5m scale bar + "5 公尺" label. Confirmed present in code; visual quality deferred to manual checklist / Playwright. |
+| 2. Default 10x10 centered polygon with handles | ✅ PASS | `DEFAULT_FLOOR` = `[(20,20),(30,20),(30,30),(20,30)]`, centered at (25,25) in the 50x50 area. Node-replay: `JSON.stringify(DEFAULT_FLOOR)` matches expected square. 4 `Circle` handles rendered per vertex. |
+| 3. Vertex drag snaps to 0.5m live | ✅ PASS | `handleVertexDragMove`/`handleVertexDragEnd` → `moveVertex` → `snapPoint` (snap then clamp). Node-replay: `snapToGrid(22.3)===22.5`, `snapToGrid(27.8)===28.0`. Write-back `node.position(snappedPx)` keeps handle synced with polygon Line during drag (per architect plan step 4). |
+| 4. Double-click edge inserts snapped vertex, only within 0.5m of an edge | ✅ PASS (review fix confirmed) | `handleEdgeDblClick` (PlanEditor.tsx:104-108) now destructures `distance` from `findClosestEdge` and returns early when `distance > 0.5` before calling `insertVertexOnEdge`. Node-replay: insert at edge midpoint (distance 0) → 5 vertices, correct index/position; insert at exact vertex position → no-op (same array ref) via `insertVertexOnEdge`'s endpoint guard. This closes Review Issue 1. |
+| 5. Vertex deletion >3 vertices removes + reflows | ✅ PASS | `removeVertex` filters out index; node-replay confirms 5-vertex polygon removing index 0 or last index reconnects the loop correctly (values match expected remaining vertices in order). |
+| 6. 3-vertex floor rejects deletion (no-op) | ✅ PASS | `removeVertex` returns same array reference when `polygon.length <= MIN_FLOOR_VERTICES`. Node-replay confirms triangle removeVertex(0) returns identical reference (no mutation). |
+| 7. Bounds clamping to [0,50], still snapped | ✅ PASS | `clampToBounds` clamps to `[0,50]` after `snapToGrid`; `safeNumber` guards non-finite inputs. Node-replay: `moveVertex(sq, 0, {x:-100,y:1000})` → `(0,50)`; `snapPoint({x:-5,y:60})` → `(0,50)`. |
+| 8. Concave shapes render without validation errors | ✅ PASS | No self-intersection checks in `plan.ts` or `PlanEditor.tsx` (confirmed by code read); Konva `Line closed` handles concave point sets natively. No blocking logic present. Visual confirmation deferred to manual checklist. |
+| 9. Old grid-cell editor + specs fully deleted | ✅ PASS | `git status` confirms deletion of `src/components/venue/GridEditor.tsx`, `src/lib/venue/grid.ts`, `playwright-tests/venue-grid-editor.spec.ts`, `playwright-tests/venue-toolbar.spec.ts`, `playwright-tests/venue-scale-stats.spec.ts`, `playwright-tests/pages/VenuePage.ts`, `manual-tests/venue-grid-editor.md`. `grep -rn "GridEditor\|venue/grid\|VenuePage" src playwright-tests manual-tests` → only coincidental `function VenuePage()` component name (not the deleted page-object class) remains. |
 
 ## Edge Case Results
 | Edge Case | Result | Notes |
 |---|---|---|
-| 1x1 最小網格:標籤 0,1 正常顯示 | ✅ PASS | Node replay: `axisLabels(1) = [0, 1]` (dense branch, 2 values). `MIN_DIMENSION_M = 1` permits this size via the unchanged `validateGridSize`. |
-| 50x50 最大網格:兩軸皆走每 5m 規則,尾端 50 有標 | ✅ PASS | Node replay: `axisLabels(50) = [0,5,10,15,20,25,30,35,40,45,50]`. 50 is itself a multiple of 5, so the "append final edge if not already included" guard (`labels[labels.length-1] !== dimension`) correctly avoids a duplicated trailing `50`. |
-| 空網格統計:全部 0,不顯示錯誤 | ✅ PASS | `countCellTypes(new Map())` returns `{floor:0, wall:0, column:0}` unconditionally — counters initialize to 0 and the loop over an empty iterable is a no-op; no conditional rendering exists that could throw on all-zero counts. |
-
-## Boundary Node-Replay (`axisLabels`, run standalone with the actual algorithm)
-| dimension | Result | Correct? |
-|---|---|---|
-| 1 | `[0,1]` | ✅ dense, 2 labels |
-| 20 | `[0,1,...,20]` (21 labels) | ✅ dense/sparse boundary — still every-meter exactly at 20 (the `≤` in `dimension <= AXIS_LABEL_DENSE_MAX`) |
-| 21 | `[0,5,10,15,20,21]` | ✅ sparse boundary — switches at 21, non-multiple-of-5 tail `21` correctly appended |
-| 23 | `[0,5,10,15,20,23]` | ✅ matches the orchestrator's own worked example exactly |
-| 50 | `[0,5,...,50]` | ✅ sparse, ends exactly on a multiple of 5, no duplicate tail append |
+| Rapid drag far outside bounds → no NaN, correctly clamped | ✅ PASS | `safeNumber` guards `NaN`/`Infinity` before snap/clamp; node-replay: `snapPoint({x:NaN,y:Infinity})` → `(0,0)`, `snapPoint({x:-5,y:60})` → `(0,50)`; `moveVertex` extreme drag → `(0,50)`. |
+| Double-click coinciding with existing vertex → no-op | ✅ PASS | Two independent guards: (1) Circle has no `onDblClick` handler and Konva bubbling goes up the node tree (Circle→Layer→Stage), not sideways to the `Line`, so a dblclick landing on a vertex's hit region (`hitStrokeWidth=16`) never reaches `handleEdgeDblClick`; (2) `insertVertexOnEdge`'s endpoint-equality guard is a second line of defense if a dblclick lands near-but-not-on a vertex within edge tolerance. Node-replay confirms guard #2: insert at `(20,20)` and `(30,20)` both return the same array reference. |
+| Deleting vertex adjacent to closing edge reconnects loop | ✅ PASS | `removeVertex` uses `Array.filter`, index-agnostic; node-replay on a 5-vertex polygon confirms removing index 0 and removing the last index (4) both produce correctly-ordered 4-vertex loops. `findClosestEdge` also confirmed to correctly resolve the closing edge (index `length-1` connecting to index 0). |
+| Container resize recomputes scale | ✅ PASS (code-level) | `ResizeObserver` on `containerRef` recomputes `stagePx` (clamped `[320,800]`) on width change; `pxPerMeter` is derived from `stagePx` on every render, so scale updates automatically. Polygon state stays in meters (untouched by resize), so interactions are not disrupted. Live-browser resize behavior also on the manual checklist (`manual-tests/venue-plan-editor.md`) and noted for a Playwright viewport sanity check per architect Test Plan. |
 
 ## Error State Results
-No new error states introduced (per orchestrator-output.md — this task is pure local rendering, no async/network). Confirmed no new fetch/API/try-catch paths were added in `grid.ts` or `GridEditor.tsx`; `validateGridSize` behavior is byte-for-byte unchanged from Task 1/2.
+| Error State | Result | Notes |
+|---|---|---|
+| Konva SSR mismatch (no crash on server render) | ✅ PASS | `PlanEditorLoader.tsx` uses `next/dynamic(..., { ssr: false })` inside a Client Component per Next 16 docs constraint; `npm run build` output shows `/venue` as `○ (Static)` — proves prerender succeeded with no `window is not defined` crash. |
+| No network/API error states (N/A) | ✅ PASS (N/A) | Confirmed purely client-side; no fetch/API calls in `PlanEditor.tsx`/`plan.ts`. |
 
 ## Regression Check
-| Feature | Result | Notes |
-|---|---|---|
-| Task 1 paint semantics (click-toggle, drag-lock stroke, resize-clears-cells) | ✅ PASS | 9/9 in `venue-grid-editor.spec.ts`, re-run live this session |
-| Task 2 toolbar (tool selection, overwrite, eraser, per-tool drag-lock, resize keeps tool) | ✅ PASS | 10/10 in `venue-toolbar.spec.ts`, re-run live this session |
-| `venue-grid` testid / pointer handlers / cell children | ✅ PASS | Diff confirms the `venue-grid` div is kept verbatim as a direct child of the new `venue-grid-frame` wrapper (GridEditor.tsx:251-263) — only ancestor structure was added, matching architect-plan D2's selector-stability requirement |
-| `src/proxy.ts` / `src/app/api/**` / `src/lib/supabase/**` | ✅ PASS | `git diff --stat` shows zero diff in any of these paths |
-| `playwright-tests/**` | ✅ PASS | `git status`/diff confirm no changes to existing specs or page objects |
+| Feature | Result |
+|---|---|
+| `playwright-tests/membership-task7-task9.spec.ts` (adjacent story, unaffected) | ✅ PASS — file present, untouched, 9 `test(` blocks intact |
+| `src/proxy.ts` / auth routes / page protection | ✅ PASS — zero diff on `src/proxy.ts`; `/venue` was already public, not in `PROTECTED_PAGES`/matcher, confirmed still absent |
+| No other component/page references the deleted venue files | ✅ PASS — repo-wide grep for `venue` in `src/components`/`src/app` outside `venue/` dirs returns nothing |
+| `npm run lint` | ✅ PASS — clean, no errors/warnings |
+| `npx tsc --noEmit` (via `npm run build`) | ✅ PASS — clean |
+| `npm run build` | ✅ PASS — succeeds; all routes render, `/venue` static-prerendered |
 
 ## Security Test
-- Sensitive data exposure: PASS — no new data emitted; pure client-side rendering of already-local `size`/`cells` state, no logging, no network calls
-- Input validation: PASS — no new user-facing input boundary introduced; `axisLabels`/`countCellTypes` operate only on trusted internal state (`size`, `cells`), not raw user input
-- Auth boundary: N/A — `/venue` remains a public page; `src/proxy.ts` matcher/allowlist untouched (confirmed via diff), no Supabase client imports added to either modified file
+- Sensitive data exposure: PASS — no secrets/tokens/credentials in new files; no logging added
+- Input validation: PASS — pointer coordinates NaN/Infinity-guarded (`safeNumber`), snapped to 0.5m grid, clamped to `[0,50]` at every mutation entry point in `plan.ts`
+- Auth boundary: N/A — `/venue` is a public page, no auth surface touched, `src/proxy.ts` diff is empty, no new API routes
 
 ## Bugs Found
-None.
+
+No Critical, High, or Medium bugs found. Both Should-Fix issues from `review-report.md` (iteration 1) were verified fixed in code:
+
+1. **Review Issue 1 (edge-insert distance threshold)** — Confirmed fixed. `handleEdgeDblClick` now no-ops when `findClosestEdge` distance exceeds 0.5m before ever calling `insertVertexOnEdge`.
+2. **Review Issue 2 (stale `selectedVertex` after deletion)** — Confirmed fixed. `handleVertexContextMenu` now shifts `selectedVertex` down by one when a lower-index vertex is deleted, clears it when the deleted vertex was itself selected, and leaves it unchanged otherwise — matching the review's suggested fix exactly.
+
+### Bug 1 (Low, non-blocking): Keyboard-delete unconditionally clears `selectedVertex` even on a rejected (3-vertex-floor) deletion
+- **Severity**: Low
+- **Acceptance Criterion affected**: AC 6 (3-vertex floor rejects deletion) — functionally still passes (vertex count/positions unchanged), but a secondary UI-state side effect occurs
+- **Steps to Reproduce**:
+  1. Reduce polygon to exactly 3 vertices.
+  2. Click a vertex to select it (`selectedVertex` set).
+  3. Press `Delete` or `Backspace`.
+- **Expected**: Since `removeVertex` no-ops at the 3-vertex floor, no state should change, including selection (arguably).
+- **Actual**: `handleKeyDown` (PlanEditor.tsx:126-135) calls `setSelectedVertex(null)` unconditionally after calling `removeVertex`, even when `next === polygon` (rejected, no-op). The visual highlight on the selected vertex disappears even though nothing was actually deleted.
+- **Impact**: Purely cosmetic/UX — no data corruption, no AC violation (polygon data and vertex count remain correct per spec wording, which only requires the polygon to still have 3 vertices). Does not block sign-off; logged for visibility. Does not require an implement-stage loop.
 
 ## Test Coverage
-- Manual checklist (`manual-tests/venue-grid-editor.md`, Task 3 section, 11 items): covers default 10×10 rulers, ≤20/>20 density switch, per-axis independence, non-multiple-of-5 tail, legend, live stats update across paint/erase/resize, and all three irregular-shape scenarios (non-contiguous, L-shape, hollow ring).
-- Node-replay: `axisLabels` exercised standalone at 5 boundary dimensions (1, 20, 21, 23, 50) confirming exact match to the orchestrator's worked examples.
-- Playwright: existing 19-test suite (Task 1+2) verified green this session; new Task 3 coverage (`playwright-tests/venue-scale-stats.spec.ts` per architect-plan) is deferred to the `playwright` pipeline stage — the designated next stage, not a gap.
-- Build gates: `npm run lint` clean, `npx tsc --noEmit` clean, `npm run build` succeeds (`/venue` still statically prerendered, Proxy middleware unchanged, all API routes present).
-- Status: PASS — new logic (`axisLabels`, `countCellTypes`, ruler/legend/stats rendering) has manual-checklist coverage now and a scheduled live-browser gate next; nothing shipped without test coverage, satisfying the AGENTS.md QA requirement.
+- New code coverage: `plan.ts` fully exercised via 21 targeted node-replay assertions (snap/clamp/NaN-safety, edge-detection incl. closing edge, insert incl. degenerate no-op at both endpoints, remove incl. floor guard and index-0/last-index reconnection, move/clamp extremes, scale conversions, default floor shape) — effectively 100% of exported pure-function branches. `PlanEditor.tsx`/`PlanEditorLoader.tsx`/`page.tsx` verified via full code read + `npm run build` (proves render/SSR path) + manual checklist (`manual-tests/venue-plan-editor.md`, visual/feel items) — no unit framework exists in this repo per AGENTS.md, so interactive DOM/canvas behavior verification is deferred to the `playwright` stage as designed.
+- Minimum required: manual checklist or Playwright coverage for all new logic (per AGENTS.md QA Agent section / Testing Requirements)
+- Status: PASS — manual checklist exists and covers all visual/feel items; Playwright specs for interactive ACs are the explicit next pipeline stage (already scoped in architect-plan.md Test Plan, not yet authored — expected, not a gap at this stage)
 
 ## Outcome
-✅ QA sign-off granted. Feature meets all 9 acceptance criteria, all edge cases hold, no regressions, no bugs. Routing to `playwright` stage for live-browser confirmation of ruler alignment, density switching, and the three irregular-shape scenarios.
-
----
+✅ QA sign-off granted. Feature meets all 9 acceptance criteria, all edge cases hold, no regressions, no Critical/High/Medium bugs (one Low, non-blocking UX note logged above). Routing to `playwright` stage for live-browser confirmation of drag/snap/insert/delete interactions and visual gridlines/scale.
 
 ## Playwright E2E Results
-> Executed: 2026-07-12T20:05:00+08:00 (against local `npm run dev`, chromium)
+> Executed: 2026-07-13T00:05:00+08:00
 
-New suite: `playwright-tests/venue-scale-stats.spec.ts` (extends `playwright-tests/pages/VenuePage.ts` with `gridFrame`/`rulerTop`/`rulerLeft`/`legend`/`stats*` locators + `rulerValues()`/`rulerLabel()`/`statsCounts()` helpers).
+New spec files (old grid-cell spec + page object were deleted in this task, per orchestrator-output.md replacement scope):
+- `playwright-tests/venue-plan-editor.spec.ts`
+- `playwright-tests/pages/PlanEditorPage.ts`
+
+Testability approach: the `[data-testid="plan-editor"]` wrapper exposes live `data-vertex-count`/`data-vertices` (JSON, meters)/`data-px-per-meter`/`data-stage-size`. The page object owns meter→px conversion (no stage offset — meter (0,0) maps directly to the wrapper's top-left, scaled by `data-px-per-meter`) and drives drags/dblclicks/right-clicks via `page.mouse` at computed screen coordinates.
 
 | Test | Acceptance Criterion | Result | Duration |
 |---|---|---|---|
-| AC1: default 10x10 rulers aligned | 頂部/左側各顯示 0..10,與格線對齊 | ✅ PASS | 915ms |
-| AC2: legend text | 「每格 = 1 公尺」圖例存在 | ✅ PASS | 786ms |
-| AC3: stats live paint/erase | 統計即時更新(0/0/0 → 3/2/0 → 擦除後 2/2/0) | ✅ PASS | 1.0s |
-| AC4: overwrite floor→wall | 覆蓋後地板-1、牆壁+1 | ✅ PASS | 918ms |
-| AC5: resize 25x8 density + reset | >20 寬軸每5m、高軸每格;resize 後統計歸0 | ✅ PASS | 942ms |
-| AC6: resize 50x50 (max) | 兩軸皆每5m,尾端50有標 | ✅ PASS | 1.1s |
-| AC5b: 23x23 non-multiple tail | 尾端非5倍數時額外附加(0,5,10,15,20,23) | ✅ PASS | 913ms |
-| AC7: non-contiguous regions | 兩塊分離地板皆保留,統計為兩塊之和(8) | ✅ PASS | 973ms |
-| AC8a: concave L-shape | L 形地板正確繪製,外側凹角維持空白 | ✅ PASS | 949ms |
-| AC8b: hollow wall ring | 牆圍一圈,中空內部維持空白,牆統計=環格數(12) | ✅ PASS | 1.1s |
+| AC1: canvas loads with gridlines/scale | Konva canvas renders, light background, fixed fit-to-screen scale (stage size / px-per-meter = 50m) | ✅ PASS | 1.1s |
+| AC2: default 10x10 square, centered | 4 vertices, 10x10m bounding box, centroid ≈ (25,25) | ✅ PASS | 853ms |
+| AC3: drag vertex snaps to 0.5m | Dragged vertex 0 to (23.2, 21.3) → snapped to (23, 21.5) | ✅ PASS | 1.0s |
+| AC7 (bounds): drag far outside clamps | Dragged vertex 2 to (120, -30) → clamped to (50, 0), no NaN | ✅ PASS | 1.0s |
+| AC4: dblclick edge midpoint inserts vertex | Right edge midpoint (30,25) insertion → count 4→5, new vertex present | ✅ PASS | 877ms |
+| AC5/edge-case: dblclick deep inside is no-op | Center (25,25), >0.5m from all edges → count stays 4 | ✅ PASS | 863ms |
+| AC5/AC6: right-click deletes vertex, floors at 3 | Repeated right-click 4→3, extra right-click at 3 stays 3 | ✅ PASS | 913ms |
+| AC8: concave edit renders without crash | Dragged vertex 1 to (24,24), no pageerror events, canvas still visible | ✅ PASS | 1.0s |
+| AC9: old grid-cell editor fully removed | No `venue-grid` testid, no `面積統計` text; old files confirmed absent from src/ | ✅ PASS | 858ms |
 
-**Regression (Task 1 + Task 2, must stay green):**
-
-| Suite | Tests | Result |
-|---|---|---|
-| `venue-grid-editor.spec.ts` (Task 1) | 9 | ✅ 9/9 PASS |
-| `venue-toolbar.spec.ts` (Task 2) | 10 | ✅ 10/10 PASS |
-
-**Full run:** `npx playwright test playwright-tests/venue-grid-editor.spec.ts playwright-tests/venue-toolbar.spec.ts playwright-tests/venue-scale-stats.spec.ts` → **29/29 passed**, 0 failed, no console errors observed, no screenshots generated (no failures).
-
-### Notes
-- One test-authoring bug was caught and fixed during this run (not a product bug): the initial L-shape and hollow-ring drag sequences started a second drag on a cell the first drag had already painted with the same tool — the app's real, intentional "start-on-same-type toggles erase" rule (also covered by Task 2's toolbar AC3) then erased instead of extending the shape. Fixed by splitting the drag paths so no drag starts on an already-painted matching cell; no application code was touched.
-- Ruler alignment assertions used `boundingBox()` on both the grid and the `[data-axis-value]` label spans (±3px tolerance) rather than raw pixel math, staying resilient to minor layout/font rendering differences per the project's boundingBox-based locator convention.
+9/9 passed. No failures, no console/page errors observed.
 
 ### Failures
 None.
-
-## Outcome
-✅ Playwright E2E complete — all 9 acceptance criteria (plus the confirmed boundary/edge cases: 1x1 implied by dense-branch AC1 logic, 50x50 max, 23x23 non-multiple tail) verified in a real browser. All 19 pre-existing Task 1+2 tests remain green, unmodified. No bugs found. Task 3 of 5 complete.

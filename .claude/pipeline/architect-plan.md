@@ -1,146 +1,161 @@
-# Architect Plan — 網格真實尺寸標示（座標軸公尺標籤 + 比例尺圖例 + 面積統計）與不規則形狀驗證
+# Architect Plan — 建立 Konva 平面圖編輯器基礎
 
-> Story: 場地白模產生器 (階段一) | Task type: FRONTEND | Task 3 of 5 | Generated: 2026-07-12T17:30:00+08:00
+> Story: 場地白模產生器 (階段一) | Task type: FRONTEND | Generated: 2026-07-12T23:05:00+08:00
+> Task 1 of 5 (rewritten task list). Source of truth: `.claude/pipeline/orchestrator-output.md`.
 
 ## Overview
 
-Add real-world scale affordances to the existing `GridEditor`: a top and left meter ruler aligned to the grid, a 「每格 = 1 公尺」 legend line, and a live painted-area stats line (floor/wall/column cell counts = ㎡). The second half of the task is **verification only** — prove via Playwright scenarios that irregular (non-contiguous, concave, hollow) painted shapes already work; no new painting features.
+Fully replace the old grid-cell venue editor with a Konva.js (react-konva) floor-plan editor foundation: fit-to-screen 50x50m canvas with 1m/5m gridlines and meter scale labels, plus an editable floor polygon (vertex drag / edge-insert / vertex-delete, 0.5m snap, bounds clamp). All geometry state lives in **meters** in a pure lib module; pixels exist only at render time — this is deliberate so Tasks 4–5 (3D whitebox) can consume the same meter-space data.
 
 ## Task Type Confirmed
 
-FRONTEND. Purely client-side rendering additions in `src/components/venue/GridEditor.tsx` plus pure helpers in `src/lib/venue/grid.ts`. No API, no proxy, no auth, no persistence. Consistent with `state.json` `current_task`.
+FRONTEND — confirmed. Purely client-side canvas UI; no API routes, no persistence, no auth surface. No contradiction found with the orchestrator spec.
 
-> ⚠️ Note for reviewer: `.claude/pipeline/orchestrator-output.md` on disk still contains the **Task 2** spec — the Task 3 orchestrate stage's decisions were recorded in `task-log.md` (2026-07-12T17:10 entry) but the output file was not rewritten. This plan is based on those logged, human-confirmed decisions (axis labels top+left 0-based, ≤20 every meter / >20 every 5 m per dimension, 每格=1公尺 legend, live area stats, irregular shapes as verification). Not an escalation blocker, but the orchestrator-output.md staleness should be fixed when convenient so downstream QA reads the right spec.
+## Dependency Decision (verified 2026-07-12)
 
-## Confirmed Decisions (from orchestrate stage)
+- Add `konva` (^10.3.0) and `react-konva` (^19.2.5) as regular dependencies.
+- Verified: `react-konva@19.2.5` peerDependencies are `react ^19.2.0`, `react-dom ^19.2.0` (project: 19.2.4 ✓) and `konva ^8 || ^7.2.5 || ^9 || ^10` (✓). No React 18/19 mismatch risk.
+- Konva touches `window`/`canvas` at import time → must never render (or be imported) server-side. Per `node_modules/next/dist/docs/01-app/02-guides/lazy-loading.md` in this Next.js 16 version: **`ssr: false` only works when `dynamic()` is called inside a Client Component** — it cannot go directly in a Server Component page. Hence the loader-component structure below (same pattern the voided R3F plan used, re-verified against the docs shipped in this repo).
 
-- Axis labels on **top + left**, in meters, **0-based** (「0起算」).
-- Label density per dimension, evaluated **independently** for width and height: dimension ≤ 20 → label every meter; dimension > 20 → label every 5 m. Gridlines themselves are unchanged (still one border per cell).
-- Legend line: 「每格 = 1 公尺」.
-- Stats line: live counts of floor/wall/column cells; 1 cell = 1 平方公尺; updates on every paint/erase/resize.
-- Irregular-shape support (non-contiguous, concave, hollow) = **test scenarios**, not new code.
+## Files to Delete (full replacement, per story 改版備註 + orchestrator spec)
 
-## Design Decisions
+| File path | Reason |
+| --------- | ------ |
+| `src/components/venue/GridEditor.tsx` | Old grid-cell editor component — replaced by Konva editor |
+| `src/lib/venue/grid.ts` | Grid-cell coordinate/cell logic — not reusable for polygon geometry |
+| `playwright-tests/venue-grid-editor.spec.ts` | Tests grid-cell behavior that no longer exists |
+| `playwright-tests/venue-toolbar.spec.ts` | Tests old wall/column/eraser toolbar (also removed) |
+| `playwright-tests/venue-scale-stats.spec.ts` | Tests old scale/stats UI |
+| `playwright-tests/pages/VenuePage.ts` | Old page object bound to the deleted DOM structure |
+| `manual-tests/venue-grid-editor.md` | Old manual checklist — replaced (see Files to Create) |
 
-### D1 — Label semantics: 0-based *edge* labels (ruler convention)
-
-Labels mark **gridline edges** `0 .. dimension` (a 10 m axis shows 0–10, i.e. 11 labels), not cell centers. Rationale: this is how physical rulers/architectural drawings work, it matches the confirmed 0起算 decision, and it lets the user read the total dimension directly off the last label. For a >20 dimension, labels are the multiples of 5 (`0, 5, 10, …`) **plus the final edge** (e.g. 23 m → `0, 5, 10, 15, 20, 23`) so the total is always visible; at 24 px/m the tightest pair (e.g. 20 vs 21) still has ~10 px clearance for 2-digit text at ~10px font.
-
-### D2 — Ruler layout: absolutely-positioned label strips inside a 2×2 CSS-grid wrapper
-
-Chosen approach: wrap the existing grid in a wrapper using CSS grid `grid-template-columns: auto auto; grid-template-rows: auto auto` producing four areas — corner spacer / top ruler / left ruler / `venue-grid`. Each ruler is a `position: relative` strip sized exactly to the grid edge (`widthM * CELL_SIZE_PX` wide, resp. `heightM * CELL_SIZE_PX` tall) containing absolutely-positioned `<span>` labels at `left: value * CELL_SIZE_PX; transform: translateX(-50%)` (top ruler) / `top: value * CELL_SIZE_PX; transform: translateY(-50%)` (left ruler).
-
-Why this over a "one ruler cell per grid column" CSS-grid ruler:
-- Edge labels (D1) sit at gridline positions, i.e. **between** cells — a cell-per-label grid can only center labels on cells, forcing 1-based cell-center semantics we rejected.
-- The 5 m-step density is trivially expressed (render only the labels you want at exact pixel offsets) with no empty filler cells.
-- All positions derive from `CELL_SIZE_PX` (imported from `grid.ts`) and the `size` state, so a resize re-renders rulers in perfect alignment automatically — same single source of truth the grid itself uses.
-
-The existing `venue-grid` div keeps its `data-testid`, its pointer handlers, and its cells as direct children — the wrapper is purely structural, so `VenuePage` locators (`venue-grid` + `[data-x][data-y]` descendants) are untouched.
-
-### D3 — Logic/rendering split
-
-Pure, React-free helpers go in `src/lib/venue/grid.ts` (same pattern as `validateGridSize`/`TOOLS`): label-position generation and cell-type counting. `GridEditor.tsx` only maps helper output to JSX. This keeps the rules verifiable through Playwright at both densities and reusable by Task 4 if the 3D view wants the same scale/stats.
-
-### D4 — Stats derivation
-
-Compute counts by a single pass over the `cells` Map on each render (max 2,500 entries — negligible; no memoization needed, matching the codebase's no-premature-abstraction rule). Empty is implicit (`total cells − painted`), and the confirmed scope is floor/wall/column only.
+`src/app/venue/page.tsx` is modified (rewritten in place), not deleted — route path `/venue` stays the same, so existing nav links keep working.
 
 ## Files to Create
 
 | File path | Purpose |
 | --------- | ------- |
-| *(none in implement stage)* | |
-| `playwright-tests/venue-scale-stats.spec.ts` *(playwright stage)* | Task 3 acceptance suite: rulers at both densities, legend, live stats, irregular-shape scenarios (see Test Plan) |
+| `src/lib/venue/plan.ts` | Pure geometry/domain module (no React, no Konva import): types, constants, snap/clamp, polygon vertex insert/delete math, px↔meter scale helpers. Unit-testable in isolation and directly reusable by the future 3D scene builder. |
+| `src/components/venue/PlanEditor.tsx` | `"use client"` Konva editor: Stage + layers (grid, labels, polygon), all interaction handlers. Holds polygon state in meters. |
+| `src/components/venue/PlanEditorLoader.tsx` | `"use client"` thin wrapper: `const PlanEditor = dynamic(() => import("./PlanEditor"), { ssr: false, loading: ... })`. Exists solely because `ssr: false` must live in a Client Component in this Next version. |
+| `manual-tests/venue-plan-editor.md` | New manual visual-check checklist for this task (grid look, scale legibility, polygon feel). |
 
 ## Files to Modify
 
 | File path | What changes |
 | --------- | ------------ |
-| `src/lib/venue/grid.ts` | Add `AXIS_LABEL_DENSE_MAX = 20`, `AXIS_LABEL_STEP = 5`; add `axisLabels(dimension: number): number[]` (≤20 → `[0..dimension]`; >20 → multiples of 5 plus `dimension` if not already included); add `countCellTypes(cells: ReadonlyMap<string, CellType>): Record<CellType, number>`. Pure functions, zero React deps, JSDoc in the file's existing 繁中 comment style |
-| `src/components/venue/GridEditor.tsx` | Wrap grid in the 2×2 ruler layout (corner spacer + top ruler + left ruler + existing `venue-grid` unchanged); render labels from `axisLabels(size.widthM)` / `axisLabels(size.heightM)`; add legend line 「每格 = 1 公尺」; add stats line from `countCellTypes(cells)`; new data-testids (see below) |
-| `manual-tests/venue-grid-editor.md` | Append 「Task 3 — 尺寸標示與不規則形狀」 checklist section (see step 8) |
-| `playwright-tests/pages/VenuePage.ts` *(playwright stage)* | Add locators/helpers: `rulerTop`, `rulerLeft`, `rulerLabel(axis, value)`, `legend`, `statsFloor/Wall/Column` count readers |
+| `src/app/venue/page.tsx` | Rewrite: stays a Server Component shell (heading 「場地規劃」, layout classes consistent with current page), renders `<PlanEditorLoader />` instead of `<GridEditor />`. |
+| `package.json` | Add `konva` + `react-konva` dependencies (via `npm install konva react-konva`). |
+
+**No changes** to `src/proxy.ts` — `/venue` is not in `PROTECTED_PAGES` today (verified by grep: no venue reference in proxy.ts), pages are public by default, and no new API routes are added. Matcher untouched.
 
 ## Implementation Steps
 
-1. **`src/lib/venue/grid.ts` — constants.** Below `CELL_SIZE_PX`, add `export const AXIS_LABEL_DENSE_MAX = 20;` and `export const AXIS_LABEL_STEP = 5;` with a 繁中 comment explaining the density rule.
-2. **`src/lib/venue/grid.ts` — `axisLabels(dimension: number): number[]`.** Returns edge-label values for one axis: if `dimension <= AXIS_LABEL_DENSE_MAX`, return `[0, 1, …, dimension]`; else return `[0, 5, 10, …]` up to `dimension`, appending `dimension` itself when it is not a multiple of `AXIS_LABEL_STEP`. Document the edge-label (not cell-center) semantics in the JSDoc.
-3. **`src/lib/venue/grid.ts` — `countCellTypes(cells: ReadonlyMap<string, CellType>): Record<CellType, number>`.** Single iteration over `cells.values()`, initializing `{ floor: 0, wall: 0, column: 0 }`. No React/DOM imports.
-4. **`GridEditor.tsx` — ruler layout wrapper.** Replace the current bare `venue-grid` block with:
-   - Outer wrapper `data-testid="venue-grid-frame"`, `display: grid; gridTemplateColumns: auto auto; gridTemplateRows: auto auto`, `w-fit select-none` (move `select-none` up so ruler text is also unselectable; `venue-grid` keeps its own classes otherwise).
-   - Cell (1,1): empty corner spacer div (sized implicitly by the ruler tracks).
-   - Cell (1,2): top ruler `data-testid="grid-ruler-top"` — `position: relative`, `width: size.widthM * CELL_SIZE_PX`, fixed height (~`1rem`), containing `axisLabels(size.widthM).map(v => <span key={v} data-axis-value={v} style={{ position: "absolute", left: v * CELL_SIZE_PX, transform: "translateX(-50%)" }} className="text-[10px] text-zinc-500">{v}</span>)`.
-   - Cell (2,1): left ruler `data-testid="grid-ruler-left"` — `position: relative`, `height: size.heightM * CELL_SIZE_PX`, fixed width (~`1.5rem`), labels at `top: v * CELL_SIZE_PX; transform: translateY(-50%)`, right-aligned with small right padding so digits sit against the grid edge.
-   - Cell (2,2): the existing `venue-grid` div **verbatim** — same testid, same pointer handlers (`onPointerUp`/`onPointerLeave`), same inline grid styles, same cell children. Do not rename or re-nest cells.
-5. **`GridEditor.tsx` — legend line.** Directly below the grid frame: `<p data-testid="grid-scale-legend" className="text-sm text-zinc-600">每格 = 1 公尺</p>`.
-6. **`GridEditor.tsx` — stats line.** Compute `const stats = countCellTypes(cells);` in the render body. Render `<p data-testid="grid-stats" className="text-sm text-zinc-600">` containing three spans: `地板 <span data-testid="stats-floor">{stats.floor}</span> 平方公尺`、`牆壁 <span data-testid="stats-wall">{stats.wall}</span> 平方公尺`、`柱子 <span data-testid="stats-column">{stats.column}</span> 平方公尺`, separated by 「・」. Numeric-only testid spans keep Playwright assertions exact. (Stats update automatically on paint/erase/resize because they derive from `cells` state — resize clears the Map, so all counts drop to 0; verify this stays true.)
-7. **Alignment sanity check (developer, in-browser).** With default 10×10, confirm label "0" sits on the top-left grid corner, "10" on the top-right/bottom-left corners, and each intermediate label on its gridline. Resize to 30×10 and confirm the top ruler switches to `0,5,…,30` while the left ruler still labels every meter (per-dimension independence), and to 23×23 to confirm the appended final edge label.
-8. **`manual-tests/venue-grid-editor.md` — append Task 3 section** with checklist items:
-   1. 預設 10×10:上/左標尺各顯示 0–10 共 11 個標籤,對齊格線邊緣(0 在左上角)。
-   2. ≤20 密度:調整為 20×20,每公尺都有標籤。
-   3. >20 密度:調整為 30×30,標籤為 0,5,10,15,20,25,30(格線本身不變)。
-   4. 每軸獨立:調整為 30×10,上標尺每 5 公尺、左標尺每 1 公尺。
-   5. 非 5 倍數尾端:調整為 23×23,尾端顯示 20 與 23 兩個標籤且不重疊。
-   6. 圖例:網格下方顯示「每格 = 1 公尺」。
-   7. 統計即時更新:畫 3 格地板、2 格牆壁、1 格柱子,統計列顯示 地板 3/牆壁 2/柱子 1 平方公尺;擦除 1 格地板後變 2;套用尺寸後全部歸 0。
-   8. 不規則形狀 — 非連續:畫兩塊分離的地板區域,兩塊皆保留、中間不自動連接,統計為兩塊面積之和。
-   9. 不規則形狀 — 凹形:畫一個 L 形/凹形地板,形狀如實保留。
-   10. 不規則形狀 — 中空:畫一圈牆壁圍住空白內部,內部維持空白,統計只計牆壁格數。
-   11. 標尺對齊拖曳:拖曳繪製一整列後,該列端點與標尺數字對齊(目視確認格與公尺對應正確)。
-9. **Quality gates (developer, before handoff):** `npm run lint`, `npx tsc --noEmit`, `npm run build` all pass; rerun existing suites `npx playwright test playwright-tests/venue-grid-editor.spec.ts playwright-tests/venue-toolbar.spec.ts` against a dev server — all 19 must pass **with zero spec modifications**.
+1. **Install dependencies.** `npm install konva react-konva`. Confirm `react-konva@^19.2.5` / `konva@^10` land in `package.json`.
+
+2. **Delete old implementation.** Remove `src/components/venue/GridEditor.tsx`, `src/lib/venue/grid.ts`, `playwright-tests/venue-grid-editor.spec.ts`, `playwright-tests/venue-toolbar.spec.ts`, `playwright-tests/venue-scale-stats.spec.ts`, `playwright-tests/pages/VenuePage.ts`, `manual-tests/venue-grid-editor.md`. Grep for any remaining imports of `GridEditor` / `@/lib/venue/grid` (expect only `src/app/venue/page.tsx`, fixed in step 7).
+
+3. **Create `src/lib/venue/plan.ts`** — pure module, exports:
+   - Types: `PlanPoint { x: number; y: number }` (meters, x→right, y→down in plan space), `FloorPolygon = PlanPoint[]` (ordered vertex loop, implicitly closed).
+   - Constants: `VENUE_SIZE_M = 50`, `SNAP_M = 0.5`, `MIN_FLOOR_VERTICES = 3`, `GRID_MINOR_M = 1`, `GRID_MAJOR_M = 5`, `DEFAULT_FLOOR: FloorPolygon` = 10x10m square centered at (25,25): `[(20,20),(30,20),(30,30),(20,30)]`.
+   - `snapToGrid(v: number): number` — round to nearest 0.5m.
+   - `clampToBounds(v: number): number` — clamp to `[0, 50]`.
+   - `snapPoint(p: PlanPoint): PlanPoint` — snap then clamp both axes (clamp AFTER snap so a snap to 50.5 still lands on 50.0; since 0 and 50 are themselves on the 0.5 grid, clamped results remain snapped). Must be NaN-safe: guard non-finite inputs by treating them as 0 (covers pathological drag events).
+   - `closestPointOnSegment(a: PlanPoint, b: PlanPoint, p: PlanPoint): PlanPoint` — projection clamped to the segment, used for edge insertion.
+   - `findClosestEdge(polygon: FloorPolygon, p: PlanPoint): { edgeIndex: number; point: PlanPoint; distance: number }` — resolves which edge a double-click targets (iterates all edges; edge i connects vertex i → vertex (i+1) % length, so the closing edge is handled uniformly).
+   - `insertVertexOnEdge(polygon: FloorPolygon, edgeIndex: number, rawPoint: PlanPoint): FloorPolygon` — projects `rawPoint` onto edge `edgeIndex`, snaps the result; **no-op (returns same array) if the snapped point equals either edge endpoint** (degenerate zero-length edge guard from the spec's edge cases). Otherwise returns a new array with the vertex spliced in at `edgeIndex + 1`.
+   - `removeVertex(polygon: FloorPolygon, index: number): FloorPolygon` — returns new array without vertex `index`; **no-op if `polygon.length <= MIN_FLOOR_VERTICES`**. Works for index 0 and last index (loop reconnects naturally since closing is implicit).
+   - `moveVertex(polygon: FloorPolygon, index: number, rawPoint: PlanPoint): FloorPolygon` — snapPoint then replace (immutable).
+   - Scale helpers: `computePxPerMeter(stagePx: number): number` (= `stagePx / VENUE_SIZE_M`), `metersToPx(p: PlanPoint, pxPerMeter: number)`, `pxToMeters(p: {x,y}, pxPerMeter: number)`.
+   - No Konva or React imports in this file — keep it pure (developer must respect this; the 3D tasks will import it).
+
+4. **Create `src/components/venue/PlanEditor.tsx`** (`"use client"`):
+   - **Stage sizing / fit-to-screen:** wrap the Konva `Stage` in a `div ref` container; measure container width on mount and via a `ResizeObserver`; `stagePx = min(containerWidth, 800)` (square stage, floored at a practical minimum of ~320px), `pxPerMeter = computePxPerMeter(stagePx)`. Resize recomputes scale; polygon state (meters) is untouched, so interactions survive resize (spec edge case). No zoom/pan.
+   - **Layers (bottom → top):**
+     1. *Grid layer* (`listening={false}` for performance): light background `Rect` (light neutral, e.g. `#fafaf9`), minor `Line`s every 1m (thin, e.g. `#e7e5e4`), major `Line`s every 5m (stronger, e.g. `#d6d3d1`), and a border rect around the 50x50 bounds.
+     2. *Labels layer* (`listening={false}`): axis tick labels in meters every 5m along top and left edges (`0, 5, 10 … 50`), plus a small scale bar (e.g. a 5m segment labeled 「5 公尺」) near a corner. Satisfies the "scale indication" criterion; keep labels legible at min stage size (~12px font at 320px stage is the floor noted in the spec's small-viewport edge case).
+     3. *Floor layer*: closed `Line` (`points` from polygon meters→px, `closed`, semi-transparent fill e.g. `#bfdbfe` at ~50% + solid stroke `#3b82f6` 2px) + one draggable `Circle` handle per vertex (radius ~6px, white fill, blue stroke; larger `hitStrokeWidth` for grab comfort).
+   - **State:** single `useState<FloorPolygon>(DEFAULT_FLOOR)` in meters + `useState<number | null>` for `selectedVertex`. Never store px in state.
+   - **Vertex drag:** on each `Circle`, `onDragMove`: convert the node's px position → meters (`pxToMeters`), run `moveVertex` (snap+clamp in meter space), set state, and **write the snapped px position back to the Konva node** (`node.position(metersToPx(...))`) so the handle visually sticks to the snapped point during drag (Konva keeps its own node position mid-drag; without the write-back the handle and the polygon line diverge). Polygon `Line` re-renders live from state. `onDragEnd` runs the same conversion once more as a settle step. Rapid off-canvas drags are covered because clamp happens in meter space on every move event.
+   - **Edge insertion (double-click):** `onDblClick` on the floor `Line` (and as fallback on the Stage, filtered to clicks within ~0.5m of an edge): take `stage.getPointerPosition()` px → meters, `findClosestEdge`, then `insertVertexOnEdge`. If the helper returns the same array (degenerate case), do nothing. Note: a dbl-click on a vertex handle hits the `Circle`, not the `Line`, so "double-click near an existing vertex" naturally no-ops — plus the helper's endpoint guard as second line of defense.
+   - **Vertex deletion:** `onContextMenu` on each `Circle` → `evt.preventDefault()` + `removeVertex(index)`. Additionally, clicking a handle sets `selectedVertex` (visual highlight, e.g. filled blue), and a `keydown` listener (on a focusable wrapper div with `tabIndex={0}`, not `window`, to avoid leaking global handlers) maps `Delete`/`Backspace` → `removeVertex(selectedVertex)`. Both paths are no-ops at 3 vertices via the lib guard; clear/adjust `selectedVertex` after deletion.
+   - **Concave shapes:** Konva's `Line closed` renders concave polygons fine; no validation added (per spec, self-intersection is explicitly not blocked).
+   - **Playwright/testability hooks (critical — canvas has no per-shape DOM):** the wrapper div carries:
+     - `data-testid="plan-editor"`
+     - `data-vertex-count={polygon.length}`
+     - `data-vertices={JSON.stringify(polygon)}` (meter coordinates, snapped — assertions read exact meter values, immune to px rounding)
+     - `data-px-per-meter={pxPerMeter}` and `data-stage-size={stagePx}` — the page object reads these to compute px coordinates for `page.mouse` gestures (meter→px math lives in the page object, mirroring `metersToPx`).
+     - The Konva `Stage` container div sits inside this wrapper, so `boundingBox()` of the wrapper's canvas gives the px origin.
+     No hidden debug UI beyond data attributes; this is the agreed strategy for all canvas assertions (same class of problem as the 3D canvas later).
+
+5. **Create `src/components/venue/PlanEditorLoader.tsx`** (`"use client"`): `next/dynamic` import of `./PlanEditor` with `{ ssr: false, loading: () => <載入中 placeholder div with fixed min-height> }`. This is the only file that knows PlanEditor is client-only. (Verified against `node_modules/next/dist/docs/01-app/02-guides/lazy-loading.md`: `ssr: false` must be inside a Client Component in this Next version.)
+
+6. **Rewrite `src/app/venue/page.tsx`**: keep it a Server Component; same page chrome as today (`<main>` layout, 「場地規劃」 heading — widen container beyond `max-w-4xl` if needed for an 800px stage + padding), body renders `<PlanEditorLoader />`.
+
+7. **Cleanup + verify build.** Grep repo for `GridEditor`, `venue/grid`, `VenuePage` — zero references must remain. Run `npm run lint` and `npm run build` (build also proves no SSR evaluation of Konva: the page must prerender without `window is not defined`).
+
+8. **Create `manual-tests/venue-plan-editor.md`** — visual/feel checklist Playwright can't judge: floor-plan aesthetic (light bg, minor/major grid contrast), label legibility at ~360px-wide viewport, drag smoothness/snap feel, scale bar correctness, concave shape rendering, browser-resize behavior.
+
+9. **Update pipeline state + logs** per workflow rules (developer repeats at implement stage).
 
 ## Data Flow
 
 ```
-size (state) ──► axisLabels(size.widthM)  ──► top-ruler spans   (left = v × CELL_SIZE_PX)
-            └──► axisLabels(size.heightM) ──► left-ruler spans  (top  = v × CELL_SIZE_PX)
-cells (Map state) ──► countCellTypes(cells) ──► stats line (地板/牆壁/柱子 ㎡)
-paint / erase / 套用尺寸 mutate `cells`/`size` → normal React re-render refreshes rulers + stats.
-No refs, effects, network, or persistence involved.
+User gesture (mouse on canvas, px)
+  → Konva event (Stage pointer position / node drag position, px)
+  → pxToMeters(pxPerMeter)                                      [PlanEditor]
+  → pure geometry op: moveVertex / insertVertexOnEdge / removeVertex
+      (snap 0.5m → clamp [0,50] → min-3 / degenerate guards)    [plan.ts]
+  → setState(FloorPolygon in meters)                            [PlanEditor]
+  → render: metersToPx per vertex → Konva Line + Circles        [PlanEditor]
+  → wrapper data-vertices / data-vertex-count updated           [DOM, for tests]
 ```
+Meters are the single source of truth; px is a render-time projection. Task 4's 3D scene builder will consume `FloorPolygon` from `plan.ts` unchanged.
 
 ## Test Plan
 
-No unit test framework exists (per AGENTS.md) — helper correctness is exercised through Playwright + the manual checklist.
+No JS unit-test framework exists in this repo (per AGENTS.md) — automated verification is Playwright (acceptance gate) + manual checklist. `plan.ts` is pure, so its behavior is fully exercisable through Playwright via the meter-space `data-vertices` attribute.
 
-- **Manual checklist:** `manual-tests/venue-grid-editor.md` Task 3 section (step 8) — written by the developer as part of implement.
-- **Playwright (acceptance gate, playwright stage):** new `playwright-tests/venue-scale-stats.spec.ts` using extended `VenuePage`:
-  1. Default 10×10: `grid-ruler-top`/`grid-ruler-left` visible; top ruler has 11 labels (`[data-axis-value]` count = 11) including `0` and `10`.
-  2. Density switch: resize to `30×10` → top ruler labels are exactly `0,5,10,15,20,25,30`; left ruler still has 11 labels (per-dimension independence).
-  3. Non-multiple tail: resize to `23×10` → top ruler ends with `…,20,23`.
-  4. Legend: `grid-scale-legend` has text `每格 = 1 公尺`.
-  5. Stats live update: paint 3 floor + 2 wall + 1 column → `stats-floor/wall/column` read `3/2/1`; erase one floor → `2`; toggle-off one wall (same-type click) → `1`; resize → all `0`.
-  6. Irregular — non-contiguous: two separated floor regions (reuse `dragPaint`) → both intact, gap empty, `stats-floor` = sum.
-  7. Irregular — concave: paint an L-shape (two perpendicular drags) → every L cell `floor`, the concave-corner cell outside the L `empty`, stats match cell count.
-  8. Irregular — hollow: wall ring around an empty interior (e.g. 4×4 ring) → interior cells `empty`, `stats-wall` = ring size, `stats-floor` = 0.
-  9. Regression: existing 19 tests in `venue-grid-editor.spec.ts` + `venue-toolbar.spec.ts` pass unmodified.
-- **Edge cases covered:** dimension exactly 20 (dense) vs 21 (sparse) boundary — include one assertion pair (resize 20×20 → 21 labels on each axis; 21×21 → `0,5,10,15,20,21`).
+- **Playwright (created at the `playwright` pipeline stage, planned here):**
+  - New `playwright-tests/pages/PlanEditorPage.ts` (page object): reads `data-px-per-meter` + canvas bounding box, owns meter→px math (`meterToScreen(p)`), exposes `dragVertex(fromMeters, toMeters)`, `dblClickAt(meters)`, `rightClickVertex(meters)`, `vertexCount()`, `vertices()` (parsed from `data-vertices`), `pressDelete()`. All gestures via `page.mouse` at computed screen px.
+  - New `playwright-tests/venue-plan-editor.spec.ts`, covering each acceptance criterion:
+    1. Load `/venue` → canvas visible, grid/scale labels present, `data-vertex-count === 4`, `data-vertices` equals the default 10x10 square `[(20,20),(30,20),(30,30),(20,30)]`.
+    2. Drag a vertex toward an off-grid target (e.g. 22.3, 27.8) → vertex lands at (22.5, 28.0) (snap assertion in meters).
+    3. Drag a vertex far outside the stage (toward −5, 60 in meter terms) → vertex clamped to (0, 50), all coordinates finite and in-bounds.
+    4. Double-click an edge midpoint → vertex count 5, new vertex at the snapped edge point, correct array position.
+    5. Double-click at an existing vertex position → vertex count unchanged (degenerate no-op).
+    6. Right-click a vertex (count > 3) → count decrements; also cover deleting vertex index 0 (closing-edge reconnection).
+    7. Reduce to 3 vertices, attempt right-click delete and Delete-key delete → count stays 3.
+    8. Concave shape: drag one vertex inward past the polygon interior → no crash, `data-vertices` reflects the concave loop.
+    9. Regression: `playwright-tests/membership-task7-task9.spec.ts` still green; the three deleted venue specs no longer exist (verified at review stage, not in a spec).
+- **Manual checklist** (`manual-tests/venue-plan-editor.md`): visual grid quality, 5m-major-line contrast, scale bar/axis labels, drag feel, resize behavior, small-viewport legibility.
+- **Edge cases from orchestrator-output.md** mapped: rapid out-of-bounds drag → spec 3; dbl-click near vertex → spec 5; closing-edge vertex deletion → spec 6; browser resize → manual checklist (plus a lightweight Playwright viewport-resize sanity check if stable); tiny viewport → manual checklist.
 
 ## Architecture Notes
 
-- **Selector-stability audit:** `VenuePage` addresses everything via `data-testid` (`venue-grid`, inputs, toolbar) and `data-x`/`data-y` descendants of `venue-grid`; the new wrapper adds ancestors only, never touching `venue-grid`'s identity or its children, and `cellCenter`/`dragPaint` use `boundingBox()` (layout-shift-proof). All 19 existing tests should pass untouched; step 9 verifies empirically.
-- **Deviation check:** none — pure-helper-in-`grid.ts` + rendering-in-component mirrors the Task 1/2 structure; inline styles for pixel-exact positioning follow the existing precedent (`venue-grid`'s own inline `gridTemplateColumns`).
-- **Stale orchestrator-output.md** (see banner at top) — plan built from the logged, human-confirmed Task 3 decisions.
-- **Performance:** `countCellTypes` is O(painted cells) ≤ 2,500 per render; ruler spans ≤ 51 per axis. No memoization warranted.
-- **Risk — label overflow at grid edges:** `translateX(-50%)` makes the `0` label overhang the left ruler edge by half its width; the corner spacer (left-ruler track width) absorbs it. Developer should confirm no horizontal clipping at 50×50.
+- **Loader indirection** (`PlanEditorLoader`) is not gold-plating: this Next 16 line rejects `ssr: false` in Server Components (verified in bundled docs). Same pattern the (now void) R3F plan validated.
+- **Meter-space state** is the load-bearing decision of this task — Tasks 2–5 (walls, columns, dimension labels, 3D extrusion) all extend `plan.ts` types. Any deviation that stores px in state must be flagged, not silently made.
+- **`data-vertices` JSON attribute** grows with vertex count; fine at this scale (tens of vertices). If Task 2/3 object counts ever make it heavy, switch strategies then — not now.
+- **Konva drag position write-back** (step 4) is the known fiddly spot: Konva nodes own their position mid-drag, so React state alone won't keep handle and polygon in sync while snapping. Write-back in `onDragMove` (or equivalently a `dragBoundFunc` returning the snapped px position) is required; developer should pick one and be consistent.
+- **Performance:** ~100 grid lines (51 vertical + 51 horizontal) on a static `listening={false}` layer is trivial for Konva; no memoization needed.
+- Old grid editor commits (3afc5fc/2cae7b4/e9cf950) remain in git history; nothing to preserve in the working tree.
 
 ## Security Checklist
 
-- [ ] No hardcoded secrets or credentials (task introduces none; pure UI)
-- [ ] Input validation at system boundaries — unchanged `validateGridSize`; no new inputs added
-- [ ] Auth/permission checks — N/A; `/venue` remains a public page, `src/proxy.ts` untouched
-- [ ] No sensitive data logged — no logging added
-- [ ] No Supabase client usage introduced in client components (project rule) — none
-- [ ] `src/proxy.ts`, `src/app/api/**`, `src/lib/supabase/**` must show zero diff at review
+- [ ] No hardcoded secrets or credentials (none involved — no network/API/persistence in this task)
+- [ ] Input validation at system boundaries — geometry inputs (pointer coords) are NaN-guarded, snapped, and clamped in `plan.ts`
+- [ ] Auth/permission checks: N/A — `/venue` stays a public page; `src/proxy.ts` untouched (no PROTECTED_PAGES/matcher change, no API allowlist change)
+- [ ] No sensitive data logged (no logging added)
+- [ ] `service_role` / Supabase clients: not touched, not imported
+- [ ] No Playwright credentials involved (page is public; no login needed for the new spec)
 
 ## Definition of Done
 
-- [ ] All implementation steps 1–9 complete
-- [ ] Rulers align with gridlines at 10×10, 20×20, 21×21, 30×10, 23×23, 50×50
-- [ ] Legend 「每格 = 1 公尺」 and live stats line render with the specified testids
-- [ ] Manual checklist Task 3 section added
-- [ ] Playwright: existing 19 tests green unmodified; new Task 3 suite (playwright stage) green
-- [ ] `npm run lint`, `npx tsc --noEmit`, `npm run build` pass
+- [ ] `konva` + `react-konva` installed; versions compatible with react 19.2.4 (react-konva ^19.2.5, konva ^10)
+- [ ] All 7 old files deleted; zero remaining references to `GridEditor`, `@/lib/venue/grid`, or the `VenuePage` page object
+- [ ] `plan.ts`, `PlanEditor.tsx`, `PlanEditorLoader.tsx`, rewritten `venue/page.tsx`, `manual-tests/venue-plan-editor.md` created per steps above
+- [ ] All 9 acceptance criteria from orchestrator-output.md implementable/observable via the data-attribute hooks
+- [ ] `npm run lint` clean; `npm run build` succeeds (proves no SSR crash from Konva)
 - [ ] No TODOs, commented-out code, or debug logs
-- [ ] Code follows AGENTS.md (`@/*` imports, no new deps, no direct Supabase calls)
+- [ ] Code follows AGENTS.md rules (`@/*` alias, no direct Supabase usage, no proxy changes)
 - [ ] Security checklist passed

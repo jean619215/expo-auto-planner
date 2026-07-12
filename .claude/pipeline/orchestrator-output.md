@@ -1,46 +1,77 @@
-# Orchestrator Output — 網格真實尺寸標示 + 不規則形狀驗證
-> Story: 場地白模產生器 (階段一) | Task 3 of 5 | Generated: 2026-07-12T17:30:00+08:00
-> (補記: orchestrate agent 漏寫本檔,由主線程依已確認決策補上;決策內容與 task-log 的 orchestrate 紀錄一致)
+# Orchestrator Output — 建立 Konva 平面圖編輯器基礎
+
+> Story: 場地白模產生器 (階段一) | Task 1 of 5 (rewritten task list) | Generated: 2026-07-12T22:15:00+08:00
 
 ## Task Type
 FRONTEND
 
 ## Refined Requirement
-在既有 `/venue` 網格編輯器(Task 1-2 成果)上加上真實尺寸標示,並以測試驗證不規則地板圈選:
+Replace the existing grid-cell venue editor entirely with a new professional floor-plan-style 2D editor foundation, built with Konva.js via `react-konva`. This task covers **only**: the canvas/stage setup, reference gridlines, scale indication, and floor polygon editing. Walls, columns, resize handles, and dimension labels are explicitly deferred to later tasks (2 and 3).
 
-1. **座標軸標籤**: 網格頂部 + 左側顯示公尺數字。0 起算的「邊緣」標籤(尺規慣例 0..dimension)。
-2. **標籤密度**: 維度 ≤ 20 時每格標一次(0,1,2,...);> 20 時每 5 公尺標一次(0,5,10,...),且最後一個邊緣值一定標(例: 23m → ...,20,23)。密度按寬/高各自獨立判斷。格線本身不變,只有文字標籤變稀疏。
-3. **比例圖例**: 顯示「每格 = 1 公尺」文字。
-4. **面積統計**: 一行統計文字,地板/牆壁/柱子各自的格數 = 平方公尺數(1 格 = 1 平方公尺),依 cells Map 每次 render 重新計算。
-5. **不規則形狀驗證**(不新增繪製功能,純驗證): 非連續區塊、凹形(L 形)、中空(牆圍一圈)圈選都能正常繪製且統計正確。
+**Replacement scope (explicit):** This task deletes/replaces the old grid-cell editor implementation in full, since the user has confirmed a full swap (改版備註 in the story file), not an incremental migration:
+- Delete `src/app/venue/page.tsx` (old grid-cell page) — replace with a new page that mounts the Konva editor.
+- Delete `src/components/venue/GridEditor.tsx` (old grid-cell component) — replace with new Konva-based components (e.g. `FloorPlanEditor.tsx`, exact structure left to architect).
+- Delete `src/lib/venue/grid.ts` (old grid-cell coordinate/cell logic) — not reusable for polygon-based geometry; replace with new geometry helpers (snapping, bounds-clamping, polygon math) as needed.
+- Delete the old Playwright specs tied to grid-cell behavior: `playwright-tests/venue-grid-editor.spec.ts`, `playwright-tests/venue-scale-stats.spec.ts`, `playwright-tests/venue-toolbar.spec.ts`.
+- Delete/rewrite `playwright-tests/pages/VenuePage.ts` (old page object) — a new page object matching the new DOM/canvas structure will be created per-task starting with this one's Playwright stage.
+- New Playwright specs for this task's acceptance criteria are created fresh at the `playwright` pipeline stage (not part of this orchestrator/architect scope beyond noting they must exist).
 
-## Confirmed Decisions (使用者確認「都好」)
-- 軸標籤 + 圖例兩者都做。
-- 密度規則如上(≤20 每格,>20 每 5m)。
-- 面積統計要做(加值項,已確認)。
+**New implementation (this task):**
+- Add `react-konva` (and `konva`) as a new dependency — not yet installed in the project.
+- A `/venue` page (or equivalent route, architect's call) renders a Konva `Stage`/`Layer` representing a professional 2D floor-plan canvas:
+  - Light/neutral background suitable for a floor-plan look.
+  - Reference gridlines drawn at a fixed real-world interval (recommend 1m minor lines, with a slightly stronger line every 5m) covering the 50x50m usable area.
+  - A visible scale indication (e.g. a scale bar or an axis/ruler label showing meters) so the user can judge real-world size at a glance.
+  - The stage renders at a **fixed fit-to-screen scale** (px-per-meter computed once so the full 50x50m bounds fit in the viewport) — no zoom/pan in this task.
+- Floor polygon editing:
+  - On load, a default floor polygon is pre-populated: a 10m x 10m square, positioned so it sits roughly centered within the 50x50m canvas.
+  - Each vertex is a draggable handle. Dragging a vertex updates the polygon shape live.
+  - Double-clicking on a polygon edge inserts a new vertex at the (snapped) click point on that edge, splitting the edge into two.
+  - Vertex deletion is in scope: right-click a vertex (or select it and press Delete/Backspace) removes it, provided the polygon retains at least 3 vertices (minimum enforced; deletion attempts below 3 vertices are no-ops).
+  - All vertex drag/insert operations snap to a 0.5m grid.
+  - No vertex may be dragged (or inserted) outside the 50x50m usable bounds — position is clamped to the nearest valid in-bounds snapped point.
+  - The polygon may become non-convex/concave freely. Self-intersecting polygons are **not** validated or blocked in this task (may look wrong, acceptable for now).
 
 ## Clarified Acceptance Criteria
-- [ ] 預設 10x10 網格載入時,頂部與左側各顯示 0..10 的公尺標籤,與格線對齊。
-- [ ] Resize 後標籤跟著新尺寸重新渲染並保持對齊。
-- [ ] 尺寸 > 20(例如 25x8): 寬軸每 5m 標一次(0,5,10,15,20,25),高軸 ≤20 仍每格標。
-- [ ] 畫面上有「每格 = 1 公尺」圖例文字。
-- [ ] 畫了 N 格地板後,統計顯示地板 N 格(= N 平方公尺);牆壁/柱子同理,各自獨立累計。
-- [ ] 擦除/覆蓋後統計即時更新。
-- [ ] 非連續兩塊地板區域可正常繪製,統計為兩塊面積之和。
-- [ ] L 形(凹形)與中空(牆圍一圈、中間留空)形狀可正常繪製。
-- [ ] 既有 19 個 Playwright 測試(Task 1+2)全部維持通過。
+- [ ] Given the user navigates to the venue editor page, when the page loads, then a Konva-rendered canvas appears showing a light-background floor-plan-style view with visible reference gridlines and a scale indication (e.g. scale bar or labeled ruler in meters).
+- [ ] Given the canvas has loaded, when no user interaction has occurred yet, then a default 10m x 10m square floor polygon is displayed, roughly centered in the 50x50m canvas area, with visible vertex handles.
+- [ ] Given a floor polygon vertex handle, when the user drags it, then the vertex follows the drag, snapping to the nearest 0.5m grid position, and the polygon shape updates live as it's dragged.
+- [ ] Given a floor polygon edge, when the user double-clicks a point on that edge, then a new vertex is inserted at the (0.5m-snapped) clicked location, and the edge is split into two segments through the new vertex.
+- [ ] Given a polygon vertex and the polygon currently has more than 3 vertices, when the user right-clicks the vertex (or selects it and presses Delete/Backspace), then the vertex is removed and the polygon reflows through the remaining vertices.
+- [ ] Given a polygon with exactly 3 vertices, when the user attempts to delete a vertex, then the deletion is rejected (no-op) and the polygon still has 3 vertices.
+- [ ] Given a vertex drag or edge-insertion that would place a point outside the 50x50m usable bounds, when the drag/insert completes, then the resulting point is clamped to the nearest valid in-bounds position (still snapped to 0.5m).
+- [ ] Given the polygon is edited into a concave/irregular shape, when rendering, then the canvas displays the concave polygon correctly without validation errors or crashes (self-intersection is not checked/blocked).
+- [ ] Given the old grid-cell venue editor previously existed, when this task is complete, then it and its dedicated Playwright specs no longer exist in the codebase (replaced by the new implementation).
 
-## Edge Cases
-- 1x1 最小網格: 標籤 0,1 正常顯示。
-- 50x50 最大網格: 兩軸都走每 5m 規則,尾端 50 有標。
-- 空網格統計: 全部 0,不顯示錯誤。
+## Edge Cases to Handle
+- Dragging a vertex rapidly to a screen position far outside the 50x50m canvas area must still clamp/snap correctly (no NaN/negative coordinates, no vertex left outside bounds).
+- Double-click near an existing vertex (not clearly "on the edge, away from vertices") should not create a degenerate zero-length edge — if the snapped insertion point coincides with an existing vertex, treat it as a no-op.
+- Deleting a vertex adjacent to the shape's "closing" edge (first/last vertex in the array) must still correctly reconnect the polygon loop.
+- Resizing the browser window: since this task uses fixed fit-to-screen scale, the stage should recompute the fit scale on resize (or, at minimum, remain usable/not distorted — exact resize behavior left to architect, but must not break interactions).
+- Window/viewport too small to show the full 50x50m grid at a legible scale: acceptable to have a minimum practical scale; not a blocker for this task, but note if labels become illegible at small viewports.
 
 ## Error States
-- 無新增(無 async/網路;純本地渲染)。
+- No network/API error states apply — this task is purely client-side canvas interaction with no persistence.
+- If `react-konva`/`konva` fails to load or initialize (e.g. SSR mismatch under Next.js App Router), the page must not crash the whole app — architect/developer should ensure the canvas component is client-only (`"use client"` / dynamic import with `ssr: false` as appropriate for Konva's canvas dependency).
 
 ## Out of Scope
-- 3D 產生(Task 4)、3D 檢視(Task 5)、持久化(整個 story 不含)。
-- 自訂比例(固定 1 格 = 1 公尺)。
+- Wall (line-segment) tool and column (rectangle) tool — Task 2.
+- Object selection/move/resize for walls/columns, delete of walls/columns — Task 2.
+- Real-time dimension labels on selection/resize, floor polygon edge-length annotations — Task 3.
+- 3D white-box generation and "產生 3D 模型" button — Task 4.
+- 3D orbit-control viewer and 2D/3D view-switch flow — Task 5.
+- Any persistence/database storage of the floor plan — explicitly out of scope for the whole story (階段一).
+- Viewport zoom/pan on the 2D canvas — deferred; fixed fit-to-screen scale is sufficient for this task (may be revisited in Task 3 if dimension-label crowding demands it, but not required now).
+- Self-intersecting polygon validation/warnings — deferred, not handled in this task or committed to any future task yet.
 
-## Testability Hooks
-- `grid-ruler-top` / `grid-ruler-left`(軸標籤容器)、`grid-scale-legend`、`grid-stats` + `stats-floor`/`stats-wall`/`stats-column`(數字 span)。
+## Assumptions Made
+(Proposed defaults confirmed — low-stakes, user readily accepts recommended defaults per prior interactions; proceeding without a blocking Q&A round-trip. Flagged here for visibility; may be overridden before/during architect review.)
+- Default starting polygon: 10m x 10m square, centered-ish in the 50x50m canvas.
+- Vertex insertion: double-click on an edge inserts a snapped vertex at that point.
+- Vertex deletion is in scope for this task: right-click or select+Delete/Backspace, with a minimum-3-vertices floor.
+- Canvas viewport: fixed fit-to-screen scale for the full 50x50m bounds; no wheel-zoom/pan in this task (may reconsider alongside Task 3's dimension-annotation work if needed).
+- Polygon self-intersection is not validated in this task.
+- Old grid-cell editor code (`src/app/venue/page.tsx`, `src/components/venue/GridEditor.tsx`, `src/lib/venue/grid.ts`) and its 3 Playwright specs + `VenuePage.ts` page object are deleted/replaced as part of this task's implementation, per the story's 改版備註 confirming a full swap rather than incremental migration.
+
+## Security Notes
+No new security-sensitive surface: this task is a client-only, non-persisted canvas UI (no new API routes, no auth changes, no data storage). No secrets or credentials involved. Standard Next.js client-component/SSR considerations apply for the Konva canvas (client-only rendering), not a security concern per se.
