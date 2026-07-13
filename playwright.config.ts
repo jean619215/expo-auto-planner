@@ -24,6 +24,12 @@ export default defineConfig({
     baseURL: "http://localhost:3000",
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
+    // The venue plan editor renders an up-to-800px-square Stage below its
+    // mode toolbar; the default 720px-tall viewport clips the bottom of the
+    // canvas, so plain (non-drag) clicks near the canvas's lower edge would
+    // land outside the viewport entirely. Tall enough to keep the full
+    // 50x50m stage plus toolbar reachable by page.mouse.click().
+    viewport: { width: 1280, height: 1100 },
   },
   projects: [
     {

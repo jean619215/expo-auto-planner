@@ -92,6 +92,10 @@ export function findClosestEdge(
   return { edgeIndex: bestEdgeIndex, point: bestPoint, distance: bestDistance };
 }
 
+export function samePoint(a: PlanPoint, b: PlanPoint): boolean {
+  return a.x === b.x && a.y === b.y;
+}
+
 export function insertVertexOnEdge(
   polygon: FloorPolygon,
   edgeIndex: number,
@@ -102,10 +106,7 @@ export function insertVertexOnEdge(
   const projected = closestPointOnSegment(a, b, rawPoint);
   const snapped = snapPoint(projected);
 
-  const isSamePoint = (x: PlanPoint, y: PlanPoint) =>
-    x.x === y.x && x.y === y.y;
-
-  if (isSamePoint(snapped, a) || isSamePoint(snapped, b)) {
+  if (samePoint(snapped, a) || samePoint(snapped, b)) {
     return polygon;
   }
 
@@ -146,4 +147,121 @@ export function pxToMeters(
   pxPerMeter: number,
 ): PlanPoint {
   return { x: p.x / pxPerMeter, y: p.y / pxPerMeter };
+}
+
+// --- Wall / column object system (Task 2) ---------------------------------
+
+export const WALL_THICKNESS_M = 0.2;
+export const COLUMN_SIZE_M = 0.5;
+
+export interface WallSegment {
+  id: string;
+  start: PlanPoint; // meters
+  end: PlanPoint; // meters
+}
+
+export interface Column {
+  id: string;
+  center: PlanPoint; // meters; fixed COLUMN_SIZE_M square this task
+}
+
+let objectIdCounter = 0;
+
+export function createObjectId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  objectIdCounter += 1;
+  return `obj-${objectIdCounter}`;
+}
+
+export function createWall(
+  rawStart: PlanPoint,
+  rawEnd: PlanPoint,
+): WallSegment | null {
+  const start = snapPoint(rawStart);
+  const end = snapPoint(rawEnd);
+  if (samePoint(start, end)) {
+    return null;
+  }
+  return { id: createObjectId(), start, end };
+}
+
+// Clamps an already-grid-aligned-or-boundary center into
+// [COLUMN_SIZE_M/2, VENUE_SIZE_M - COLUMN_SIZE_M/2] on each axis. Deliberately
+// does NOT re-snap to the 0.5m grid: the boundary values themselves
+// (0.25 / 49.75) are half-grid offsets, so re-snapping an already-clamped
+// center (as would happen on repeated translateColumn calls during a
+// multi-step drag) would corrupt it back onto the grid (e.g. 0.25 -> 0.5).
+// Callers that need to snap first (e.g. createColumn) do so explicitly
+// before calling this.
+export function clampColumnCenter(p: PlanPoint): PlanPoint {
+  const half = COLUMN_SIZE_M / 2;
+  const safe = { x: safeNumber(p.x), y: safeNumber(p.y) };
+  return {
+    x: Math.min(VENUE_SIZE_M - half, Math.max(half, safe.x)),
+    y: Math.min(VENUE_SIZE_M - half, Math.max(half, safe.y)),
+  };
+}
+
+export function createColumn(rawCenter: PlanPoint): Column {
+  return { id: createObjectId(), center: clampColumnCenter(snapPoint(rawCenter)) };
+}
+
+export function translateWall(
+  wall: WallSegment,
+  deltaRaw: PlanPoint,
+): WallSegment {
+  const deltaX = snapToGrid(deltaRaw.x);
+  const deltaY = snapToGrid(deltaRaw.y);
+
+  const minX = Math.min(wall.start.x, wall.end.x);
+  const maxX = Math.max(wall.start.x, wall.end.x);
+  const minY = Math.min(wall.start.y, wall.end.y);
+  const maxY = Math.max(wall.start.y, wall.end.y);
+
+  const clampedDeltaX = Math.min(
+    VENUE_SIZE_M - maxX,
+    Math.max(-minX, deltaX),
+  );
+  const clampedDeltaY = Math.min(
+    VENUE_SIZE_M - maxY,
+    Math.max(-minY, deltaY),
+  );
+
+  return {
+    id: wall.id,
+    start: {
+      x: wall.start.x + clampedDeltaX,
+      y: wall.start.y + clampedDeltaY,
+    },
+    end: {
+      x: wall.end.x + clampedDeltaX,
+      y: wall.end.y + clampedDeltaY,
+    },
+  };
+}
+
+export function translateColumn(col: Column, deltaRaw: PlanPoint): Column {
+  const deltaX = snapToGrid(deltaRaw.x);
+  const deltaY = snapToGrid(deltaRaw.y);
+  const moved = {
+    x: col.center.x + deltaX,
+    y: col.center.y + deltaY,
+  };
+  return { id: col.id, center: clampColumnCenter(moved) };
+}
+
+export function moveWallEndpoint(
+  wall: WallSegment,
+  which: "start" | "end",
+  rawPoint: PlanPoint,
+): WallSegment {
+  const snapped = snapPoint(rawPoint);
+  const newStart = which === "start" ? snapped : wall.start;
+  const newEnd = which === "end" ? snapped : wall.end;
+  if (samePoint(newStart, newEnd)) {
+    return wall;
+  }
+  return { id: wall.id, start: newStart, end: newEnd };
 }

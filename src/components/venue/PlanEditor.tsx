@@ -4,23 +4,36 @@ import { useEffect, useRef, useState } from "react";
 import { Circle, Layer, Line, Rect, Stage, Text } from "react-konva";
 import type Konva from "konva";
 import {
+  COLUMN_SIZE_M,
   DEFAULT_FLOOR,
   GRID_MAJOR_M,
   GRID_MINOR_M,
   VENUE_SIZE_M,
+  WALL_THICKNESS_M,
   computePxPerMeter,
+  createColumn,
+  createWall,
   findClosestEdge,
   insertVertexOnEdge,
   metersToPx,
   moveVertex,
+  moveWallEndpoint,
   pxToMeters,
   removeVertex,
+  snapPoint,
+  translateColumn,
+  translateWall,
+  type Column,
   type FloorPolygon,
   type PlanPoint,
+  type WallSegment,
 } from "@/lib/venue/plan";
+import PlanToolbar, { type EditorMode } from "./PlanToolbar";
 
 const MIN_STAGE_PX = 320;
 const MAX_STAGE_PX = 800;
+
+type SelectedObject = { type: "wall" | "column"; id: string } | null;
 
 function buildGridLines(pxPerMeter: number) {
   const lines: { key: string; points: number[]; stroke: string; strokeWidth: number }[] = [];
@@ -46,11 +59,31 @@ function buildGridLines(pxPerMeter: number) {
   return lines;
 }
 
+function angleDegrees(start: PlanPoint, end: PlanPoint): number {
+  return (Math.atan2(end.y - start.y, end.x - start.x) * 180) / Math.PI;
+}
+
+function targetName(
+  e: Konva.KonvaEventObject<MouseEvent | TouchEvent>,
+): string {
+  return typeof e.target.name === "function" ? e.target.name() : "";
+}
+
 export default function PlanEditor() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [stagePx, setStagePx] = useState(MIN_STAGE_PX);
   const [polygon, setPolygon] = useState<FloorPolygon>(DEFAULT_FLOOR);
   const [selectedVertex, setSelectedVertex] = useState<number | null>(null);
+
+  const [mode, setMode] = useState<EditorMode>("select");
+  const [walls, setWalls] = useState<WallSegment[]>([]);
+  const [columns, setColumns] = useState<Column[]>([]);
+  const [selectedObject, setSelectedObject] = useState<SelectedObject>(null);
+  const [draftWall, setDraftWall] = useState<{ start: PlanPoint; end: PlanPoint } | null>(
+    null,
+  );
+  const [draggingHandle, setDraggingHandle] = useState<"start" | "end" | null>(null);
+  const suppressObjectClickRef = useRef(false);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -123,21 +156,169 @@ export default function PlanEditor() {
     });
   }
 
+  function deleteSelectedObject() {
+    if (selectedObject === null) return;
+    if (selectedObject.type === "wall") {
+      setWalls((prev) => prev.filter((w) => w.id !== selectedObject.id));
+    } else {
+      setColumns((prev) => prev.filter((c) => c.id !== selectedObject.id));
+    }
+    setSelectedObject(null);
+  }
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
-    if (
-      (e.key === "Delete" || e.key === "Backspace") &&
-      selectedVertex !== null
-    ) {
+    if (e.key !== "Delete" && e.key !== "Backspace") return;
+
+    // 物件選取優先於地板頂點選取,避免同一次按鍵同時觸發兩種刪除邏輯。
+    if (selectedObject !== null) {
+      deleteSelectedObject();
+      return;
+    }
+
+    if (selectedVertex !== null) {
       const next = removeVertex(polygon, selectedVertex);
       setPolygon(next);
       setSelectedVertex(null);
     }
   }
 
+  function markObjectClickSuppressed() {
+    // 建立物件的那次放開滑鼠,若剛好落在既有同類型物件上,Konva 會緊接著
+    // 對該舊物件觸發一次 click,把選取改回舊物件。標記忽略「下一次」
+    // click;若這次建立其實是拖曳手勢(不會有後續 click),則用 timeout
+    // 作為保險,避免旗標卡在 true 而誤吃掉之後真正的選取點擊。
+    suppressObjectClickRef.current = true;
+    setTimeout(() => {
+      suppressObjectClickRef.current = false;
+    }, 0);
+  }
+
+  function handleModeChange(next: EditorMode) {
+    setMode(next);
+    setDraftWall(null);
+    // 切換到牆壁/柱子模式時清除既有選取,避免殘留選取物件在新模式下
+    // 仍可被拖拉,導致繪製手勢被 Konva 誤判成拖動舊物件。
+    if (next !== "select") {
+      setSelectedObject(null);
+    }
+  }
+
+  function handleStageMouseDown(
+    e: Konva.KonvaEventObject<MouseEvent | TouchEvent>,
+  ) {
+    const stage = e.target.getStage();
+    const pointer = stage?.getPointerPosition();
+    if (!pointer) return;
+    const meterPoint = pxToMeters(pointer, pxPerMeter);
+
+    if (mode === "wall") {
+      const snapped = snapPoint(meterPoint);
+      setDraftWall({ start: snapped, end: snapped });
+      return;
+    }
+
+    if (mode === "select" && targetName(e) !== "object") {
+      setSelectedObject(null);
+    }
+  }
+
+  function handleStageMouseMove(
+    e: Konva.KonvaEventObject<MouseEvent | TouchEvent>,
+  ) {
+    if (mode !== "wall" || !draftWall) return;
+    const stage = e.target.getStage();
+    const pointer = stage?.getPointerPosition();
+    if (!pointer) return;
+    const meterPoint = pxToMeters(pointer, pxPerMeter);
+    const snapped = snapPoint(meterPoint);
+    setDraftWall({ start: draftWall.start, end: snapped });
+  }
+
+  function handleStageMouseUp(
+    e: Konva.KonvaEventObject<MouseEvent | TouchEvent>,
+  ) {
+    if (mode === "wall") {
+      if (draftWall) {
+        const wall = createWall(draftWall.start, draftWall.end);
+        if (wall) {
+          setWalls((prev) => [...prev, wall]);
+          setSelectedObject({ type: "wall", id: wall.id });
+          setSelectedVertex(null);
+          setMode("select");
+          markObjectClickSuppressed();
+        }
+      }
+      setDraftWall(null);
+      return;
+    }
+
+    if (mode === "column") {
+      const stage = e.target.getStage();
+      const pointer = stage?.getPointerPosition();
+      if (!pointer) return;
+      const meterPoint = pxToMeters(pointer, pxPerMeter);
+      const column = createColumn(meterPoint);
+      setColumns((prev) => [...prev, column]);
+      setSelectedObject({ type: "column", id: column.id });
+      setSelectedVertex(null);
+      setMode("select");
+      markObjectClickSuppressed();
+    }
+  }
+
+  function handleWallBodyDrag(
+    wall: WallSegment,
+    e: Konva.KonvaEventObject<DragEvent>,
+  ) {
+    const node = e.target;
+    const originPx = metersToPx(wall.start, pxPerMeter);
+    const deltaPx = { x: node.x() - originPx.x, y: node.y() - originPx.y };
+    const deltaM = pxToMeters(deltaPx, pxPerMeter);
+    const updated = translateWall(wall, deltaM);
+    setWalls((prev) => prev.map((w) => (w.id === wall.id ? updated : w)));
+    const snappedPx = metersToPx(updated.start, pxPerMeter);
+    node.position(snappedPx);
+  }
+
+  function handleColumnBodyDrag(
+    column: Column,
+    e: Konva.KonvaEventObject<DragEvent>,
+  ) {
+    const node = e.target;
+    const originPx = metersToPx(column.center, pxPerMeter);
+    const deltaPx = { x: node.x() - originPx.x, y: node.y() - originPx.y };
+    const deltaM = pxToMeters(deltaPx, pxPerMeter);
+    const updated = translateColumn(column, deltaM);
+    setColumns((prev) => prev.map((c) => (c.id === column.id ? updated : c)));
+    const snappedPx = metersToPx(updated.center, pxPerMeter);
+    node.position(snappedPx);
+  }
+
+  function handleWallEndpointDrag(
+    wall: WallSegment,
+    which: "start" | "end",
+    e: Konva.KonvaEventObject<DragEvent>,
+  ) {
+    const node = e.target;
+    const meterPoint = pxToMeters({ x: node.x(), y: node.y() }, pxPerMeter);
+    const updated = moveWallEndpoint(wall, which, meterPoint);
+    setWalls((prev) => prev.map((w) => (w.id === wall.id ? updated : w)));
+    const snappedPx = metersToPx(updated[which], pxPerMeter);
+    node.position(snappedPx);
+  }
+
   const polygonPx = polygon.flatMap((p) => {
     const px = metersToPx(p, pxPerMeter);
     return [px.x, px.y];
   });
+
+  const thicknessPx = WALL_THICKNESS_M * pxPerMeter;
+  const columnSizePx = COLUMN_SIZE_M * pxPerMeter;
+
+  const selectedWall =
+    selectedObject?.type === "wall"
+      ? walls.find((w) => w.id === selectedObject.id) ?? null
+      : null;
 
   return (
     <div
@@ -147,11 +328,32 @@ export default function PlanEditor() {
       data-vertices={JSON.stringify(polygon)}
       data-px-per-meter={pxPerMeter}
       data-stage-size={stagePx}
+      data-mode={mode}
+      data-wall-count={walls.length}
+      data-column-count={columns.length}
+      data-selected-id={selectedObject?.id ?? ""}
+      data-selected-type={selectedObject?.type ?? ""}
+      data-objects={JSON.stringify({ walls, columns })}
       tabIndex={0}
       onKeyDown={handleKeyDown}
       className="w-full outline-none"
     >
-      <Stage width={stagePx} height={stagePx}>
+      <PlanToolbar
+        mode={mode}
+        onModeChange={handleModeChange}
+        canDelete={selectedObject !== null}
+        onDelete={deleteSelectedObject}
+      />
+      <Stage
+        width={stagePx}
+        height={stagePx}
+        onMouseDown={handleStageMouseDown}
+        onMouseMove={handleStageMouseMove}
+        onMouseUp={handleStageMouseUp}
+        onTouchStart={handleStageMouseDown}
+        onTouchMove={handleStageMouseMove}
+        onTouchEnd={handleStageMouseUp}
+      >
         <Layer listening={false}>
           <Rect
             x={0}
@@ -216,7 +418,7 @@ export default function PlanEditor() {
             fill="#44403c"
           />
         </Layer>
-        <Layer>
+        <Layer listening={mode === "select"}>
           <Line
             points={polygonPx}
             closed
@@ -238,14 +440,162 @@ export default function PlanEditor() {
                 strokeWidth={2}
                 hitStrokeWidth={16}
                 draggable
-                onClick={() => setSelectedVertex(index)}
-                onTap={() => setSelectedVertex(index)}
+                onClick={() => {
+                  setSelectedVertex(index);
+                  setSelectedObject(null);
+                }}
+                onTap={() => {
+                  setSelectedVertex(index);
+                  setSelectedObject(null);
+                }}
                 onDragMove={(e) => handleVertexDragMove(index, e)}
                 onDragEnd={(e) => handleVertexDragEnd(index, e)}
                 onContextMenu={(e) => handleVertexContextMenu(index, e)}
               />
             );
           })}
+        </Layer>
+        <Layer listening={mode === "select"}>
+          {walls.map((wall) => {
+            const isSelected =
+              selectedObject?.type === "wall" && selectedObject.id === wall.id;
+            const startPx = metersToPx(wall.start, pxPerMeter);
+            const lengthM = Math.hypot(
+              wall.end.x - wall.start.x,
+              wall.end.y - wall.start.y,
+            );
+            const lengthPx = lengthM * pxPerMeter;
+            return (
+              <Rect
+                key={wall.id}
+                name="object"
+                x={startPx.x}
+                y={startPx.y}
+                width={lengthPx}
+                height={thicknessPx}
+                offsetY={thicknessPx / 2}
+                rotation={angleDegrees(wall.start, wall.end)}
+                fill="#78350f"
+                stroke={isSelected ? "#3b82f6" : undefined}
+                strokeWidth={isSelected ? 3 : 0}
+                draggable={isSelected && mode === "select"}
+                onClick={() => {
+                  if (suppressObjectClickRef.current) {
+                    suppressObjectClickRef.current = false;
+                    return;
+                  }
+                  setSelectedObject({ type: "wall", id: wall.id });
+                  setSelectedVertex(null);
+                }}
+                onTap={() => {
+                  if (suppressObjectClickRef.current) {
+                    suppressObjectClickRef.current = false;
+                    return;
+                  }
+                  setSelectedObject({ type: "wall", id: wall.id });
+                  setSelectedVertex(null);
+                }}
+                onDragMove={(e) => handleWallBodyDrag(wall, e)}
+                onDragEnd={(e) => handleWallBodyDrag(wall, e)}
+              />
+            );
+          })}
+          {columns.map((column) => {
+            const isSelected =
+              selectedObject?.type === "column" &&
+              selectedObject.id === column.id;
+            const centerPx = metersToPx(column.center, pxPerMeter);
+            return (
+              <Rect
+                key={column.id}
+                name="object"
+                x={centerPx.x}
+                y={centerPx.y}
+                width={columnSizePx}
+                height={columnSizePx}
+                offsetX={columnSizePx / 2}
+                offsetY={columnSizePx / 2}
+                fill="#78716c"
+                stroke={isSelected ? "#3b82f6" : "#57534e"}
+                strokeWidth={isSelected ? 3 : 1.5}
+                draggable={isSelected && mode === "select"}
+                onClick={() => {
+                  if (suppressObjectClickRef.current) {
+                    suppressObjectClickRef.current = false;
+                    return;
+                  }
+                  setSelectedObject({ type: "column", id: column.id });
+                  setSelectedVertex(null);
+                }}
+                onTap={() => {
+                  if (suppressObjectClickRef.current) {
+                    suppressObjectClickRef.current = false;
+                    return;
+                  }
+                  setSelectedObject({ type: "column", id: column.id });
+                  setSelectedVertex(null);
+                }}
+                onDragMove={(e) => handleColumnBodyDrag(column, e)}
+                onDragEnd={(e) => handleColumnBodyDrag(column, e)}
+              />
+            );
+          })}
+          {draftWall && (
+            <Rect
+              listening={false}
+              x={metersToPx(draftWall.start, pxPerMeter).x}
+              y={metersToPx(draftWall.start, pxPerMeter).y}
+              width={
+                Math.hypot(
+                  draftWall.end.x - draftWall.start.x,
+                  draftWall.end.y - draftWall.start.y,
+                ) * pxPerMeter
+              }
+              height={thicknessPx}
+              offsetY={thicknessPx / 2}
+              rotation={angleDegrees(draftWall.start, draftWall.end)}
+              fill="#78350f"
+              opacity={0.5}
+            />
+          )}
+          {selectedWall && (
+            <>
+              <Circle
+                name="object"
+                x={metersToPx(selectedWall.start, pxPerMeter).x}
+                y={metersToPx(selectedWall.start, pxPerMeter).y}
+                radius={6}
+                fill={draggingHandle === "start" ? "#3b82f6" : "#ffffff"}
+                stroke="#3b82f6"
+                strokeWidth={2}
+                hitStrokeWidth={16}
+                draggable
+                onDragStart={() => setDraggingHandle("start")}
+                onDragMove={(e) => handleWallEndpointDrag(selectedWall, "start", e)}
+                onDragEnd={(e) => {
+                  handleWallEndpointDrag(selectedWall, "start", e);
+                  setDraggingHandle(null);
+                }}
+              />
+              <Circle
+                name="object"
+                x={metersToPx(selectedWall.end, pxPerMeter).x}
+                y={metersToPx(selectedWall.end, pxPerMeter).y}
+                radius={6}
+                fill={draggingHandle === "end" ? "#3b82f6" : "#ffffff"}
+                stroke="#3b82f6"
+                strokeWidth={2}
+                hitStrokeWidth={16}
+                draggable
+                onDragStart={() => setDraggingHandle("end")}
+                onDragMove={(e) => handleWallEndpointDrag(selectedWall, "end", e)}
+                onDragEnd={(e) => {
+                  handleWallEndpointDrag(selectedWall, "end", e);
+                  setDraggingHandle(null);
+                }}
+              />
+            </>
+          )}
         </Layer>
       </Stage>
     </div>

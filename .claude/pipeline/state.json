@@ -1,12 +1,12 @@
 {
   "story_file": "stories/venue-whitebox-generator.md",
   "story_title": "場地白模產生器 (階段一)",
-  "task_index": 0,
-  "current_task": "[FRONTEND] 建立 Konva 平面圖編輯器基礎:畫布、格線與比例標示、地板多邊形編輯(預設矩形起手,頂點拖拉、邊上插入頂點、0.5m 吸附、50x50 界限)",
+  "task_index": 1,
+  "current_task": "[FRONTEND] 物件系統:牆壁線段工具(固定厚度、端點拖拉)與柱子矩形工具(拖曳擺放),含選取/移動/刪除",
   "task_type": "FRONTEND",
   "iteration": {
-    "review": 1,
-    "qa": 1
+    "review": 2,
+    "qa": 2
   },
   "checkpoints": {
     "scan": "completed",
@@ -23,6 +23,6 @@
     "escalated": false
   },
   "stage": "complete",
-  "last_updated": "2026-07-13T00:05:00+08:00",
-  "notes": "Story pivoted 2026-07-12: grid-cell editor (completed tasks 1-3) replaced by professional floor-plan editor (Konva.js, polygon floor, line-segment walls, draggable/resizable objects, 0.5m snap). Task list re-split into 5 new tasks; previous Task 4 architect plan (grid-based 3D) is void. 3D decisions carried over: three/R3F/drei, 3m height, 0.1m floor slab, 2D-matching palette, empty-scene button disabled."
+  "last_updated": "2026-07-13T06:10:00+08:00",
+  "notes": "Playwright formal acceptance gate (Task 2) complete: fresh full run against a live local dev server (npm run dev, Next.js 16.2.10 Turbopack, ready in 555ms) — npx playwright test playwright-tests/venue-plan-editor.spec.ts playwright-tests/venue-objects.spec.ts -> 26/26 passed (32.2s), not just a re-trust of QA's last run. Cross-checked test coverage against all 13 acceptance criteria in orchestrator-output.md individually (default mode, wall draw+snap+auto-select, sub-snap-unit no-op, column place+snap+clamp+auto-select, select/highlight, deselect-on-empty-click, body drag translate+snap+bounds, endpoint drag independent, endpoint-coincidence reject+revert, Delete/Backspace removal, 刪除 button + no-op-when-empty, multi-object independence, bounds clamping) — every criterion maps to a currently-passing test, confirming intent coverage not just mechanical pass. Both QA regression tests (bug 1: stale-selection hijack on mode re-entry; bug 2: trailing-click reselects old object) also passed. No failures, nothing routed back to implement. checkpoints.playwright=completed, stage=complete. This is Task 2 of 5 in the 場地白模產生器 story — story itself is not complete, only this task."
 }

@@ -1,106 +1,150 @@
-# QA Report — 建立 Konva 平面圖編輯器基礎
-> Generated: 2026-07-12T23:45:00+08:00 | QA iteration: 1
-> Story: 場地白模產生器 (階段一) | Task 1 of 5 | Task type: FRONTEND
+# QA Report — 場地白模產生器 (階段一) Task 2: 物件系統 (牆壁 + 柱子)
+> Generated: 2026-07-13T02:00:00+08:00 | QA iteration: 1
 
 ## Summary
-- Tests executed: 30 (9 AC checks + 4 edge cases + 2 error-state checks + 6 regression checks + 21 node-replay boundary assertions on `plan.ts`, itemized under Test Coverage)
-- Passed: 30
-- Failed: 0
-- Blocked: 0 (live-browser interaction/visual assertions deferred to the `playwright` stage per pipeline design — this pass is static/code-level verification as instructed)
+- Tests executed: 13 AC checks + 11 edge-case checks + 4 independent probe scenarios (live browser) + regression suite (24/24 existing Playwright tests) + static code review of `plan.ts`/`PlanEditor.tsx`/`PlanToolbar.tsx` + spot-check of `venue-objects.spec.ts` assertions
+- Passed: 13/13 ACs as literally worded; 9/11 edge cases
+- Failed: 2 (both edge cases not covered by the existing 24-test suite — found via independent probing, not part of the implement agent's own tests)
+- Blocked: 0
 
 ## Recommendation
-APPROVED — QA sign-off granted for static/code-level verification. Both review Should-Fix issues are confirmed fixed. No new Critical/High/Medium bugs found. Proceed to `playwright` stage for live-browser acceptance gate.
+REJECTED — two reproducible functional bugs found via independent interaction sequences that the existing Playwright suite (written by the same agent that implemented the feature) does not exercise. Both stem from the same root cause: wall/column click/select/drag handlers in `PlanEditor.tsx` are not gated by `mode`, and switching toolbar mode does not clear `selectedObject`. Loop back to implement.
 
 ## Acceptance Criteria Results
 | Criterion | Result | Notes |
 |---|---|---|
-| 1. Canvas loads with gridlines + scale indication | ✅ PASS | `PlanEditor.tsx` renders `Rect` background (#fafaf9), 1m/5m `Line` gridlines (`buildGridLines`), axis tick labels every 5m, and a 5m scale bar + "5 公尺" label. Confirmed present in code; visual quality deferred to manual checklist / Playwright. |
-| 2. Default 10x10 centered polygon with handles | ✅ PASS | `DEFAULT_FLOOR` = `[(20,20),(30,20),(30,30),(20,30)]`, centered at (25,25) in the 50x50 area. Node-replay: `JSON.stringify(DEFAULT_FLOOR)` matches expected square. 4 `Circle` handles rendered per vertex. |
-| 3. Vertex drag snaps to 0.5m live | ✅ PASS | `handleVertexDragMove`/`handleVertexDragEnd` → `moveVertex` → `snapPoint` (snap then clamp). Node-replay: `snapToGrid(22.3)===22.5`, `snapToGrid(27.8)===28.0`. Write-back `node.position(snappedPx)` keeps handle synced with polygon Line during drag (per architect plan step 4). |
-| 4. Double-click edge inserts snapped vertex, only within 0.5m of an edge | ✅ PASS (review fix confirmed) | `handleEdgeDblClick` (PlanEditor.tsx:104-108) now destructures `distance` from `findClosestEdge` and returns early when `distance > 0.5` before calling `insertVertexOnEdge`. Node-replay: insert at edge midpoint (distance 0) → 5 vertices, correct index/position; insert at exact vertex position → no-op (same array ref) via `insertVertexOnEdge`'s endpoint guard. This closes Review Issue 1. |
-| 5. Vertex deletion >3 vertices removes + reflows | ✅ PASS | `removeVertex` filters out index; node-replay confirms 5-vertex polygon removing index 0 or last index reconnects the loop correctly (values match expected remaining vertices in order). |
-| 6. 3-vertex floor rejects deletion (no-op) | ✅ PASS | `removeVertex` returns same array reference when `polygon.length <= MIN_FLOOR_VERTICES`. Node-replay confirms triangle removeVertex(0) returns identical reference (no mutation). |
-| 7. Bounds clamping to [0,50], still snapped | ✅ PASS | `clampToBounds` clamps to `[0,50]` after `snapToGrid`; `safeNumber` guards non-finite inputs. Node-replay: `moveVertex(sq, 0, {x:-100,y:1000})` → `(0,50)`; `snapPoint({x:-5,y:60})` → `(0,50)`. |
-| 8. Concave shapes render without validation errors | ✅ PASS | No self-intersection checks in `plan.ts` or `PlanEditor.tsx` (confirmed by code read); Konva `Line closed` handles concave point sets natively. No blocking logic present. Visual confirmation deferred to manual checklist. |
-| 9. Old grid-cell editor + specs fully deleted | ✅ PASS | `git status` confirms deletion of `src/components/venue/GridEditor.tsx`, `src/lib/venue/grid.ts`, `playwright-tests/venue-grid-editor.spec.ts`, `playwright-tests/venue-toolbar.spec.ts`, `playwright-tests/venue-scale-stats.spec.ts`, `playwright-tests/pages/VenuePage.ts`, `manual-tests/venue-grid-editor.md`. `grep -rn "GridEditor\|venue/grid\|VenuePage" src playwright-tests manual-tests` → only coincidental `function VenuePage()` component name (not the deleted page-object class) remains. |
+| Default mode is 選取 | ✅ PASS | `data-mode="select"` on load, confirmed in venue-objects.spec.ts:20 and manually. |
+| 牆壁模式 click-drag creates wall (snap+clamp), mode→選取, new wall selected | ✅ PASS | Confirmed for isolated draws. **Fails under a specific precondition — see Bug 1.** |
+| Click-drag start==end after snap → no wall created | ✅ PASS | `createWall` returns `null` correctly; mode stays 牆壁. |
+| 柱子模式 click creates column (snap+clamp), mode→選取, new column selected | ✅ PASS | Confirmed for isolated placements. **Fails under a specific precondition — see Bug 2.** |
+| 選取模式 click selects wall/column, blue outline | ✅ PASS | `stroke="#3b82f6"`, `strokeWidth=3` applied on selected object; verified via `data-selected-id`/`data-selected-type`. |
+| 選取模式 click empty space deselects | ✅ PASS | Stage `onMouseDown` clears `selectedObject` when `target.name() !== "object"`. |
+| Selected object body-drag → translate whole object, snap+clamp | ✅ PASS | `translateWall`/`translateColumn` snap delta and clamp correctly; verified with venue-objects.spec.ts:125,145 and boundary probe. |
+| Selected wall endpoint-drag → independent move, snap+clamp | ✅ PASS | `moveWallEndpoint` correctly updates only the targeted endpoint. |
+| Endpoint drag onto other endpoint → reject + revert | ✅ PASS | `moveWallEndpoint` returns the unchanged wall object on coincidence; handle node position resets. Re-verified with an additional single-jump (`steps:1`) case identical to the existing test — holds. |
+| Delete/Backspace or 刪除 removes selected object, clears selection | ✅ PASS | `deleteSelectedObject` + keydown precedence logic verified. |
+| Delete/Backspace/刪除 no-op when nothing selected | ✅ PASS | `刪除` button is `disabled` (not merely inert) when `selectedObject === null`; keydown handler falls through harmlessly. |
+| Multiple objects independently selectable/movable/deletable | ✅ PASS | Confirmed with 2 walls + 2 columns; moving/deleting one leaves others' geometry untouched. |
+| Bounds clamp on placement/drag (full object stays in 50×50m) | ✅ PASS | Column center clamps to `[0.25, 49.75]`; wall endpoints clamp to `[0, 50]` independently. Re-verified `clampColumnCenter`/`translateWall` math against additional boundary deltas (e.g. dragging a column to (-20,-20) → clamps to (0.25, 0.25); dragging a wall whose `minX=0` further negative → delta clamped to 0). |
 
 ## Edge Case Results
 | Edge Case | Result | Notes |
 |---|---|---|
-| Rapid drag far outside bounds → no NaN, correctly clamped | ✅ PASS | `safeNumber` guards `NaN`/`Infinity` before snap/clamp; node-replay: `snapPoint({x:NaN,y:Infinity})` → `(0,0)`, `snapPoint({x:-5,y:60})` → `(0,50)`; `moveVertex` extreme drag → `(0,50)`. |
-| Double-click coinciding with existing vertex → no-op | ✅ PASS | Two independent guards: (1) Circle has no `onDblClick` handler and Konva bubbling goes up the node tree (Circle→Layer→Stage), not sideways to the `Line`, so a dblclick landing on a vertex's hit region (`hitStrokeWidth=16`) never reaches `handleEdgeDblClick`; (2) `insertVertexOnEdge`'s endpoint-equality guard is a second line of defense if a dblclick lands near-but-not-on a vertex within edge tolerance. Node-replay confirms guard #2: insert at `(20,20)` and `(30,20)` both return the same array reference. |
-| Deleting vertex adjacent to closing edge reconnects loop | ✅ PASS | `removeVertex` uses `Array.filter`, index-agnostic; node-replay on a 5-vertex polygon confirms removing index 0 and removing the last index (4) both produce correctly-ordered 4-vertex loops. `findClosestEdge` also confirmed to correctly resolve the closing edge (index `length-1` connecting to index 0). |
-| Container resize recomputes scale | ✅ PASS (code-level) | `ResizeObserver` on `containerRef` recomputes `stagePx` (clamped `[320,800]`) on width change; `pxPerMeter` is derived from `stagePx` on every render, so scale updates automatically. Polygon state stays in meters (untouched by resize), so interactions are not disrupted. Live-browser resize behavior also on the manual checklist (`manual-tests/venue-plan-editor.md`) and noted for a Playwright viewport sanity check per architect Test Plan. |
+| Very short wall drag (< 0.5m snap) | ✅ PASS | No wall created, mode stays 牆壁. |
+| Column dragged/placed near edge → center clamps to `[0.25,49.75]` | ✅ PASS | Confirmed both on placement and on drag-to-edge. |
+| Wall endpoint clamps to `[0,50]` independently per axis | ✅ PASS | `snapPoint` reused, confirmed via `moveWallEndpoint`. |
+| Endpoint dragged onto other endpoint → rejected, reverts | ✅ PASS | See AC row above. |
+| Mode-switch mid-drag → no crash | ✅ PASS (no crash) | ❌ **but see Bug 1**: no crash occurs, but mode-switch *while an object remains selected from a prior action* silently corrupts existing geometry and spawns a garbage object — this is a functional bug beyond the "no crash" bar the spec explicitly limited this edge case to, and is exactly the mechanism the spec's phrase "mid-interaction" was meant to bound, so it is in-scope to flag even though it isn't literally "mid-drag." |
+| Object selection vs. floor-vertex selection independence, Delete precedence to objects | ✅ PASS | Selecting a floor vertex clears `selectedObject` and vice versa; Delete/Backspace checks `selectedObject` first. |
+| **New: click-on-existing-object while placing a new object of the same type** (not explicitly listed in orchestrator-output.md, but implied by "the new column/wall is selected" AC + "each independently selectable... without affecting the others") | ❌ **FAIL — Bug 2** | See below. |
+| **New: drawing a new wall whose start point lands on a still-selected wall from a prior action** | ❌ **FAIL — Bug 1** | See below. |
 
-## Error State Results
-| Error State | Result | Notes |
-|---|---|---|
-| Konva SSR mismatch (no crash on server render) | ✅ PASS | `PlanEditorLoader.tsx` uses `next/dynamic(..., { ssr: false })` inside a Client Component per Next 16 docs constraint; `npm run build` output shows `/venue` as `○ (Static)` — proves prerender succeeded with no `window is not defined` crash. |
-| No network/API error states (N/A) | ✅ PASS (N/A) | Confirmed purely client-side; no fetch/API calls in `PlanEditor.tsx`/`plan.ts`. |
+## Error States
+- N/A — no network/API error states apply to this pure client-side task, confirmed no error-state UI was added (none required). PASS.
 
 ## Regression Check
 | Feature | Result |
 |---|---|
-| `playwright-tests/membership-task7-task9.spec.ts` (adjacent story, unaffected) | ✅ PASS — file present, untouched, 9 `test(` blocks intact |
-| `src/proxy.ts` / auth routes / page protection | ✅ PASS — zero diff on `src/proxy.ts`; `/venue` was already public, not in `PROTECTED_PAGES`/matcher, confirmed still absent |
-| No other component/page references the deleted venue files | ✅ PASS — repo-wide grep for `venue` in `src/components`/`src/app` outside `venue/` dirs returns nothing |
-| `npm run lint` | ✅ PASS — clean, no errors/warnings |
-| `npx tsc --noEmit` (via `npm run build`) | ✅ PASS — clean |
-| `npm run build` | ✅ PASS — succeeds; all routes render, `/venue` static-prerendered |
+| Task 1 floor-polygon vertex drag/snap/clamp | ✅ PASS (9/9 existing tests green) |
+| Task 1 edge double-click insert vertex | ✅ PASS |
+| Task 1 vertex right-click delete (incl. 3-vertex floor) | ✅ PASS |
+| Task 1 concave-polygon rendering | ✅ PASS |
+| Task 1 old grid-cell editor absence (AC9) | ✅ PASS |
+| Full local run: `venue-plan-editor.spec.ts` (9) + `venue-objects.spec.ts` (15) | ✅ 24/24 passed against local dev server (re-ran independently, matches implement/review claim) |
 
 ## Security Test
-- Sensitive data exposure: PASS — no secrets/tokens/credentials in new files; no logging added
-- Input validation: PASS — pointer coordinates NaN/Infinity-guarded (`safeNumber`), snapped to 0.5m grid, clamped to `[0,50]` at every mutation entry point in `plan.ts`
-- Auth boundary: N/A — `/venue` is a public page, no auth surface touched, `src/proxy.ts` diff is empty, no new API routes
+- Sensitive data exposure: PASS — no new data flows, no logging added, `data-objects` only exposes in-memory meter coordinates (no PII/secrets).
+- Input validation: PASS — all pointer coordinates pass through `snapPoint`/`clampColumnCenter`/`snapToGrid` (NaN-safe via `safeNumber`) before entering state.
+- Auth boundary: N/A — confirmed via `git diff --stat` that `src/proxy.ts` and all `/api/*` routes are untouched by this change; `/venue` remains a public, unauthenticated page.
 
 ## Bugs Found
 
-No Critical, High, or Medium bugs found. Both Should-Fix issues from `review-report.md` (iteration 1) were verified fixed in code:
-
-1. **Review Issue 1 (edge-insert distance threshold)** — Confirmed fixed. `handleEdgeDblClick` now no-ops when `findClosestEdge` distance exceeds 0.5m before ever calling `insertVertexOnEdge`.
-2. **Review Issue 2 (stale `selectedVertex` after deletion)** — Confirmed fixed. `handleVertexContextMenu` now shifts `selectedVertex` down by one when a lower-index vertex is deleted, clears it when the deleted vertex was itself selected, and leaves it unchanged otherwise — matching the review's suggested fix exactly.
-
-### Bug 1 (Low, non-blocking): Keyboard-delete unconditionally clears `selectedVertex` even on a rejected (3-vertex-floor) deletion
-- **Severity**: Low
-- **Acceptance Criterion affected**: AC 6 (3-vertex floor rejects deletion) — functionally still passes (vertex count/positions unchanged), but a secondary UI-state side effect occurs
+### Bug 1: Switching to 牆壁/柱子 mode without deselecting leaves the previously-selected object draggable, so a new draw gesture starting on its body silently moves/corrupts it instead of drawing a new object
+- **Severity**: High
+- **Acceptance Criterion affected**: "click-drag from point A to point B creates a wall between A and B" (the actual effect is corruption of a *different, pre-existing* wall, not creation of the intended one) — also breaks the multi-object independence guarantee ("each is independently selectable, movable, and deletable **without affecting the others**").
 - **Steps to Reproduce**:
-  1. Reduce polygon to exactly 3 vertices.
-  2. Click a vertex to select it (`selectedVertex` set).
-  3. Press `Delete` or `Backspace`.
-- **Expected**: Since `removeVertex` no-ops at the 3-vertex floor, no state should change, including selection (arguably).
-- **Actual**: `handleKeyDown` (PlanEditor.tsx:126-135) calls `setSelectedVertex(null)` unconditionally after calling `removeVertex`, even when `next === polygon` (rejected, no-op). The visual highlight on the selected vertex disappears even though nothing was actually deleted.
-- **Impact**: Purely cosmetic/UX — no data corruption, no AC violation (polygon data and vertex count remain correct per spec wording, which only requires the polygon to still have 3 vertices). Does not block sign-off; logged for visibility. Does not require an implement-stage loop.
+  1. In 牆壁模式, draw wall 1 from (5,5) to (10,5). It auto-selects and mode returns to 選取 (this is normal/expected — `selectedObject` is still set to wall 1).
+  2. Click `牆壁` toolbar button again to re-enter 牆壁模式 (a completely normal way to draw a second, connected wall — `handleModeChange` only clears `draftWall`, it does **not** clear `selectedObject`, so wall 1 remains selected and therefore still `draggable`).
+  3. Click-drag from (7.5, 5) — a point on wall 1's body — to (7.5, 15), intending to draw a new wall there.
+- **Expected**: A new wall is created from (7.5,5) to (7.5,15); wall 1 is untouched.
+- **Actual**: Reproduced live via Playwright against the running dev server. Wall 1 is silently translated to (5,15)-(10,15) (Konva intercepts the gesture as a native drag of the still-`draggable` selected Rect instead of a Stage-level wall-draw gesture), **and** a second, garbage short wall is created from (7.5,5) to (7.5,6.5) (a truncated fragment of the intended drag, captured by the Stage's `draftWall` tracking before Konva's drag took over and stopped further event bubbling). Final state: 2 walls, neither matching user intent, and the original wall's position is destroyed. Confirmed the bug disappears entirely when the user explicitly clicks empty space to deselect before switching tool (control test) — isolates the root cause precisely to "mode switch doesn't clear selection" + "object layer isn't `listening`/`draggable`-gated by mode" (the floor layer *does* have this gating per architect-plan.md step 19; the object layer in steps 20-24 was never given the equivalent gating).
+- **Impact**: A very plausible real workflow — drawing a second wall connected to or near a just-drawn (and therefore still-selected) first wall, e.g. building the walls of a room corner-by-corner — silently destroys previously placed work with no error, no undo (out of scope), and no visual indication until the user notices the corrupted layout. This is a data-loss-equivalent bug for a client-side-only editing tool.
+
+### Bug 2: Placing a new column/wall on top of an existing object of the same type ends up with the *old* object selected instead of the newly created one
+- **Severity**: Medium
+- **Acceptance Criterion affected**: "the user clicks a point, then a 0.5x0.5m column is placed... and the new column is selected" (also applies symmetrically to walls, by the same mechanism).
+- **Steps to Reproduce**:
+  1. In 柱子模式, click (10,10) to place column A. It auto-selects (`selectedType=column`, `selectedId=A`), mode returns to 選取.
+  2. Click empty space (40,40) to explicitly deselect.
+  3. Re-enter 柱子模式, click (10,10) again to place column B at the exact same point.
+- **Expected**: Column B is created and selected (`selectedId` = B's new id); column A is untouched and no longer selected.
+- **Actual**: Reproduced live via Playwright. Column count correctly becomes 2 (both A and B exist with center (10,10)), but `data-selected-id` ends up equal to **column A's id**, not B's. Root cause: the Stage-level `onMouseUp` handler for 柱子模式 creates column B and calls `setSelectedObject({id: B})`, but because column A's Konva `<Rect>` sits at the same screen point and its own (mode-unaware) `onClick` handler also fires for the same click, it runs afterward and overwrites the selection back to `{id: A}`.
+- **Impact**: A subsequent action the user takes assuming "the object I just placed is selected" (e.g. immediately drag-adjusting it, or pressing Delete to undo a misplaced object) silently acts on the wrong, pre-existing object instead. Narrower blast radius than Bug 1 (no geometry corruption, only wrong-selection), but still a direct, deterministic violation of an explicit acceptance criterion.
 
 ## Test Coverage
-- New code coverage: `plan.ts` fully exercised via 21 targeted node-replay assertions (snap/clamp/NaN-safety, edge-detection incl. closing edge, insert incl. degenerate no-op at both endpoints, remove incl. floor guard and index-0/last-index reconnection, move/clamp extremes, scale conversions, default floor shape) — effectively 100% of exported pure-function branches. `PlanEditor.tsx`/`PlanEditorLoader.tsx`/`page.tsx` verified via full code read + `npm run build` (proves render/SSR path) + manual checklist (`manual-tests/venue-plan-editor.md`, visual/feel items) — no unit framework exists in this repo per AGENTS.md, so interactive DOM/canvas behavior verification is deferred to the `playwright` stage as designed.
-- Minimum required: manual checklist or Playwright coverage for all new logic (per AGENTS.md QA Agent section / Testing Requirements)
-- Status: PASS — manual checklist exists and covers all visual/feel items; Playwright specs for interactive ACs are the explicit next pipeline stage (already scoped in architect-plan.md Test Plan, not yet authored — expected, not a gap at this stage)
+- New code coverage: Playwright — 15/15 new `venue-objects.spec.ts` scenarios pass, but they only ever exercise draw/select/move/delete gestures against a *clean* (nothing-selected, non-overlapping) canvas state; none re-enter a create mode while a prior object remains selected, and none place/draw two objects at the exact same coordinates. Both gaps directly correspond to Bug 1 and Bug 2.
+- Minimum required: AGENTS.md requires Playwright coverage of new logic for FRONTEND tasks — met in breadth (all 13 literal ACs covered) but not in the two interaction sequences above.
+- Status: FAIL (coverage gap directly enabled both bugs to ship past the implement+review stages)
 
-## Outcome
-✅ QA sign-off granted. Feature meets all 9 acceptance criteria, all edge cases hold, no regressions, no Critical/High/Medium bugs (one Low, non-blocking UX note logged above). Routing to `playwright` stage for live-browser confirmation of drag/snap/insert/delete interactions and visual gridlines/scale.
+---
 
-## Playwright E2E Results
-> Executed: 2026-07-13T00:05:00+08:00
+# QA Report — 場地白模產生器 (階段一) Task 2: 物件系統 (牆壁 + 柱子) — Iteration 2 (Final, cap=2)
+> Generated: 2026-07-13T05:30:00+08:00 | QA iteration: 2 (final — anti-loop cap reached)
 
-New spec files (old grid-cell spec + page object were deleted in this task, per orchestrator-output.md replacement scope):
-- `playwright-tests/venue-plan-editor.spec.ts`
-- `playwright-tests/pages/PlanEditorPage.ts`
+## Summary
+- Tests executed: 2 live-browser reproductions of the original bug repro steps (against a running `npm run dev`) + 2 new permanent Playwright regression tests added and run + full regression suite (26/26, was 24, +2 new) + spot-check pass over all 13 ACs (code re-read + existing/new test mapping) + lint/tsc/build
+- Passed: 13/13 ACs (spot-check), 26/26 Playwright tests, lint clean, tsc clean, build clean
+- Failed: 0
+- Blocked: 0
 
-Testability approach: the `[data-testid="plan-editor"]` wrapper exposes live `data-vertex-count`/`data-vertices` (JSON, meters)/`data-px-per-meter`/`data-stage-size`. The page object owns meter→px conversion (no stage offset — meter (0,0) maps directly to the wrapper's top-left, scaled by `data-px-per-meter`) and drives drags/dblclicks/right-clicks via `page.mouse` at computed screen coordinates.
+## Recommendation
+APPROVED — both previously-reported bugs (Bug 1: High, stale-selection hijack on mode re-entry; Bug 2: Medium, trailing-click reselects old overlapping object) are verified fixed via live reproduction of the exact original repro steps, not just by trusting review-report.md's claims. The review's 🟡 Should-Fix (missing permanent regression coverage) has been closed: two permanent tests were added to `playwright-tests/venue-objects.spec.ts`. This is QA iteration 2/2 (cap reached) — no further QA loop is available; sign-off is granted because no blocking bug survived.
 
-| Test | Acceptance Criterion | Result | Duration |
-|---|---|---|---|
-| AC1: canvas loads with gridlines/scale | Konva canvas renders, light background, fixed fit-to-screen scale (stage size / px-per-meter = 50m) | ✅ PASS | 1.1s |
-| AC2: default 10x10 square, centered | 4 vertices, 10x10m bounding box, centroid ≈ (25,25) | ✅ PASS | 853ms |
-| AC3: drag vertex snaps to 0.5m | Dragged vertex 0 to (23.2, 21.3) → snapped to (23, 21.5) | ✅ PASS | 1.0s |
-| AC7 (bounds): drag far outside clamps | Dragged vertex 2 to (120, -30) → clamped to (50, 0), no NaN | ✅ PASS | 1.0s |
-| AC4: dblclick edge midpoint inserts vertex | Right edge midpoint (30,25) insertion → count 4→5, new vertex present | ✅ PASS | 877ms |
-| AC5/edge-case: dblclick deep inside is no-op | Center (25,25), >0.5m from all edges → count stays 4 | ✅ PASS | 863ms |
-| AC5/AC6: right-click deletes vertex, floors at 3 | Repeated right-click 4→3, extra right-click at 3 stays 3 | ✅ PASS | 913ms |
-| AC8: concave edit renders without crash | Dragged vertex 1 to (24,24), no pageerror events, canvas still visible | ✅ PASS | 1.0s |
-| AC9: old grid-cell editor fully removed | No `venue-grid` testid, no `面積統計` text; old files confirmed absent from src/ | ✅ PASS | 858ms |
+## Bug 1 Re-verification (stale selection hijacks new draw gesture)
+- **Method**: Reproduced live in a real browser (not a unit/static check) via a Playwright test driving the actual running dev server at `/venue`, using the identical steps from this report's Iteration 1: draw wall 1 (5,5)→(10,5) [auto-selects], re-enter 牆壁 mode without deselecting, draw wall 2 starting at (7.5,5) — a point on wall 1's body — to (7.5,15).
+- **Result**: PASS. Wall count is 2; wall 1's geometry is byte-identical to before (start (5,5), end (10,5)); wall 2 is created exactly as drawn ((7.5,5)→(7.5,15)). No corruption, no garbage fragment. Matches the code-level fix traced in `src/components/venue/PlanEditor.tsx`: `handleModeChange` (lines 196-204) clears `selectedObject` on any transition away from `"select"`; the walls/columns `<Layer>` (line 458) is `listening={mode === "select"}`, so during `"wall"`/`"column"` mode the old shape cannot intercept hit-testing at all; each `<Rect>`'s `draggable={isSelected && mode === "select"}` (lines 481, 521) is a second independent guard.
+- This exact sequence is now a permanent test: `playwright-tests/venue-objects.spec.ts` — "regression (QA bug 1): re-entering 牆壁 mode with a stale selection does not hijack a new draw gesture into dragging the old wall".
 
-9/9 passed. No failures, no console/page errors observed.
+## Bug 2 Re-verification (trailing click reselects old overlapping object)
+- **Method**: Reproduced live via Playwright against the running dev server: place column A at (10,10) [auto-selects], click empty space (40,40) to explicitly deselect, re-enter 柱子 mode, place column B at (10,10) again (exact same point).
+- **Result**: PASS. Column count is 2; `data-selected-id` equals column B's id, not column A's. Matches the code-level fix: `suppressObjectClickRef` set synchronously in `markObjectClickSuppressed()` (called from `handleStageMouseUp` only on the object-actually-created path), consumed by the shape's `onClick`/`onTap` (lines 483-486, 523-526), with a `setTimeout(0)` safety net. Also confirmed (per review's Suggestion 1, re-checked here) that the Bug-1 layer-gating fix independently prevents the old shape's `onClick` from firing during the creation gesture in the first place — the suppress-ref is defense-in-depth, not the sole mechanism, which is a reasonable design choice, not a risk.
+- This exact sequence is now a permanent test: `playwright-tests/venue-objects.spec.ts` — "regression (QA bug 2): placing a new column on top of an existing one of the same type selects the new column, not the old one".
 
-### Failures
-None.
+## Permanent Regression Coverage Added (closes review's 🟡 Should Fix)
+- Added to `playwright-tests/venue-objects.spec.ts` (now 17 tests, up from 15):
+  1. `regression (QA bug 1): ...` — draws wall 1, re-enters 牆壁 mode without deselecting, draws wall 2 starting on wall 1's body; asserts wall 1 unchanged and wall 2 matches the new gesture.
+  2. `regression (QA bug 2): ...` — places column A, deselects, places column B at the same point; asserts count is 2 and the selected id is B's, not A's.
+- Both follow the existing file's conventions: `PlanEditorPage` page-object methods only (`wallTool`/`columnTool`/`drawWall`/`placeColumn`/`clickAt`/`objects`/`selectedId`/`selectedType`/`wallCount`/`columnCount`), no direct canvas/DOM queries, comments in the same style as neighboring tests explaining the "before the fix" failure mode.
+
+## Full Acceptance Criteria Spot-Check (all 13, re-confirmed)
+All 13 ACs from Iteration 1's table re-confirmed at code + test level (no regressions since iteration 1's full pass): default mode 選取; wall click-drag creates snapped wall + auto-select + mode reset; sub-snap-unit drag creates no wall; column click creates snapped/clamped column + auto-select + mode reset; select-mode click selects wall/column with blue outline; click empty space deselects; body-drag translates whole object snapped/clamped; endpoint-drag moves independently snapped/clamped; endpoint-onto-endpoint rejected+reverts; Delete/Backspace/刪除 removes selected + clears selection; Delete/Backspace/刪除 no-op when nothing selected; multiple objects independently selectable/movable/deletable; bounds clamp on placement/drag. All map 1:1 to passing tests in `venue-objects.spec.ts` (17/17) plus `venue-plan-editor.spec.ts` (9/9) for Task 1 regression — 26/26 total, re-run against a live local dev server this iteration, not just re-read from prior reports.
+
+## Regression Check
+| Feature | Result |
+|---|---|
+| Task 1 floor-polygon vertex drag/snap/clamp | ✅ PASS (9/9) |
+| Task 1 edge double-click insert vertex | ✅ PASS |
+| Task 1 vertex right-click delete (incl. 3-vertex floor) | ✅ PASS |
+| Task 1 concave-polygon rendering | ✅ PASS |
+| Task 1 old grid-cell editor absence (AC9) | ✅ PASS |
+| Full local run: `venue-plan-editor.spec.ts` (9) + `venue-objects.spec.ts` (17, +2 new) | ✅ 26/26 passed against local dev server |
+
+## Security Test
+- Sensitive data exposure: PASS — no new data flows; `git diff` confirms the only source change since Iteration 1 review-approval is the bugfix in `PlanEditor.tsx` plus the two new tests added this iteration; no logging of tokens/session/cookies anywhere in this surface.
+- Input validation: PASS — no new input surface introduced by the bugfix; existing `snapPoint`/`clampColumnCenter`/`safeNumber` paths unchanged.
+- Auth boundary: N/A — `src/proxy.ts` and all `/api/*`/`src/lib/supabase/**` remain untouched (confirmed via `git diff --stat`); `/venue` remains a public, unauthenticated, client-side-only page.
+
+## Build/Lint/Type Health (re-run this iteration)
+- `npm run lint`: clean, no output/errors.
+- `npx tsc --noEmit`: clean.
+- `npm run build`: succeeded; `/venue` still prerenders as static content; `Proxy (Middleware)` still loaded; no other routes affected.
+- `npx playwright test playwright-tests/venue-plan-editor.spec.ts playwright-tests/venue-objects.spec.ts`: **26/26 passed** against a local dev server (9 Task 1 + 17 Task 2, including the 2 new permanent regression tests).
+
+## Bugs Found (Iteration 2)
+None new. Both Iteration-1 bugs (Bug 1: High — stale-selection draw-gesture hijack; Bug 2: Medium — trailing-click reselects old object) are confirmed fixed by live reproduction of the original repro steps, and are now covered by permanent regression tests.
+
+## Anti-Loop / Escalation Note
+This is QA iteration 2 of the 2-iteration cap (`iteration.qa = 2`). Per AGENTS.md/ship-mate `qa` skill: since no new blocking bug was found and the prior review's only Should-Fix (missing regression coverage) has been closed, this iteration concludes with **sign-off**, not an escalation — the anti-loop guard is not triggered because there is nothing left to loop back to implement for. Had a new Critical/High/Medium bug been found at this iteration, this section would instead read as an explicit escalation-to-human per the cap, rather than a third auto-loop back to implement.
+
+## Final QA Recommendation
+✅ **QA sign-off granted.** Feature meets all 13 acceptance criteria; both previously-found bugs are verified fixed via live browser reproduction; permanent regression coverage added for both; full 26-test Playwright suite, lint, tsc, and build all pass clean. `checkpoints.qa = "completed"`, `flags.qa_bugs_pending = false`, `iteration.qa = 2`, `stage = "playwright"`.
