@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { Circle, Layer, Line, Rect, Stage, Text } from "react-konva";
 import type Konva from "konva";
 import {
-  COLUMN_SIZE_M,
   DEFAULT_FLOOR,
   GRID_MAJOR_M,
   GRID_MINOR_M,
@@ -14,15 +13,18 @@ import {
   createColumn,
   createWall,
   findClosestEdge,
+  formatMeters,
   insertVertexOnEdge,
   metersToPx,
   moveVertex,
   moveWallEndpoint,
   pxToMeters,
   removeVertex,
+  resizeColumnCorner,
   snapPoint,
   translateColumn,
   translateWall,
+  wallLengthM,
   type Column,
   type FloorPolygon,
   type PlanPoint,
@@ -83,6 +85,10 @@ export default function PlanEditor() {
     null,
   );
   const [draggingHandle, setDraggingHandle] = useState<"start" | "end" | null>(null);
+  const [draggingColumnCorner, setDraggingColumnCorner] = useState<{
+    x: -1 | 1;
+    y: -1 | 1;
+  } | null>(null);
   const suppressObjectClickRef = useRef(false);
 
   useEffect(() => {
@@ -307,18 +313,50 @@ export default function PlanEditor() {
     node.position(snappedPx);
   }
 
+  function handleColumnCornerDrag(
+    column: Column,
+    corner: { x: -1 | 1; y: -1 | 1 },
+    e: Konva.KonvaEventObject<DragEvent>,
+  ) {
+    const node = e.target;
+    const meterPoint = pxToMeters({ x: node.x(), y: node.y() }, pxPerMeter);
+    const updated = resizeColumnCorner(column, corner, meterPoint);
+    setColumns((prev) => prev.map((c) => (c.id === column.id ? updated : c)));
+    const cornerMeter = {
+      x: updated.center.x + (corner.x * updated.w) / 2,
+      y: updated.center.y + (corner.y * updated.h) / 2,
+    };
+    const snappedPx = metersToPx(cornerMeter, pxPerMeter);
+    node.position(snappedPx);
+  }
+
   const polygonPx = polygon.flatMap((p) => {
     const px = metersToPx(p, pxPerMeter);
     return [px.x, px.y];
   });
 
   const thicknessPx = WALL_THICKNESS_M * pxPerMeter;
-  const columnSizePx = COLUMN_SIZE_M * pxPerMeter;
 
   const selectedWall =
     selectedObject?.type === "wall"
       ? walls.find((w) => w.id === selectedObject.id) ?? null
       : null;
+
+  const selectedColumn =
+    selectedObject?.type === "column"
+      ? columns.find((c) => c.id === selectedObject.id) ?? null
+      : null;
+
+  const columnLabelText = selectedColumn
+    ? `${selectedColumn.w.toFixed(1)} x ${selectedColumn.h.toFixed(1)} m`
+    : "";
+
+  const wallLabelText = selectedWall ? formatMeters(wallLengthM(selectedWall)) : "";
+
+  const edgeLabelTexts = polygon.map((vertex, i) => {
+    const next = polygon[(i + 1) % polygon.length];
+    return formatMeters(Math.hypot(next.x - vertex.x, next.y - vertex.y));
+  });
 
   return (
     <div
@@ -334,6 +372,9 @@ export default function PlanEditor() {
       data-selected-id={selectedObject?.id ?? ""}
       data-selected-type={selectedObject?.type ?? ""}
       data-objects={JSON.stringify({ walls, columns })}
+      data-column-label={columnLabelText}
+      data-wall-label={wallLabelText}
+      data-edge-labels={JSON.stringify(edgeLabelTexts)}
       tabIndex={0}
       onKeyDown={handleKeyDown}
       className="w-full outline-none"
@@ -454,6 +495,25 @@ export default function PlanEditor() {
               />
             );
           })}
+          {polygon.map((vertex, index) => {
+            const next = polygon[(index + 1) % polygon.length];
+            const midpoint = {
+              x: (vertex.x + next.x) / 2,
+              y: (vertex.y + next.y) / 2,
+            };
+            const midpointPx = metersToPx(midpoint, pxPerMeter);
+            return (
+              <Text
+                key={`edge-label-${index}`}
+                listening={false}
+                x={midpointPx.x + 4}
+                y={midpointPx.y + 4}
+                text={edgeLabelTexts[index]}
+                fontSize={11}
+                fill="#44403c"
+              />
+            );
+          })}
         </Layer>
         <Layer listening={mode === "select"}>
           {walls.map((wall) => {
@@ -505,16 +565,18 @@ export default function PlanEditor() {
               selectedObject?.type === "column" &&
               selectedObject.id === column.id;
             const centerPx = metersToPx(column.center, pxPerMeter);
+            const widthPx = column.w * pxPerMeter;
+            const heightPx = column.h * pxPerMeter;
             return (
               <Rect
                 key={column.id}
                 name="object"
                 x={centerPx.x}
                 y={centerPx.y}
-                width={columnSizePx}
-                height={columnSizePx}
-                offsetX={columnSizePx / 2}
-                offsetY={columnSizePx / 2}
+                width={widthPx}
+                height={heightPx}
+                offsetX={widthPx / 2}
+                offsetY={heightPx / 2}
                 fill="#78716c"
                 stroke={isSelected ? "#3b82f6" : "#57534e"}
                 strokeWidth={isSelected ? 3 : 1.5}
@@ -540,6 +602,107 @@ export default function PlanEditor() {
               />
             );
           })}
+          {selectedColumn &&
+            mode === "select" &&
+            (
+              [
+                { x: -1, y: -1 },
+                { x: 1, y: -1 },
+                { x: -1, y: 1 },
+                { x: 1, y: 1 },
+              ] as { x: -1 | 1; y: -1 | 1 }[]
+            ).map((corner) => {
+              const cornerMeter = {
+                x: selectedColumn.center.x + (corner.x * selectedColumn.w) / 2,
+                y: selectedColumn.center.y + (corner.y * selectedColumn.h) / 2,
+              };
+              const cornerPx = metersToPx(cornerMeter, pxPerMeter);
+              const isDragging =
+                draggingColumnCorner !== null &&
+                draggingColumnCorner.x === corner.x &&
+                draggingColumnCorner.y === corner.y;
+              return (
+                <Circle
+                  key={`corner-${corner.x}-${corner.y}`}
+                  name="object"
+                  x={cornerPx.x}
+                  y={cornerPx.y}
+                  radius={6}
+                  fill={isDragging ? "#3b82f6" : "#ffffff"}
+                  stroke="#3b82f6"
+                  strokeWidth={2}
+                  // The minimum column size (0.5m) can place corners only a
+                  // few px from the center at typical scale, so the default
+                  // fill/stroke hit region would overlap the column body's
+                  // own hit region and hijack body-drag gestures. A small
+                  // fixed hit radius (independent of the visual radius
+                  // above, which stays consistent with the other object
+                  // handles) keeps the handle precisely grabbable at its
+                  // corner without covering the body.
+                  hitFunc={(context, shape) => {
+                    context.beginPath();
+                    context.arc(0, 0, 3, 0, Math.PI * 2, false);
+                    context.closePath();
+                    context.fillStrokeShape(shape);
+                  }}
+                  draggable
+                  onDragStart={() => setDraggingColumnCorner(corner)}
+                  onDragMove={(e) =>
+                    handleColumnCornerDrag(selectedColumn, corner, e)
+                  }
+                  // Deliberately does NOT call handleColumnCornerDrag again
+                  // here (unlike the analogous vertex/wall-endpoint/column-
+                  // body handlers, which re-apply on both dragmove and
+                  // dragend): the resulting corner position is generally a
+                  // quarter-grid offset (center +/- w/2), not a 0.5m-grid
+                  // value, and onDragMove already overrides the node's
+                  // position to that exact result. Re-reading e.target's
+                  // (now-overridden) position here and re-running it through
+                  // resizeColumnCorner's snapPoint would re-snap a
+                  // non-grid-aligned value a second time, which is not
+                  // idempotent and can silently drift the resize result.
+                  // The last onDragMove already applied the correct final
+                  // state, so dragend only needs to clear the drag flag.
+                  onDragEnd={() => setDraggingColumnCorner(null)}
+                />
+              );
+            })}
+          {columnLabelText &&
+            selectedColumn &&
+            (() => {
+              const columnCenterPx = metersToPx(selectedColumn.center, pxPerMeter);
+              return (
+                <Text
+                  listening={false}
+                  x={columnCenterPx.x + (selectedColumn.w * pxPerMeter) / 2 + 4}
+                  y={columnCenterPx.y - (selectedColumn.h * pxPerMeter) / 2 - 16}
+                  text={columnLabelText}
+                  fontSize={11}
+                  fill="#44403c"
+                />
+              );
+            })()}
+          {wallLabelText &&
+            selectedWall &&
+            (() => {
+              const wallMidPx = metersToPx(
+                {
+                  x: (selectedWall.start.x + selectedWall.end.x) / 2,
+                  y: (selectedWall.start.y + selectedWall.end.y) / 2,
+                },
+                pxPerMeter,
+              );
+              return (
+                <Text
+                  listening={false}
+                  x={wallMidPx.x + 6}
+                  y={wallMidPx.y - 16}
+                  text={wallLabelText}
+                  fontSize={11}
+                  fill="#44403c"
+                />
+              );
+            })()}
           {draftWall && (
             <Rect
               listening={false}

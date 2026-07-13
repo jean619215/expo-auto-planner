@@ -14,6 +14,8 @@ export interface WallSegment {
 export interface Column {
   id: string;
   center: PlanPoint;
+  w: number;
+  h: number;
 }
 
 export interface PlanObjects {
@@ -31,6 +33,10 @@ export type EditorMode = "select" | "wall" | "column";
 //   data-px-per-meter, data-stage-size, data-mode, data-wall-count,
 //   data-column-count, data-selected-id, data-selected-type,
 //   data-objects (JSON, meter coordinates: { walls, columns }).
+//   data-column-label (Task 3, current selected/dragging column "W x H m"
+//   label text or ""), data-wall-label (Task 3, current selected/dragging
+//   wall "L m" label text or ""), data-edge-labels (Task 3, JSON array of
+//   always-on floor edge-length label strings, in polygon edge order).
 // This page object owns the meter -> screen-pixel math (see
 // src/components/venue/PlanEditor.tsx: the Stage has no margin/offset —
 // meter (0,0) maps directly to the wrapper div's top-left corner, scaled
@@ -232,5 +238,53 @@ export class PlanEditorPage {
   async pressDelete() {
     await this.editor.focus();
     await this.page.keyboard.press("Delete");
+  }
+
+  // --- Task 3: resize handles / dimension labels ----------------------------
+
+  /** Current column dimension label text ("W x H m"), or "" if none visible. */
+  async columnLabel(): Promise<string> {
+    return (await this.editor.getAttribute("data-column-label")) ?? "";
+  }
+
+  /** Current wall dimension label text ("L m"), or "" if none visible. */
+  async wallLabel(): Promise<string> {
+    return (await this.editor.getAttribute("data-wall-label")) ?? "";
+  }
+
+  /** Always-on floor edge-length label strings, in polygon edge order. */
+  async edgeLabels(): Promise<string[]> {
+    const raw = await this.editor.getAttribute("data-edge-labels");
+    return JSON.parse(raw ?? "[]");
+  }
+
+  /**
+   * Drag one corner handle of the given column (by id) to a new meter-space
+   * point. `corner` identifies the bounding-box corner being dragged, same
+   * sign-pair convention as `resizeColumnCorner` in plan.ts
+   * (x: -1 = left, +1 = right; y: -1 = top, +1 = bottom). `steps` controls
+   * interpolation granularity (default 8); pass 1 for a direct single-jump
+   * drag when only the final drop point should be evaluated.
+   */
+  async dragColumnCorner(
+    columnId: string,
+    corner: { x: -1 | 1; y: -1 | 1 },
+    toMeter: PlanPoint,
+    steps = 8,
+  ) {
+    const { columns } = await this.objects();
+    const column = columns.find((c) => c.id === columnId);
+    if (!column) throw new Error(`column ${columnId} not found`);
+    const fromMeter = {
+      x: column.center.x + (corner.x * column.w) / 2,
+      y: column.center.y + (corner.y * column.h) / 2,
+    };
+    const start = await this.meterToScreen(fromMeter);
+    const end = await this.meterToScreen(toMeter);
+
+    await this.page.mouse.move(start.x, start.y);
+    await this.page.mouse.down();
+    await this.page.mouse.move(end.x, end.y, { steps });
+    await this.page.mouse.up();
   }
 }
