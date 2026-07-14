@@ -1,10 +1,10 @@
-# Architect Plan — 物件系統:牆壁線段工具與柱子矩形工具(選取/移動/刪除)
+# Architect Plan — 依平面圖資料建立 3D 白模 (Three.js + react-three-fiber)
 
-> Story: 場地白模產生器 (階段一) | Task type: FRONTEND | Generated: 2026-07-13T00:30:00+08:00
+> Story: 場地白模產生器 (階段一) | Task type: FRONTEND | Generated: 2026-07-14T03:00:00+08:00
 
 ## Overview
 
-Extend the existing Konva floor-plan editor with an additive wall/column object system: a `選取/牆壁/柱子` mode toolbar, pure meter-space geometry helpers in `plan.ts` for walls (`start`/`end`, fixed 0.2m thickness) and columns (`center`, fixed 0.5×0.5m), and a unified select/move/delete interaction. Floor-polygon editing from Task 1 stays untouched; object selection is separate, mutually-exclusive state.
+Add a pure client-side, snapshot-on-click 3D whitebox generator to the `/venue` page. `PlanEditor.tsx` gains a "產生 3D 模型" button and a `sceneSnapshot` + `generation` counter pair of state. Clicking the button copies the current `polygon`/`walls`/`columns` into `sceneSnapshot` and bumps `generation`; a new `VenueSceneLoader` (mirroring `PlanEditorLoader`'s `dynamic(..., { ssr: false })` pattern) mounts a `VenueScene` R3F `<Canvas>` below the existing Konva canvas only once `sceneSnapshot` is non-null, keyed by `generation` so every regeneration fully unmounts/remounts the scene (guaranteeing no stale mesh accumulation). `VenueScene` is a pure function of its snapshot props — no live subscription to `PlanEditor`'s live state — which satisfies the "no live sync" AC by construction rather than by extra guard logic.
 
 ## Task Type Confirmed
 
@@ -14,181 +14,188 @@ FRONTEND
 
 | File path | Purpose |
 | --------- | ------- |
-| `src/components/venue/PlanToolbar.tsx` | Presentational HTML (non-Konva) mode toolbar: `選取`/`牆壁`/`柱子` segmented buttons + `刪除` button. Props: `mode`, `onModeChange`, `canDelete`, `onDelete`. Carries the `data-testid` + `aria-pressed` hooks. Keeps `PlanEditor.tsx` focused. |
+| `src/components/venue/VenueScene.tsx` | R3F `<Canvas>` scene: builds floor `ExtrudeGeometry`, per-wall `BoxGeometry`, per-column `BoxGeometry` meshes from a snapshot of `{ polygon, walls, columns }` passed in as props. Exposes a `data-testid="venue-scene"` wrapper `<div>` around the `<Canvas>` with `data-*` attributes for Playwright (Canvas/WebGL content itself is opaque to Playwright, same constraint as the Konva `<canvas>`). |
+| `src/components/venue/VenueSceneLoader.tsx` | Client-only loader: `dynamic(() => import("./VenueScene"), { ssr: false, loading: ... })`, same shape as `PlanEditorLoader.tsx`. Forwards `polygon`/`walls`/`columns`/`generation` props through. |
 
 ## Files to Modify
 
 | File path | What changes |
 | --------- | ------------ |
-| `src/lib/venue/plan.ts` | Append pure geometry: `WallSegment`/`Column` types, `WALL_THICKNESS_M`/`COLUMN_SIZE_M` constants, id helper, `createWall`, `createColumn`, `translateWall`, `translateColumn`, `moveWallEndpoint`. React/Konva-free. |
-| `src/components/venue/PlanEditor.tsx` | Add `mode`, `walls`, `columns`, `selectedObject` state; render toolbar, walls layer, columns, selection highlight, wall endpoint handles, and wall draw-preview; wire Stage pointer handlers for draw/place/deselect; extend keydown for object delete; add object `data-*` test hooks; gate floor-layer interactivity to select mode. |
-| `playwright-tests/pages/PlanEditorPage.ts` | Add object accessors (`mode`, `wallCount`, `columnCount`, `selectedId`, `objects`), toolbar actions, `drawWall`, `placeColumn`/`clickAt`, `dragObjectBody`, `dragWallEndpoint`, `pressDelete`, `clickDelete`. |
-| `manual-tests/venue-plan-editor.md` | Append a Task 2 checklist section (visual/手感 items Playwright can't judge). |
-
-No changes to `src/proxy.ts`, any `/api/*` route, Supabase factories, or `next.config.ts`. No new dependencies (konva/react-konva already installed).
-
-## Data Model (in `src/lib/venue/plan.ts`)
-
-```ts
-export const WALL_THICKNESS_M = 0.2;
-export const COLUMN_SIZE_M = 0.5;
-
-export interface WallSegment {
-  id: string;
-  start: PlanPoint; // meters
-  end: PlanPoint;   // meters
-}
-
-export interface Column {
-  id: string;
-  center: PlanPoint; // meters; fixed COLUMN_SIZE_M square this task
-}
-```
-
-- Field names `start`/`end` and `center` follow **orchestrator-output.md** (the authoritative spec), not the `a`/`b`/`size` shorthand in the task brief. Rationale: minimise churn against the finalized acceptance criteria; column size stays a shared constant (not a per-object `size`) because non-square/resizable columns are explicitly Task 3 / out-of-scope. Task 3 can widen `Column` to carry `size` then.
-- **id generation:** `crypto.randomUUID()` via a small `createObjectId()` wrapper (with a counter fallback if unavailable). SSR-safe because `PlanEditor` is loaded `ssr:false` (see `PlanEditorLoader.tsx`) and ids are only minted inside client pointer-event handlers — never during render/SSR.
+| `src/components/venue/PlanEditor.tsx` | Add `sceneSnapshot` state (`{ polygon: FloorPolygon; walls: WallSegment[]; columns: Column[] } \| null`, initial `null`) and `generation` state (`number`, initial `0`). Add a "產生 3D 模型" button (standalone action row directly in `PlanEditor.tsx`, not inside `PlanToolbar` — see Architecture Notes). Wire `onClick` to a `handleGenerate3D` function that snapshots current `polygon`/`walls`/`columns` into `sceneSnapshot` and increments `generation`. Button `disabled={walls.length === 0 && columns.length === 0}`. Conditionally render `<VenueSceneLoader key={generation} polygon={sceneSnapshot.polygon} walls={sceneSnapshot.walls} columns={sceneSnapshot.columns} />` below the existing `<Stage>` (still inside the same wrapper `<div data-testid="plan-editor">`) only when `sceneSnapshot !== null`. |
+| `package.json` / `package-lock.json` | Add `three`, `@react-three/fiber`, `@react-three/drei` to `dependencies` via `npm install three @react-three/fiber @react-three/drei` (installed together per orchestrator spec even though `drei` is unused until Task 5). |
+| `manual-tests/venue-plan-editor.md` | Append a new `## Task 4 — 3D 白模產生器` section with visual/feel checks Playwright can't assert (see Test Plan below). |
 
 ## Implementation Steps
 
-### A. Pure geometry — `src/lib/venue/plan.ts` (append only; do not alter existing exports)
+1. Run `npm install three @react-three/fiber @react-three/drei` at the repo root. Verify `package.json`/`package-lock.json` picked up all three packages and no peer-dependency warnings block install (React 19 + latest `@react-three/fiber`/`three` should be compatible; if npm reports a peer conflict, use `--legacy-peer-deps` only as a last resort and flag it in the plan's Architecture Notes retroactively — do not silently swallow the warning).
 
-1. Add constants `WALL_THICKNESS_M = 0.2`, `COLUMN_SIZE_M = 0.5`, and the `WallSegment` / `Column` interfaces above.
-2. Add `createObjectId(): string` — return `crypto.randomUUID()` when available, else a module-level incrementing counter string (`obj-<n>`). Keep it React-free (side-effect limited to the counter).
-3. Add `samePoint(a: PlanPoint, b: PlanPoint): boolean` — `a.x === b.x && a.y === b.y` (reuse the local equality currently inlined in `insertVertexOnEdge`; optionally refactor that call site to use it — no behavior change).
-4. Add `createWall(rawStart: PlanPoint, rawEnd: PlanPoint): WallSegment | null` — `snapPoint` both endpoints (existing helper already snaps **and** clamps to `[0,50]`); if `samePoint(start, end)` return `null` (zero-length reject); else return `{ id: createObjectId(), start, end }`.
-5. Add `clampColumnCenter(p: PlanPoint): PlanPoint` — snap to grid, then clamp each axis to `[COLUMN_SIZE_M/2, VENUE_SIZE_M - COLUMN_SIZE_M/2]` = `[0.25, 49.75]` so the full extent stays in bounds. Do **not** reuse `clampToBounds` (that clamps to `[0,50]`, wrong for a center).
-6. Add `createColumn(rawCenter: PlanPoint): Column` — `{ id: createObjectId(), center: clampColumnCenter(rawCenter) }`.
-7. Add `translateWall(wall: WallSegment, deltaRaw: PlanPoint): WallSegment` — snap the delta to grid (`snapToGrid` per axis), then clamp the delta so **both** endpoints remain in `[0,50]`: for x, allowable delta ∈ `[-min(start.x,end.x), VENUE_SIZE_M - max(start.x,end.x)]` (same for y). Apply the clamped delta to both endpoints. This satisfies "entire object stays within bounds".
-8. Add `translateColumn(col: Column, deltaRaw: PlanPoint): Column` — snap delta, apply to center, then `clampColumnCenter` the result (extent-aware clamp).
-9. Add `moveWallEndpoint(wall: WallSegment, which: "start" | "end", rawPoint: PlanPoint): WallSegment` — `snapPoint(rawPoint)`; build the candidate wall with that endpoint replaced; if `samePoint(newStart, newEnd)` return the **original** wall unchanged (zero-length reject → caller reverts by re-snapping the handle node to the unchanged endpoint); else return the updated wall.
-10. (Optional) Add `wallLengthM(wall)` only if it aids manual assertions; not required by any AC — skip unless trivially helpful.
+2. Create `src/components/venue/VenueScene.tsx`:
+   - `"use client"` directive (R3F requires DOM/WebGL APIs unavailable during SSR).
+   - Props: `interface VenueSceneProps { polygon: FloorPolygon; walls: WallSegment[]; columns: Column[]; }` (import types from `@/lib/venue/plan`).
+   - Import `Canvas` from `@react-three/fiber`, `THREE` (`import * as THREE from "three"`) for `THREE.Shape`/`ExtrudeGeometry`.
+   - **Floor mesh**: build a `THREE.Shape` from `polygon` points using the "extrude in local XY, then lay flat" technique: construct the `Shape` in its native XY plane using `(p.x, p.y)` directly (`shape.moveTo(polygon[0].x, polygon[0].y); polygon.slice(1).forEach(p => shape.lineTo(p.x, p.y)); shape.closePath();`), extrude with `new THREE.ExtrudeGeometry(shape, { depth: FLOOR_THICKNESS_M, bevelEnabled: false })`, then rotate the resulting `<mesh>` `-Math.PI / 2` about the X axis so the shape's local XY plane becomes world XZ (rotating the mesh, not the Shape's points, avoids re-deriving signed-area/winding math). After rotation, `ExtrudeGeometry`'s default depth direction (local +Z, which becomes world -Y after the -90° X rotation) extrudes downward from y=0, matching the "top face at y=0, bottom face at y=-0.1" requirement — verify this sign in step 8's manual smoke check and flip the rotation sign or negate `depth` if the slab lands above y=0 instead. Material: `<meshStandardMaterial color="#f5f5f4" side={THREE.DoubleSide} />` (`DoubleSide` avoids a black/invisible top face if the rotation ends up flipping the shape's winding order).
+   - **Wall meshes**: `walls.map(wall => ...)` — one `<mesh>` per wall, `key={wall.id}`, `<boxGeometry args={[wallLengthM(wall), WALL_HEIGHT_M, WALL_THICKNESS_M]} />`, `position={[(wall.start.x + wall.end.x) / 2, WALL_HEIGHT_M / 2, (wall.start.y + wall.end.y) / 2]}` (plan y -> Three z), `rotation={[0, -Math.atan2(wall.end.y - wall.start.y, wall.end.x - wall.start.x), 0]}` (negative sign because Three's Y-axis rotation follows the right-hand rule in a Z-forward/X-right/Y-up frame, which is the mirror image of the plan's X-right/Y-down 2D angle convention — this must be verified visually per Edge Case 5, see step 8). Material `#78350f`.
+   - **Column meshes**: `columns.map(col => ...)` — one `<mesh>` per column, `key={col.id}`, `<boxGeometry args={[col.w, WALL_HEIGHT_M, col.h]} />`, `position={[col.center.x, WALL_HEIGHT_M / 2, col.center.y]}`. Material `#78716c`.
+   - Local constants: `const WALL_HEIGHT_M = 3;` `const FLOOR_THICKNESS_M = 0.1;` (co-located in this file since `plan.ts` deliberately has no height field — per orchestrator's Out of Scope).
+   - Lighting/camera: `<ambientLight intensity={0.6} />`, `<directionalLight position={[25, 40, 25]} intensity={0.8} />`, and a `<Canvas camera={{ position: [VENUE_SIZE_M * 0.7, VENUE_SIZE_M * 0.9, VENUE_SIZE_M * 0.7], fov: 50 }}>` (or equivalent static framing constant) sufficient to see the 50x50m bounds — no `OrbitControls` (Task 5 scope).
+   - Root render: a wrapper `<div data-testid="venue-scene" data-generated="true" data-wall-mesh-count={walls.length} data-column-mesh-count={columns.length} data-floor-vertex-count={polygon.length} className="mt-4 h-[480px] w-full overflow-hidden rounded border border-stone-300 bg-stone-100">` containing the `<Canvas>`. See Testability section for why these attributes exist and are sufficient.
+   - Wrap the `<Canvas>` return (or the whole component body) so a WebGL init failure doesn't crash the page: R3F's `<Canvas>` already catches context-creation errors internally and renders a blank canvas rather than throwing synchronously in most browsers, but as defense-in-depth confirm in manual testing (step 8) that a forced low-level failure doesn't take down `PlanEditor` — per orchestrator's Error States section ("console error is acceptable as a baseline"), do not over-build a fallback UI.
 
-### B. Toolbar — `src/components/venue/PlanToolbar.tsx` (new)
+3. Create `src/components/venue/VenueSceneLoader.tsx`:
+   - `"use client"` directive, `dynamic(() => import("./VenueScene"), { ssr: false, loading: () => <div className="flex h-[480px] w-full items-center justify-center rounded border border-stone-200 bg-stone-50 text-sm text-stone-500">載入中…</div> })`, forwarding `polygon`/`walls`/`columns` props straight through — same shape as `PlanEditorLoader.tsx`.
 
-11. Client component. Define `type EditorMode = "select" | "wall" | "column"` canonically in `PlanEditor.tsx` and import it into the toolbar (one source of truth).
-12. Render a button group: three mode buttons labelled `選取` / `牆壁` / `柱子` with `data-testid="tool-select" | "tool-wall" | "tool-column"`, each `aria-pressed={mode === value}`, calling `onModeChange(value)`. Active button visually distinct via Tailwind (e.g. blue bg when pressed), matching the app's existing plain button styling — no new design tokens.
-13. Render a `刪除` button `data-testid="tool-delete"`, `disabled={!canDelete}`, `onClick={onDelete}`.
-14. Do **not** use `data-testid="venue-grid"` or the text `面積統計` anywhere (Task 1 AC9 asserts their absence).
+4. Modify `src/components/venue/PlanEditor.tsx`:
+   - Import `VenueSceneLoader` from `./VenueSceneLoader`.
+   - Add two new `useState` hooks near the existing `walls`/`columns` state:
+     ```ts
+     const [sceneSnapshot, setSceneSnapshot] = useState<{
+       polygon: FloorPolygon;
+       walls: WallSegment[];
+       columns: Column[];
+     } | null>(null);
+     const [generation, setGeneration] = useState(0);
+     ```
+   - Add `handleGenerate3D`:
+     ```ts
+     function handleGenerate3D() {
+       setSceneSnapshot({ polygon, walls, columns });
+       setGeneration((g) => g + 1);
+     }
+     ```
+     (Object literal copies the current array references — `polygon`/`walls`/`columns` are already replaced wholesale, never mutated in place, by every setter in `plan.ts`/`PlanEditor.tsx`, so a shallow copy is a safe, sufficient snapshot; no deep clone needed.)
+   - Compute `const canGenerate3D = walls.length > 0 || columns.length > 0;` (equivalent to the spec's `!(walls.length === 0 && columns.length === 0)`, written the readable way).
+   - Render the button. Recommendation (see Architecture Notes): add it directly in `PlanEditor.tsx`'s JSX as a standalone action row between `<PlanToolbar />` and `<Stage>`, NOT inside `PlanToolbar.tsx` — `PlanToolbar` is a controlled, stateless mode-switch component (`select`/`wall`/`column` + delete) with no knowledge of `sceneSnapshot`/3D concerns; adding a 3D-scene-specific button there would leak an unrelated concern into a component whose current props (`mode`, `onModeChange`, `canDelete`, `onDelete`) are all 2D-editor-mode-specific.
+     ```tsx
+     <button
+       type="button"
+       data-testid="generate-3d-button"
+       disabled={!canGenerate3D}
+       onClick={handleGenerate3D}
+       className="mb-2 rounded border border-stone-300 bg-white px-3 py-1 text-sm font-medium text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+     >
+       產生 3D 模型
+     </button>
+     ```
+   - Render the scene conditionally, after `</Stage>` but still inside the wrapper `<div data-testid="plan-editor" ...>` (satisfies "below the existing 2D Konva canvas"; keeping it inside the same tracked wrapper is simplest since the wrapper already carries `tabIndex`/`onKeyDown` for the Delete-key handler and nesting doesn't interfere with that):
+     ```tsx
+     {sceneSnapshot && (
+       <VenueSceneLoader
+         key={generation}
+         polygon={sceneSnapshot.polygon}
+         walls={sceneSnapshot.walls}
+         columns={sceneSnapshot.columns}
+       />
+     )}
+     ```
+   - Add `data-scene-generated={sceneSnapshot !== null}` and `data-generation={generation}` to the existing wrapper `<div data-testid="plan-editor" ...>`'s attribute list (alongside `data-wall-count`, `data-column-count`, etc.) so Playwright can assert generation state without querying into the (canvas-opaque) scene subtree, consistent with how `data-wall-count`/`data-column-count` already summarize Konva-canvas-opaque state today.
 
-### C. Editor state & wiring — `src/components/venue/PlanEditor.tsx`
+5. No changes needed to `src/app/venue/page.tsx` — `PlanEditor.tsx` owns the new button/canvas internally, consistent with how it already owns `PlanToolbar` and the Konva `<Stage>`.
 
-15. Add state: `mode` (`useState<EditorMode>("select")`), `walls` (`WallSegment[]`), `columns` (`Column[]`), `selectedObject` (`{ type: "wall" | "column"; id: string } | null`), `draftWall` (`{ start: PlanPoint; end: PlanPoint } | null`), and `draggingHandle` (`"start" | "end" | null`, for handle fill styling).
-16. Keep existing `selectedVertex` state and all Task 1 handlers **unchanged**. Enforce mutual exclusivity: when selecting an object, `setSelectedVertex(null)`; when a floor vertex `onClick`/`onTap` fires, `setSelectedObject(null)` (add that one line to the existing vertex click handlers).
-17. Render `<PlanToolbar mode={mode} onModeChange={handleModeChange} canDelete={selectedObject !== null} onDelete={deleteSelectedObject} />` above the `<Stage>`, inside the wrapper div.
-18. `handleModeChange(next)`: `setMode(next)`, clear `draftWall`. (Mid-drag mode switches are out of scope per spec — no special handling required.)
-19. Gate floor interactivity: wrap the existing floor-polygon `<Layer>` (the polygon `<Line>` + vertex `<Circle>`s) with `listening={mode === "select"}` so wall/column drawing never collides with vertex drag or edge dbl-click. Grid/label layers are already `listening={false}`.
+6. Run `npm run lint` and fix any TypeScript/ESLint issues (strict mode — ensure all new props/state are explicitly typed, no `any`).
 
-### D. Draw & place via Stage pointer handlers
+7. Manual dev-server smoke check (not automated, but required before declaring the task done — this is where the two sign-convention risks flagged in step 2 get resolved):
+   - Confirm the floor slab's top face renders at y=0 and extrudes downward (not upward) — adjust the rotation sign/depth-negation in `VenueScene.tsx` if inverted.
+   - Draw one non-axis-aligned wall (e.g. diagonal) in the 2D editor, generate the 3D scene, and visually confirm the 3D box's long axis lies along the same diagonal as the 2D segment, not perpendicular to it — adjust the wall rotation sign in `VenueScene.tsx` if inverted (per Edge Case 5 in orchestrator-output.md).
 
-20. Add `<Stage>`-level `onMouseDown` / `onMouseMove` / `onMouseUp` (plus `onTouchStart`/`onTouchMove`/`onTouchEnd` mapping to the same logic) using `stage.getPointerPosition()` → `pxToMeters(pointer, pxPerMeter)`:
-    - **wall mode:** `onMouseDown` → set `draftWall = { start: snapPoint(m), end: snapPoint(m) }`. `onMouseMove` (only if `draftWall`) → update `end: snapPoint(m)`. `onMouseUp` → `const w = createWall(draftWall.start, draftWall.end)`; if `w` append to `walls`, `setSelectedObject({type:"wall", id:w.id})`, `setSelectedVertex(null)`, `setMode("select")`; always clear `draftWall`.
-    - **column mode:** `onMouseUp` (a click) → `const c = createColumn(m)`; append, select it, `setSelectedVertex(null)`, `setMode("select")`.
-    - **select mode:** `onMouseDown` → if the event target is the Stage itself or a non-object node (grid/floor), i.e. `!isObjectNode(e.target)`, `setSelectedObject(null)` (empty-space / floor deselect). Detect object nodes by a Konva `name` set on wall/column/handle shapes (e.g. `name="object"`), checked via `e.target.name()`.
-21. Render the **draft wall preview** while `draftWall` is set: a semi-transparent wall strip (same rect-strip renderer as committed walls, reduced opacity) so the user sees the live segment during drag.
+8. Write the Playwright spec `playwright-tests/venue-3d-scene.spec.ts` and extend `playwright-tests/pages/PlanEditorPage.ts` with the new accessors listed in the Test Plan below.
 
-### E. Render walls, columns, selection, endpoint handles (new `<Layer>` above floor layer)
-
-22. **Wall strip renderer** — for each wall, render a Konva `<Rect>` centered on the segment axis: position at `metersToPx(start)`, `width = wallLengthPx`, `height = WALL_THICKNESS_M * pxPerMeter`, `offsetY = height/2`, `rotation = atan2(end-start) in degrees`, `fill="#78350f"`. When selected, add `stroke="#3b82f6"`, `strokeWidth` (2–3). Give it `name="object"`, `onClick`/`onTap` → select this wall (+ clear vertex). Make it `draggable` when selected (body translate, step 24). A stroked `<Line>` would misrepresent thickness — use the rotated filled Rect per spec.
-23. **Column renderer** — for each column, a `<Rect>` of `COLUMN_SIZE_M*pxPerMeter` square, positioned at `metersToPx(center)` with `offsetX=offsetY=half`, `fill="#78716c"`, `stroke` a slightly darker gray (e.g. `#57534e`); selected → `stroke="#3b82f6"`. `name="object"`, `onClick` select, `draggable` when selected.
-24. **Body translate via draggable** (mirror the Task 1 vertex drag pattern): on `onDragMove`/`onDragEnd`, read `node.position()`, compute `deltaPx = nodePos - originalRefPx` (ref = wall.start px, or column.center px), `deltaM = pxToMeters(deltaPx)`, call `translateWall`/`translateColumn`, `setState`, then **reset the node** to `metersToPx(new ref)` so Konva's own drag offset can't desync from snapped state. Gate `draggable={isSelected}` so click-to-select precedes move; a single click selects on mousedown, then a press-drag on the already-selected object translates.
-25. **Wall endpoint handles** — only when `selectedObject?.type === "wall"`: render two `<Circle>` handles at start/end px, styled exactly like floor vertices (`radius 6`, `fill` white / `#3b82f6` while dragging that handle, `stroke="#3b82f6"`, `strokeWidth 2`, `hitStrokeWidth 16`, `draggable`), rendered **on top** of the wall strip so they win hit-testing. `onDragMove` → `moveWallEndpoint(wall, which, pxToMeters(node.pos))`; `setState`; reset node to `metersToPx(result[which])` (this auto-reverts on a zero-length reject because the helper returns the unchanged wall). `onDragStart/End` toggle `draggingHandle` for the fill swap.
-
-### F. Delete + keyboard
-
-26. `deleteSelectedObject()`: if `selectedObject === null` return (no-op); else remove that id from `walls` or `columns` and `setSelectedObject(null)`.
-27. Extend the existing `handleKeyDown`: on `Delete`/`Backspace`, **object selection takes precedence** — if `selectedObject !== null` call `deleteSelectedObject()` and `return` (do not also run the floor-vertex delete branch); else fall through to the existing `selectedVertex` branch (unchanged). Honors the edge case "avoid handling the same Delete keypress for two selection concerns simultaneously."
-
-### G. Test hooks on the wrapper div (keep all Task 1 attributes)
-
-28. Add to the `data-testid="plan-editor"` div, alongside the existing `data-vertex-count`/`data-vertices`/`data-px-per-meter`/`data-stage-size`:
-    - `data-mode={mode}`
-    - `data-wall-count={walls.length}`
-    - `data-column-count={columns.length}`
-    - `data-selected-id={selectedObject?.id ?? ""}`
-    - `data-selected-type={selectedObject?.type ?? ""}`
-    - `data-objects={JSON.stringify({ walls, columns })}` (meter coordinates, for Playwright assertions)
-
-### H. Page object — `playwright-tests/pages/PlanEditorPage.ts`
-
-29. Add typed accessors: `mode()`, `wallCount()`, `columnCount()`, `selectedId()`, `selectedType()`, `objects()` (parses `data-objects` → `{ walls: WallSegment[]; columns: Column[] }`). Reuse existing `meterToScreen`.
-30. Add toolbar actions via testids: `selectTool()`, `wallTool()`, `columnTool()`, `clickDelete()` (clicking `[data-testid="tool-delete"]`).
-31. Add interactions driven by `page.mouse` at computed screen coords:
-    - `drawWall(startMeter, endMeter)` — move→down at start, move to end (`steps: 8`), up.
-    - `placeColumn(meter)` / `clickAt(meter)` — single `page.mouse.click`.
-    - `dragObjectBody(fromMeter, toMeter)` — press-drag (down at a point on the object, move, up).
-    - `dragWallEndpoint(wallId, which, toMeter)` — read the endpoint from `objects()`, drag it.
-    - `pressDelete()` — focus editor, then `page.keyboard.press("Delete")`.
-32. Note in the file header comment that a single `<Stage>` → single `<canvas>` still holds (`this.canvas` `.first()` unchanged); the new toolbar is plain DOM addressed by testid.
-
-### I. Manual test checklist — `manual-tests/venue-plan-editor.md`
-
-33. Append a `## Task 2 — 牆壁 / 柱子物件系統` section: toolbar appearance + active (aria-pressed) state; `選取` default on load; wall strip reads as a proper 0.2m-thick strip (not a hairline) at min/max window widths; wall dark-amber, column mid-gray fills; blue selection outline on selected object; endpoint handles visually match floor vertices; drag/snap 手感; `刪除` enabled only when something selected; auto-return to `選取` + auto-select after creating a wall/column.
+9. Append the `## Task 4 — 3D 白模產生器` section to `manual-tests/venue-plan-editor.md`.
 
 ## Data Flow
 
 ```
-Toolbar (DOM)  --onModeChange-->  mode state
-                                     |
-Stage pointer (px) --pxToMeters--> meters --snapPoint/create*--> plan.ts (pure)
-                                     |                               |
-                                     v                               v
-                    wall/column/select interaction           WallSegment/Column (meters)
-                                     |                               |
-                                     +----> walls/columns/selectedObject state
-                                                     |
-                        +----------------------------+----------------------------+
-                        v                            v                            v
-              Konva strip/rect render      wrapper data-* hooks           Task 4 (3D whitebox)
-              (metersToPx)                 (Playwright reads)             future consumer of pure data
+PlanEditor (owns polygon/walls/columns — live, mutated by 2D editing gestures)
+        |
+        | user clicks "產生 3D 模型"
+        v
+handleGenerate3D()
+  -> setSceneSnapshot({ polygon, walls, columns })   // shallow copy, frozen at click time
+  -> setGeneration(g => g + 1)                       // forces full remount on next click too
+        |
+        v
+{sceneSnapshot && <VenueSceneLoader key={generation} polygon=... walls=... columns=... />}
+        |
+        | dynamic(..., { ssr: false }) — client-only chunk load
+        v
+VenueScene (pure render of the snapshot props it received — no subscription back to
+            PlanEditor's live polygon/walls/columns state)
+  -> THREE.Shape + ExtrudeGeometry  (floor, 1 mesh)
+  -> BoxGeometry per wall            (walls.length meshes)
+  -> BoxGeometry per column          (columns.length meshes)
 ```
 
-Geometry stays entirely in meters inside `plan.ts`; the component only converts meters↔px at the Konva boundary — identical to the Task 1 vertex pattern, so the object data is directly reusable by the future 3D builder.
+Editing the 2D plan after a click mutates `polygon`/`walls`/`columns` in `PlanEditor`, but `sceneSnapshot` is untouched until the button is clicked again — `VenueScene` never re-renders from that edit (React only re-renders it when its own props, i.e. `sceneSnapshot.*`, change). The `key={generation}` on `VenueSceneLoader` additionally guarantees that even though `VenueScene`'s internal `<mesh>` list is keyed by `wall.id`/`col.id` (which would otherwise let React diff/patch matching keys across generations), a full unmount+remount happens on every click, so the "no stale meshes left behind" and "rapid double-click doesn't leave duplicates" ACs hold structurally rather than relying on `three`/R3F cleanup being perfect on a partial diff.
+
+## Testability
+
+Canvas/WebGL content is opaque to Playwright (same constraint the Konva `<canvas>` already has, per `PlanEditorPage.ts`'s existing doc comment). Following the established pattern (`data-wall-count`, `data-vertices`, `data-objects` JSON on the `plan-editor` wrapper), expose:
+
+- On the `plan-editor` wrapper (`PlanEditor.tsx`): `data-scene-generated` (`"true"`/`"false"`), `data-generation` (integer, increments every click — lets a test assert regeneration happened even when mesh counts are unchanged between two clicks).
+- The "產生 3D 模型" button: `data-testid="generate-3d-button"`, using the native `disabled` HTML attribute (Playwright's `toBeDisabled()`/`isDisabled()` reads this directly — no extra data attribute needed).
+- On `VenueScene.tsx`'s wrapper `<div data-testid="venue-scene">`: `data-generated="true"` (presence of the element itself already implies this, but keeping it explicit matches the "assert scene mounted" pattern used elsewhere), `data-wall-mesh-count`, `data-column-mesh-count`, `data-floor-vertex-count` — sufficient to assert mesh counts match the 2D state at generation time, and (combined with `data-generation` on the outer wrapper) to assert regeneration replaced rather than appended (count stays correct after a second generation with a different wall/column count, rather than summing).
+
+This is sufficient to cover every Clarified AC without needing to inspect the WebGL canvas pixel buffer: existence of `[data-testid="venue-scene"]` = canvas mounted; its absence before the first click = "not just hidden, not mounted at all"; `data-wall-mesh-count`/`data-column-mesh-count` after edits + re-click = "rebuilt from scratch, not stale"; `data-scene-generated`/button `disabled` on the outer wrapper = enable/disable state independent of whether a scene has ever been generated.
 
 ## Test Plan
 
-Automated coverage is Playwright (the FRONTEND acceptance gate) — extend `playwright-tests/venue-plan-editor.spec.ts` (or add a sibling `venue-objects.spec.ts`). No JS unit framework is installed, so pure-geometry checks are asserted through the browser via `data-objects`.
+### Unit tests
+None — no unit/integration JS test framework installed for this project (per AGENTS.md); this is a FRONTEND task and Playwright is the acceptance gate.
 
-- **Playwright scenarios (one per AC):**
-  - Default mode is `選取` on load (`data-mode`).
-  - Wall mode: draw A→B → wall count +1, endpoints = snapped/clamped A/B, mode back to `選取`, `data-selected-type=wall` + new id selected.
-  - Wall mode: sub-snap drag (start==end after snap) → no wall created.
-  - Column mode: click → column count +1, center snapped & clamped to `[0.25,49.75]`, mode back to `選取`, column selected.
-  - Select mode: click wall/column → selected id set; click empty space → selection cleared.
-  - Body drag of selected wall & column → whole object translates, snapped 0.5m, stays in bounds.
-  - Wall endpoint drag → only that endpoint moves, snapped/clamped, other endpoint fixed.
-  - Endpoint drag onto the other endpoint → rejected, endpoint reverts (wall unchanged).
-  - Delete/Backspace and `刪除` button remove the selected object + clear selection; no-op when nothing selected.
-  - Multiplicity: create several walls+columns, select/move/delete one, others unaffected.
-  - Bounds: drag object toward the edge → clamped so full extent stays inside 50×50.
-- **Regression:** the 9 existing Task 1 tests in `venue-plan-editor.spec.ts` must still pass (object system is additive; default `select` mode preserves floor editing). Confirm AC9 assertions (`[data-testid="venue-grid"]` count 0, no `面積統計` text) are not reintroduced by the toolbar.
-- **Manual:** the new Task 2 checklist items (visual/手感), plus a `pageerror` listener guard as used in Task 1.
-- **Edge cases (from orchestrator-output):** short-drag wall discard; column extent clamp `[0.25,49.75]`; endpoint-onto-endpoint revert; independence from floor-vertex Delete (object selection precedence). Each must have an assertion.
+### Playwright — new file `playwright-tests/venue-3d-scene.spec.ts`
+
+First, extend `playwright-tests/pages/PlanEditorPage.ts` with:
+- `readonly generateButton: Locator` (`[data-testid="generate-3d-button"]`)
+- `readonly scene: Locator` (`[data-testid="venue-scene"]`)
+- `async clickGenerate3D()` — clicks `generateButton`
+- `async sceneGenerated(): Promise<boolean>` — reads `data-scene-generated` off the `plan-editor` wrapper
+- `async generationCount(): Promise<number>` — reads `data-generation`
+- `async sceneWallMeshCount(): Promise<number>` / `async sceneColumnMeshCount(): Promise<number>` / `async sceneFloorVertexCount(): Promise<number>` — read the corresponding `data-*` off `[data-testid="venue-scene"]`
+
+Test cases (map directly to Clarified Acceptance Criteria):
+1. On fresh page load (default floor, no walls/columns): `generateButton` is visible and disabled; `[data-testid="venue-scene"]` does not exist in the DOM at all.
+2. After drawing one wall (reuse `PlanEditorPage.wallTool()` + `drawWall()` from Task 2/3 helpers): `generateButton` becomes enabled.
+3. Click `generateButton`: `[data-testid="venue-scene"]` appears; `data-scene-generated="true"` on the wrapper; `sceneWallMeshCount() === 1`, `sceneColumnMeshCount() === 0`, `sceneFloorVertexCount() === 4` (default floor).
+4. Edit the 2D plan after generation (add a column) without re-clicking: assert `sceneWallMeshCount()`/`sceneColumnMeshCount()` on `[data-testid="venue-scene"]` are unchanged (still reflect the pre-edit snapshot) — proves no live sync.
+5. Click `generateButton` again after the edit: `data-generation` increments; `sceneColumnMeshCount()` now reflects the added column — proves regeneration picks up new state and replaces rather than appends (re-assert wall count too, to rule out double-counting).
+6. Delete all walls/columns back to floor-only after having generated once: `generateButton` becomes disabled again; `[data-testid="venue-scene"]` still exists (existing scene is left as-is, not retroactively cleared).
+7. Rapid double-click on `generateButton` (`Promise.all` of two `click()` calls, or two sequential clicks with no `waitFor` in between): after settling, `data-generation` reflects exactly two increments and mesh counts match the current 2D state exactly once (no duplication) — covers the "rapid repeated clicks" edge case.
+8. Concave/irregular floor polygon (drag a vertex inward per the existing Task 1 concave-polygon test pattern in `venue-plan-editor.spec.ts`), then generate: assert no page error/console exception is thrown (`page.on("pageerror")` / `page.on("console", ...)` assertion) and `[data-testid="venue-scene"]` still mounts with `sceneFloorVertexCount()` matching the (now 5-vertex) polygon.
+9. SSR sanity: navigating fresh to `/venue` produces no hydration-mismatch console error (assert via `page.on("console")` filtering for React hydration warnings, or reuse an existing pattern from `venue-plan-editor.spec.ts` if one already checks this for the Konva canvas).
+
+### Edge cases to test (from orchestrator-output.md `Edge Cases to Handle`)
+- Concave/zig-zag polygon does not crash generation (case 8 above).
+- Rapid double-click does not duplicate meshes (case 7 above).
+- Non-axis-aligned wall rotation direction — Playwright cannot visually verify rotation correctness (opaque canvas), so this remains a **manual** check (see manual-tests update below and step 8 of Implementation Steps); Playwright only asserts the mesh count/existence, not visual orientation.
+- Zero-length wall: no test needed — `plan.ts`'s `createWall`/`moveWallEndpoint` already reject same-start/end points at the data layer (confirmed in orchestrator-output.md), so this can't reach `VenueScene`.
 
 ## Architecture Notes
 
-- **Wall as a rotated filled `<Rect>` strip**, not a stroked `<Line>` — spec-mandated so 0.2m thickness reads correctly at any zoom (stroke width wouldn't scale with meters). Rotation/offset math is the only non-trivial rendering piece; endpoint handles sit on a top layer so they always win hit-testing over the strip.
-- **Selection model:** two independent states (`selectedVertex` for floor, `selectedObject` for walls/columns) kept mutually exclusive by clearing the other on select, rather than one merged discriminated union. This deliberately avoids touching Task 1's `selectedVertex` handlers/removal path (lower regression risk) while still giving unambiguous Delete semantics (object precedence). Slight deviation from the brief's "single discriminated selection" suggestion — flagged here; rationale is Task 1 safety.
-- **Body translate reuses the Task 1 vertex-drag idiom** (read node pos → meter delta → pure helper → reset node), keeping one consistent Konva interaction pattern; `draggable` gated to the selected object so click-to-select precedes move.
-- **`listening={mode==="select"}` on the floor layer** is the key isolation that prevents draw gestures from hijacking floor vertices — verify Task 1 interactions still work in the default mode.
-- **Performance:** unlimited objects render as one `<Rect>` each on a single layer; fine for expected counts (tens–low hundreds). No memoization needed now; revisit `Layer` batching only if counts grow — out of scope.
-- **No new deps, no API/proxy/auth/schema surface** — no escalation triggers hit.
+- **Button placement**: chosen to live in `PlanEditor.tsx` directly (not `PlanToolbar.tsx`) to keep `PlanToolbar` scoped to 2D-editor-mode concerns only, per existing modularity boundaries in the codebase (`PlanToolbar` takes `mode`/`onModeChange`/`canDelete`/`onDelete` — all 2D-mode props). This is a deviation-adjacent judgment call flagged per AGENTS.md's "no deviations without flagging" rule, but it is additive (no existing `PlanToolbar` prop or behavior changes) and consistent with the single-responsibility split already established between `PlanEditor` (state owner) and `PlanToolbar` (dumb mode-switch UI).
+- **Snapshot-not-live-sync** is implemented structurally (separate `sceneSnapshot` state copied only inside `handleGenerate3D`) rather than via a dirty-flag/guard — this is the simplest correct implementation of the spec's explicit no-live-sync requirement and avoids a class of stale-closure bugs a guard-based approach could introduce.
+- **Full-replace-not-append** is implemented via `key={generation}` forcing an unmount/remount of the entire `VenueSceneLoader`/`VenueScene` subtree on every click, rather than relying on React's key-based reconciliation of individual `<mesh>` elements (which, if `wall.id`s partially overlap across generations, could in principle patch instead of replace some meshes — not a correctness bug per se, but the `key={generation}` approach is simpler to reason about and matches "stale meshes are not left behind" as a structural guarantee rather than an emergent property of correct id stability).
+- **Known risk — wall rotation sign convention**: the orchestrator explicitly left the sign/axis convention as "architect's/developer's call as long as walls visually align" (Edge Case 5). Step 2 above proposes `rotation={[0, -Math.atan2(dy, dx), 0]}` as the starting guess (negated because Three's right-hand Y-rotation and the 2D plan's screen-space angle convention are mirror images of each other), but this **must** be verified visually per Implementation Step 7 before the task is considered done — Playwright cannot verify visual orientation (opaque canvas), so this is a manual gate, not an automated one.
+- **Known risk — floor extrusion direction**: similarly, `ExtrudeGeometry`'s default depth direction combined with the `-90°` X-axis mesh rotation needs one manual visual check to confirm the slab extrudes downward from y=0 as specified, not upward. Flagged in Implementation Step 2 and re-confirmed in Step 7.
+- **Performance**: "dozens of walls/columns" is explicitly acceptable to render via React's normal path per orchestrator's Edge Cases section — no instancing/merging is implemented (also explicitly Out of Scope). No performance work needed beyond what's specified.
+- **WebGL failure resilience**: per orchestrator's Error States section, a console error is an acceptable baseline; no explicit WebGL-availability check or fallback UI is being added. If `npm install` or local testing reveals `@react-three/fiber`'s `<Canvas>` throws synchronously in a way that crashes `PlanEditor` (rather than degrading gracefully), that would be a scope-affecting finding to flag to the human before proceeding further — not expected, since R3F's `Canvas` is designed to isolate WebGL context-creation failures internally, but noted as a residual risk.
 
 ## Security Checklist
 
-- [ ] No hardcoded secrets or credentials (none involved — pure client-side canvas).
-- [ ] Input validation at boundaries — all pointer coords pass through `snapPoint`/`clamp*`/`safeNumber` (NaN-safe) before entering state.
-- [ ] Auth/permission checks — N/A; `/venue` is a public page, no API/session/cookie touched. No changes to `src/proxy.ts`.
-- [ ] No sensitive data logged (no logging added; never log tokens/session).
-- [ ] `service_role`/Supabase not imported into this client component (unchanged).
-- [ ] No new data flows / no persistence (in-memory only, per story "本階段不做資料庫儲存").
+- [x] No hardcoded secrets or credentials — this task adds no env vars, no API calls, no credentials of any kind.
+- [x] Input validation implemented at system boundaries — N/A: all geometry input is already validated/clamped by `plan.ts` (existing `snapPoint`/`clampToBounds`/`clampColumnCenter` etc.); `VenueScene` performs no new user-input parsing.
+- [x] Auth/permission checks in place (if applicable) — N/A: `/venue` has no auth gate today (not in `PROTECTED_PAGES`), and this task doesn't change that; no new API routes are introduced.
+- [x] No sensitive data logged — no logging is added by this task at all.
+- [x] No new API routes, no `DATABASE_URL`/session/auth-adjacent code touched — confirms this task does NOT trigger the PR Reviewer's automatic 🔴 Critical rule in AGENTS.md.
 
 ## Definition of Done
 
-- [ ] All implementation steps complete.
-- [ ] All Task 2 Playwright scenarios written and passing; all 9 Task 1 tests still green (regression).
-- [ ] Manual Task 2 checklist appended to `manual-tests/venue-plan-editor.md`.
-- [ ] `plan.ts` additions are pure (no React/Konva/DOM imports); meter-space data reusable by Task 4.
+- [ ] `three`, `@react-three/fiber`, `@react-three/drei` installed and present in `package.json`/`package-lock.json`.
+- [ ] `src/components/venue/VenueScene.tsx` and `src/components/venue/VenueSceneLoader.tsx` created per Implementation Steps 2-3.
+- [ ] `src/components/venue/PlanEditor.tsx` updated per Implementation Step 4 (button, snapshot state, generation counter, conditional scene render, new `data-*` attributes).
+- [ ] `npm run lint` passes with no new errors/warnings.
+- [ ] Manual smoke check (Implementation Step 7) confirms floor extrusion direction and wall rotation sign are visually correct — adjust code if either is inverted.
+- [ ] `playwright-tests/venue-3d-scene.spec.ts` written per Test Plan and passing against a live dev server.
+- [ ] `playwright-tests/pages/PlanEditorPage.ts` extended with the new accessors listed in Test Plan.
+- [ ] `manual-tests/venue-plan-editor.md` updated with the new `## Task 4 — 3D 白模產生器` section.
 - [ ] No TODOs, commented-out code, or debug logs.
-- [ ] `npm run lint` and type-check (`npx tsc --noEmit` / `npm run build`) clean.
-- [ ] Follows AGENTS.md: `@/*` imports, no inline Supabase clients, no new DB/ORM, frontend touches no `/api/*`.
+- [ ] Code follows all rules in AGENTS.md (path alias `@/*`, ESLint core-web-vitals+typescript, no inline Supabase/API concerns — N/A here since this task touches neither).
 - [ ] Security checklist passed.
