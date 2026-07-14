@@ -4,13 +4,37 @@
     "ui-design@claude-code-workflows": true,
     "backend-development@claude-code-workflows": true,
     "ship-mate@claude-code-workflows": true,
-    "llm-application-dev@claude-code-workflows": true
+    "llm-application-dev@claude-code-workflows": true,
+    "caveman@caveman": true,
+    "example-skills@anthropic-agent-skills": true,
+    "frontend-design@claude-plugins-official": true,
+    "pr-review-toolkit@claude-plugins-official": true,
+    "github@claude-plugins-official": true,
+    "figma@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "claude-code-workflows": {
       "source": {
         "source": "github",
         "repo": "wshobson/agents"
+      }
+    },
+    "caveman": {
+      "source": {
+        "source": "github",
+        "repo": "JuliusBrussee/caveman"
+      }
+    },
+    "anthropic-agent-skills": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/skills"
+      }
+    },
+    "claude-plugins-official": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-plugins-official"
       }
     }
   }
