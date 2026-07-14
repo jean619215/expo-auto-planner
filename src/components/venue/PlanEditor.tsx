@@ -37,6 +37,7 @@ const MIN_STAGE_PX = 320;
 const MAX_STAGE_PX = 800;
 
 type SelectedObject = { type: "wall" | "column"; id: string } | null;
+type WizardStep = "edit" | "preview";
 
 function buildGridLines(pxPerMeter: number) {
   const lines: { key: string; points: number[]; stroke: string; strokeWidth: number }[] = [];
@@ -97,6 +98,7 @@ export default function PlanEditor() {
     columns: Column[];
   } | null>(null);
   const [generation, setGeneration] = useState(0);
+  const [step, setStep] = useState<WizardStep>("edit");
 
   useEffect(() => {
     const container = containerRef.current;
@@ -195,9 +197,19 @@ export default function PlanEditor() {
     }
   }
 
-  function handleGenerate3D() {
+  function handleNextStep() {
     setSceneSnapshot({ polygon, walls, columns });
     setGeneration((g) => g + 1);
+    setStep("preview");
+    // 進入 Step 2 前清除既有選取,避免殘留的 selectedObject/selectedVertex
+    // 在返回 Step 1 前於 Step 2 內被鍵盤 Delete/Backspace 誤刪(即使
+    // onKeyDown 已改綁定到 step-edit,這裡仍同步清除以求雙重保險)。
+    setSelectedObject(null);
+    setSelectedVertex(null);
+  }
+
+  function handleBackToEdit() {
+    setStep("edit");
   }
 
   function markObjectClickSuppressed() {
@@ -391,408 +403,426 @@ export default function PlanEditor() {
       data-edge-labels={JSON.stringify(edgeLabelTexts)}
       data-scene-generated={sceneSnapshot !== null}
       data-generation={generation}
-      tabIndex={0}
-      onKeyDown={handleKeyDown}
+      data-step={step}
       className="w-full outline-none"
     >
-      <PlanToolbar
-        mode={mode}
-        onModeChange={handleModeChange}
-        canDelete={selectedObject !== null}
-        onDelete={deleteSelectedObject}
-      />
-      <button
-        type="button"
-        data-testid="generate-3d-button"
-        disabled={!canGenerate3D}
-        onClick={handleGenerate3D}
-        className="mb-2 rounded border border-stone-300 bg-white px-3 py-1 text-sm font-medium text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        產生 3D 模型
-      </button>
-      <Stage
-        width={stagePx}
-        height={stagePx}
-        onMouseDown={handleStageMouseDown}
-        onMouseMove={handleStageMouseMove}
-        onMouseUp={handleStageMouseUp}
-        onTouchStart={handleStageMouseDown}
-        onTouchMove={handleStageMouseMove}
-        onTouchEnd={handleStageMouseUp}
-      >
-        <Layer listening={false}>
-          <Rect
-            x={0}
-            y={0}
+      {step === "edit" && (
+        <div
+          data-testid="step-edit"
+          tabIndex={0}
+          onKeyDown={handleKeyDown}
+          className="outline-none"
+        >
+          <PlanToolbar
+            mode={mode}
+            onModeChange={handleModeChange}
+            canDelete={selectedObject !== null}
+            onDelete={deleteSelectedObject}
+          />
+          <button
+            type="button"
+            data-testid="next-step-button"
+            disabled={!canGenerate3D}
+            onClick={handleNextStep}
+            className="mb-2 rounded border border-stone-300 bg-white px-3 py-1 text-sm font-medium text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            下一步
+          </button>
+          <Stage
             width={stagePx}
             height={stagePx}
-            fill="#fafaf9"
-            stroke="#a8a29e"
-            strokeWidth={1}
-          />
-          {gridLines.map((line) => (
-            <Line
-              key={line.key}
-              points={line.points}
-              stroke={line.stroke}
-              strokeWidth={line.strokeWidth}
-            />
-          ))}
-        </Layer>
-        <Layer listening={false}>
-          {Array.from(
-            { length: VENUE_SIZE_M / GRID_MAJOR_M + 1 },
-            (_, i) => i * GRID_MAJOR_M,
-          ).map((m) => (
-            <Text
-              key={`label-top-${m}`}
-              x={m * pxPerMeter + 2}
-              y={2}
-              text={String(m)}
-              fontSize={12}
-              fill="#78716c"
-            />
-          ))}
-          {Array.from(
-            { length: VENUE_SIZE_M / GRID_MAJOR_M + 1 },
-            (_, i) => i * GRID_MAJOR_M,
-          ).map((m) => (
-            <Text
-              key={`label-left-${m}`}
-              x={2}
-              y={m * pxPerMeter + 2}
-              text={String(m)}
-              fontSize={12}
-              fill="#78716c"
-            />
-          ))}
-          <Line
-            points={[
-              8,
-              stagePx - 16,
-              8 + GRID_MAJOR_M * pxPerMeter,
-              stagePx - 16,
-            ]}
-            stroke="#44403c"
-            strokeWidth={2}
-          />
-          <Text
-            x={8}
-            y={stagePx - 14}
-            text="5 公尺"
-            fontSize={12}
-            fill="#44403c"
-          />
-        </Layer>
-        <Layer listening={mode === "select"}>
-          <Line
-            points={polygonPx}
-            closed
-            fill="rgba(191, 219, 254, 0.5)"
-            stroke="#3b82f6"
-            strokeWidth={2}
-            onDblClick={handleEdgeDblClick}
-          />
-          {polygon.map((vertex, index) => {
-            const px = metersToPx(vertex, pxPerMeter);
-            return (
-              <Circle
-                key={index}
-                x={px.x}
-                y={px.y}
-                radius={6}
-                fill={selectedVertex === index ? "#3b82f6" : "#ffffff"}
-                stroke="#3b82f6"
-                strokeWidth={2}
-                hitStrokeWidth={16}
-                draggable
-                onClick={() => {
-                  setSelectedVertex(index);
-                  setSelectedObject(null);
-                }}
-                onTap={() => {
-                  setSelectedVertex(index);
-                  setSelectedObject(null);
-                }}
-                onDragMove={(e) => handleVertexDragMove(index, e)}
-                onDragEnd={(e) => handleVertexDragEnd(index, e)}
-                onContextMenu={(e) => handleVertexContextMenu(index, e)}
+            onMouseDown={handleStageMouseDown}
+            onMouseMove={handleStageMouseMove}
+            onMouseUp={handleStageMouseUp}
+            onTouchStart={handleStageMouseDown}
+            onTouchMove={handleStageMouseMove}
+            onTouchEnd={handleStageMouseUp}
+          >
+            <Layer listening={false}>
+              <Rect
+                x={0}
+                y={0}
+                width={stagePx}
+                height={stagePx}
+                fill="#fafaf9"
+                stroke="#a8a29e"
+                strokeWidth={1}
               />
-            );
-          })}
-          {polygon.map((vertex, index) => {
-            const next = polygon[(index + 1) % polygon.length];
-            const midpoint = {
-              x: (vertex.x + next.x) / 2,
-              y: (vertex.y + next.y) / 2,
-            };
-            const midpointPx = metersToPx(midpoint, pxPerMeter);
-            return (
+              {gridLines.map((line) => (
+                <Line
+                  key={line.key}
+                  points={line.points}
+                  stroke={line.stroke}
+                  strokeWidth={line.strokeWidth}
+                />
+              ))}
+            </Layer>
+            <Layer listening={false}>
+              {Array.from(
+                { length: VENUE_SIZE_M / GRID_MAJOR_M + 1 },
+                (_, i) => i * GRID_MAJOR_M,
+              ).map((m) => (
+                <Text
+                  key={`label-top-${m}`}
+                  x={m * pxPerMeter + 2}
+                  y={2}
+                  text={String(m)}
+                  fontSize={12}
+                  fill="#78716c"
+                />
+              ))}
+              {Array.from(
+                { length: VENUE_SIZE_M / GRID_MAJOR_M + 1 },
+                (_, i) => i * GRID_MAJOR_M,
+              ).map((m) => (
+                <Text
+                  key={`label-left-${m}`}
+                  x={2}
+                  y={m * pxPerMeter + 2}
+                  text={String(m)}
+                  fontSize={12}
+                  fill="#78716c"
+                />
+              ))}
+              <Line
+                points={[
+                  8,
+                  stagePx - 16,
+                  8 + GRID_MAJOR_M * pxPerMeter,
+                  stagePx - 16,
+                ]}
+                stroke="#44403c"
+                strokeWidth={2}
+              />
               <Text
-                key={`edge-label-${index}`}
-                listening={false}
-                x={midpointPx.x + 4}
-                y={midpointPx.y + 4}
-                text={edgeLabelTexts[index]}
-                fontSize={11}
+                x={8}
+                y={stagePx - 14}
+                text="5 公尺"
+                fontSize={12}
                 fill="#44403c"
               />
-            );
-          })}
-        </Layer>
-        <Layer listening={mode === "select"}>
-          {walls.map((wall) => {
-            const isSelected =
-              selectedObject?.type === "wall" && selectedObject.id === wall.id;
-            const startPx = metersToPx(wall.start, pxPerMeter);
-            const lengthM = Math.hypot(
-              wall.end.x - wall.start.x,
-              wall.end.y - wall.start.y,
-            );
-            const lengthPx = lengthM * pxPerMeter;
-            return (
-              <Rect
-                key={wall.id}
-                name="object"
-                x={startPx.x}
-                y={startPx.y}
-                width={lengthPx}
-                height={thicknessPx}
-                offsetY={thicknessPx / 2}
-                rotation={angleDegrees(wall.start, wall.end)}
-                fill="#78350f"
-                stroke={isSelected ? "#3b82f6" : undefined}
-                strokeWidth={isSelected ? 3 : 0}
-                draggable={isSelected && mode === "select"}
-                onClick={() => {
-                  if (suppressObjectClickRef.current) {
-                    suppressObjectClickRef.current = false;
-                    return;
-                  }
-                  setSelectedObject({ type: "wall", id: wall.id });
-                  setSelectedVertex(null);
-                }}
-                onTap={() => {
-                  if (suppressObjectClickRef.current) {
-                    suppressObjectClickRef.current = false;
-                    return;
-                  }
-                  setSelectedObject({ type: "wall", id: wall.id });
-                  setSelectedVertex(null);
-                }}
-                onDragMove={(e) => handleWallBodyDrag(wall, e)}
-                onDragEnd={(e) => handleWallBodyDrag(wall, e)}
-              />
-            );
-          })}
-          {columns.map((column) => {
-            const isSelected =
-              selectedObject?.type === "column" &&
-              selectedObject.id === column.id;
-            const centerPx = metersToPx(column.center, pxPerMeter);
-            const widthPx = column.w * pxPerMeter;
-            const heightPx = column.h * pxPerMeter;
-            return (
-              <Rect
-                key={column.id}
-                name="object"
-                x={centerPx.x}
-                y={centerPx.y}
-                width={widthPx}
-                height={heightPx}
-                offsetX={widthPx / 2}
-                offsetY={heightPx / 2}
-                fill="#78716c"
-                stroke={isSelected ? "#3b82f6" : "#57534e"}
-                strokeWidth={isSelected ? 3 : 1.5}
-                draggable={isSelected && mode === "select"}
-                onClick={() => {
-                  if (suppressObjectClickRef.current) {
-                    suppressObjectClickRef.current = false;
-                    return;
-                  }
-                  setSelectedObject({ type: "column", id: column.id });
-                  setSelectedVertex(null);
-                }}
-                onTap={() => {
-                  if (suppressObjectClickRef.current) {
-                    suppressObjectClickRef.current = false;
-                    return;
-                  }
-                  setSelectedObject({ type: "column", id: column.id });
-                  setSelectedVertex(null);
-                }}
-                onDragMove={(e) => handleColumnBodyDrag(column, e)}
-                onDragEnd={(e) => handleColumnBodyDrag(column, e)}
-              />
-            );
-          })}
-          {selectedColumn &&
-            mode === "select" &&
-            (
-              [
-                { x: -1, y: -1 },
-                { x: 1, y: -1 },
-                { x: -1, y: 1 },
-                { x: 1, y: 1 },
-              ] as { x: -1 | 1; y: -1 | 1 }[]
-            ).map((corner) => {
-              const cornerMeter = {
-                x: selectedColumn.center.x + (corner.x * selectedColumn.w) / 2,
-                y: selectedColumn.center.y + (corner.y * selectedColumn.h) / 2,
-              };
-              const cornerPx = metersToPx(cornerMeter, pxPerMeter);
-              const isDragging =
-                draggingColumnCorner !== null &&
-                draggingColumnCorner.x === corner.x &&
-                draggingColumnCorner.y === corner.y;
-              return (
-                <Circle
-                  key={`corner-${corner.x}-${corner.y}`}
-                  name="object"
-                  x={cornerPx.x}
-                  y={cornerPx.y}
-                  radius={6}
-                  fill={isDragging ? "#3b82f6" : "#ffffff"}
-                  stroke="#3b82f6"
-                  strokeWidth={2}
-                  // The minimum column size (0.5m) can place corners only a
-                  // few px from the center at typical scale, so the default
-                  // fill/stroke hit region would overlap the column body's
-                  // own hit region and hijack body-drag gestures. A small
-                  // fixed hit radius (independent of the visual radius
-                  // above, which stays consistent with the other object
-                  // handles) keeps the handle precisely grabbable at its
-                  // corner without covering the body.
-                  hitFunc={(context, shape) => {
-                    context.beginPath();
-                    context.arc(0, 0, 3, 0, Math.PI * 2, false);
-                    context.closePath();
-                    context.fillStrokeShape(shape);
-                  }}
-                  draggable
-                  onDragStart={() => setDraggingColumnCorner(corner)}
-                  onDragMove={(e) =>
-                    handleColumnCornerDrag(selectedColumn, corner, e)
-                  }
-                  // Deliberately does NOT call handleColumnCornerDrag again
-                  // here (unlike the analogous vertex/wall-endpoint/column-
-                  // body handlers, which re-apply on both dragmove and
-                  // dragend): the resulting corner position is generally a
-                  // quarter-grid offset (center +/- w/2), not a 0.5m-grid
-                  // value, and onDragMove already overrides the node's
-                  // position to that exact result. Re-reading e.target's
-                  // (now-overridden) position here and re-running it through
-                  // resizeColumnCorner's snapPoint would re-snap a
-                  // non-grid-aligned value a second time, which is not
-                  // idempotent and can silently drift the resize result.
-                  // The last onDragMove already applied the correct final
-                  // state, so dragend only needs to clear the drag flag.
-                  onDragEnd={() => setDraggingColumnCorner(null)}
-                />
-              );
-            })}
-          {columnLabelText &&
-            selectedColumn &&
-            (() => {
-              const columnCenterPx = metersToPx(selectedColumn.center, pxPerMeter);
-              return (
-                <Text
-                  listening={false}
-                  x={columnCenterPx.x + (selectedColumn.w * pxPerMeter) / 2 + 4}
-                  y={columnCenterPx.y - (selectedColumn.h * pxPerMeter) / 2 - 16}
-                  text={columnLabelText}
-                  fontSize={11}
-                  fill="#44403c"
-                />
-              );
-            })()}
-          {wallLabelText &&
-            selectedWall &&
-            (() => {
-              const wallMidPx = metersToPx(
-                {
-                  x: (selectedWall.start.x + selectedWall.end.x) / 2,
-                  y: (selectedWall.start.y + selectedWall.end.y) / 2,
-                },
-                pxPerMeter,
-              );
-              return (
-                <Text
-                  listening={false}
-                  x={wallMidPx.x + 6}
-                  y={wallMidPx.y - 16}
-                  text={wallLabelText}
-                  fontSize={11}
-                  fill="#44403c"
-                />
-              );
-            })()}
-          {draftWall && (
-            <Rect
-              listening={false}
-              x={metersToPx(draftWall.start, pxPerMeter).x}
-              y={metersToPx(draftWall.start, pxPerMeter).y}
-              width={
-                Math.hypot(
-                  draftWall.end.x - draftWall.start.x,
-                  draftWall.end.y - draftWall.start.y,
-                ) * pxPerMeter
-              }
-              height={thicknessPx}
-              offsetY={thicknessPx / 2}
-              rotation={angleDegrees(draftWall.start, draftWall.end)}
-              fill="#78350f"
-              opacity={0.5}
-            />
-          )}
-          {selectedWall && (
-            <>
-              <Circle
-                name="object"
-                x={metersToPx(selectedWall.start, pxPerMeter).x}
-                y={metersToPx(selectedWall.start, pxPerMeter).y}
-                radius={6}
-                fill={draggingHandle === "start" ? "#3b82f6" : "#ffffff"}
+            </Layer>
+            <Layer listening={mode === "select"}>
+              <Line
+                points={polygonPx}
+                closed
+                fill="rgba(191, 219, 254, 0.5)"
                 stroke="#3b82f6"
                 strokeWidth={2}
-                hitStrokeWidth={16}
-                draggable
-                onDragStart={() => setDraggingHandle("start")}
-                onDragMove={(e) => handleWallEndpointDrag(selectedWall, "start", e)}
-                onDragEnd={(e) => {
-                  handleWallEndpointDrag(selectedWall, "start", e);
-                  setDraggingHandle(null);
-                }}
+                onDblClick={handleEdgeDblClick}
               />
-              <Circle
-                name="object"
-                x={metersToPx(selectedWall.end, pxPerMeter).x}
-                y={metersToPx(selectedWall.end, pxPerMeter).y}
-                radius={6}
-                fill={draggingHandle === "end" ? "#3b82f6" : "#ffffff"}
-                stroke="#3b82f6"
-                strokeWidth={2}
-                hitStrokeWidth={16}
-                draggable
-                onDragStart={() => setDraggingHandle("end")}
-                onDragMove={(e) => handleWallEndpointDrag(selectedWall, "end", e)}
-                onDragEnd={(e) => {
-                  handleWallEndpointDrag(selectedWall, "end", e);
-                  setDraggingHandle(null);
-                }}
-              />
-            </>
-          )}
-        </Layer>
-      </Stage>
-      {sceneSnapshot && (
-        <VenueSceneLoader
-          key={generation}
-          polygon={sceneSnapshot.polygon}
-          walls={sceneSnapshot.walls}
-          columns={sceneSnapshot.columns}
-        />
+              {polygon.map((vertex, index) => {
+                const px = metersToPx(vertex, pxPerMeter);
+                return (
+                  <Circle
+                    key={index}
+                    x={px.x}
+                    y={px.y}
+                    radius={6}
+                    fill={selectedVertex === index ? "#3b82f6" : "#ffffff"}
+                    stroke="#3b82f6"
+                    strokeWidth={2}
+                    hitStrokeWidth={16}
+                    draggable
+                    onClick={() => {
+                      setSelectedVertex(index);
+                      setSelectedObject(null);
+                    }}
+                    onTap={() => {
+                      setSelectedVertex(index);
+                      setSelectedObject(null);
+                    }}
+                    onDragMove={(e) => handleVertexDragMove(index, e)}
+                    onDragEnd={(e) => handleVertexDragEnd(index, e)}
+                    onContextMenu={(e) => handleVertexContextMenu(index, e)}
+                  />
+                );
+              })}
+              {polygon.map((vertex, index) => {
+                const next = polygon[(index + 1) % polygon.length];
+                const midpoint = {
+                  x: (vertex.x + next.x) / 2,
+                  y: (vertex.y + next.y) / 2,
+                };
+                const midpointPx = metersToPx(midpoint, pxPerMeter);
+                return (
+                  <Text
+                    key={`edge-label-${index}`}
+                    listening={false}
+                    x={midpointPx.x + 4}
+                    y={midpointPx.y + 4}
+                    text={edgeLabelTexts[index]}
+                    fontSize={11}
+                    fill="#44403c"
+                  />
+                );
+              })}
+            </Layer>
+            <Layer listening={mode === "select"}>
+              {walls.map((wall) => {
+                const isSelected =
+                  selectedObject?.type === "wall" && selectedObject.id === wall.id;
+                const startPx = metersToPx(wall.start, pxPerMeter);
+                const lengthM = Math.hypot(
+                  wall.end.x - wall.start.x,
+                  wall.end.y - wall.start.y,
+                );
+                const lengthPx = lengthM * pxPerMeter;
+                return (
+                  <Rect
+                    key={wall.id}
+                    name="object"
+                    x={startPx.x}
+                    y={startPx.y}
+                    width={lengthPx}
+                    height={thicknessPx}
+                    offsetY={thicknessPx / 2}
+                    rotation={angleDegrees(wall.start, wall.end)}
+                    fill="#78350f"
+                    stroke={isSelected ? "#3b82f6" : undefined}
+                    strokeWidth={isSelected ? 3 : 0}
+                    draggable={isSelected && mode === "select"}
+                    onClick={() => {
+                      if (suppressObjectClickRef.current) {
+                        suppressObjectClickRef.current = false;
+                        return;
+                      }
+                      setSelectedObject({ type: "wall", id: wall.id });
+                      setSelectedVertex(null);
+                    }}
+                    onTap={() => {
+                      if (suppressObjectClickRef.current) {
+                        suppressObjectClickRef.current = false;
+                        return;
+                      }
+                      setSelectedObject({ type: "wall", id: wall.id });
+                      setSelectedVertex(null);
+                    }}
+                    onDragMove={(e) => handleWallBodyDrag(wall, e)}
+                    onDragEnd={(e) => handleWallBodyDrag(wall, e)}
+                  />
+                );
+              })}
+              {columns.map((column) => {
+                const isSelected =
+                  selectedObject?.type === "column" &&
+                  selectedObject.id === column.id;
+                const centerPx = metersToPx(column.center, pxPerMeter);
+                const widthPx = column.w * pxPerMeter;
+                const heightPx = column.h * pxPerMeter;
+                return (
+                  <Rect
+                    key={column.id}
+                    name="object"
+                    x={centerPx.x}
+                    y={centerPx.y}
+                    width={widthPx}
+                    height={heightPx}
+                    offsetX={widthPx / 2}
+                    offsetY={heightPx / 2}
+                    fill="#78716c"
+                    stroke={isSelected ? "#3b82f6" : "#57534e"}
+                    strokeWidth={isSelected ? 3 : 1.5}
+                    draggable={isSelected && mode === "select"}
+                    onClick={() => {
+                      if (suppressObjectClickRef.current) {
+                        suppressObjectClickRef.current = false;
+                        return;
+                      }
+                      setSelectedObject({ type: "column", id: column.id });
+                      setSelectedVertex(null);
+                    }}
+                    onTap={() => {
+                      if (suppressObjectClickRef.current) {
+                        suppressObjectClickRef.current = false;
+                        return;
+                      }
+                      setSelectedObject({ type: "column", id: column.id });
+                      setSelectedVertex(null);
+                    }}
+                    onDragMove={(e) => handleColumnBodyDrag(column, e)}
+                    onDragEnd={(e) => handleColumnBodyDrag(column, e)}
+                  />
+                );
+              })}
+              {selectedColumn &&
+                mode === "select" &&
+                (
+                  [
+                    { x: -1, y: -1 },
+                    { x: 1, y: -1 },
+                    { x: -1, y: 1 },
+                    { x: 1, y: 1 },
+                  ] as { x: -1 | 1; y: -1 | 1 }[]
+                ).map((corner) => {
+                  const cornerMeter = {
+                    x: selectedColumn.center.x + (corner.x * selectedColumn.w) / 2,
+                    y: selectedColumn.center.y + (corner.y * selectedColumn.h) / 2,
+                  };
+                  const cornerPx = metersToPx(cornerMeter, pxPerMeter);
+                  const isDragging =
+                    draggingColumnCorner !== null &&
+                    draggingColumnCorner.x === corner.x &&
+                    draggingColumnCorner.y === corner.y;
+                  return (
+                    <Circle
+                      key={`corner-${corner.x}-${corner.y}`}
+                      name="object"
+                      x={cornerPx.x}
+                      y={cornerPx.y}
+                      radius={6}
+                      fill={isDragging ? "#3b82f6" : "#ffffff"}
+                      stroke="#3b82f6"
+                      strokeWidth={2}
+                      // The minimum column size (0.5m) can place corners only a
+                      // few px from the center at typical scale, so the default
+                      // fill/stroke hit region would overlap the column body's
+                      // own hit region and hijack body-drag gestures. A small
+                      // fixed hit radius (independent of the visual radius
+                      // above, which stays consistent with the other object
+                      // handles) keeps the handle precisely grabbable at its
+                      // corner without covering the body.
+                      hitFunc={(context, shape) => {
+                        context.beginPath();
+                        context.arc(0, 0, 3, 0, Math.PI * 2, false);
+                        context.closePath();
+                        context.fillStrokeShape(shape);
+                      }}
+                      draggable
+                      onDragStart={() => setDraggingColumnCorner(corner)}
+                      onDragMove={(e) =>
+                        handleColumnCornerDrag(selectedColumn, corner, e)
+                      }
+                      // Deliberately does NOT call handleColumnCornerDrag again
+                      // here (unlike the analogous vertex/wall-endpoint/column-
+                      // body handlers, which re-apply on both dragmove and
+                      // dragend): the resulting corner position is generally a
+                      // quarter-grid offset (center +/- w/2), not a 0.5m-grid
+                      // value, and onDragMove already overrides the node's
+                      // position to that exact result. Re-reading e.target's
+                      // (now-overridden) position here and re-running it through
+                      // resizeColumnCorner's snapPoint would re-snap a
+                      // non-grid-aligned value a second time, which is not
+                      // idempotent and can silently drift the resize result.
+                      // The last onDragMove already applied the correct final
+                      // state, so dragend only needs to clear the drag flag.
+                      onDragEnd={() => setDraggingColumnCorner(null)}
+                    />
+                  );
+                })}
+              {columnLabelText &&
+                selectedColumn &&
+                (() => {
+                  const columnCenterPx = metersToPx(selectedColumn.center, pxPerMeter);
+                  return (
+                    <Text
+                      listening={false}
+                      x={columnCenterPx.x + (selectedColumn.w * pxPerMeter) / 2 + 4}
+                      y={columnCenterPx.y - (selectedColumn.h * pxPerMeter) / 2 - 16}
+                      text={columnLabelText}
+                      fontSize={11}
+                      fill="#44403c"
+                    />
+                  );
+                })()}
+              {wallLabelText &&
+                selectedWall &&
+                (() => {
+                  const wallMidPx = metersToPx(
+                    {
+                      x: (selectedWall.start.x + selectedWall.end.x) / 2,
+                      y: (selectedWall.start.y + selectedWall.end.y) / 2,
+                    },
+                    pxPerMeter,
+                  );
+                  return (
+                    <Text
+                      listening={false}
+                      x={wallMidPx.x + 6}
+                      y={wallMidPx.y - 16}
+                      text={wallLabelText}
+                      fontSize={11}
+                      fill="#44403c"
+                    />
+                  );
+                })()}
+              {draftWall && (
+                <Rect
+                  listening={false}
+                  x={metersToPx(draftWall.start, pxPerMeter).x}
+                  y={metersToPx(draftWall.start, pxPerMeter).y}
+                  width={
+                    Math.hypot(
+                      draftWall.end.x - draftWall.start.x,
+                      draftWall.end.y - draftWall.start.y,
+                    ) * pxPerMeter
+                  }
+                  height={thicknessPx}
+                  offsetY={thicknessPx / 2}
+                  rotation={angleDegrees(draftWall.start, draftWall.end)}
+                  fill="#78350f"
+                  opacity={0.5}
+                />
+              )}
+              {selectedWall && (
+                <>
+                  <Circle
+                    name="object"
+                    x={metersToPx(selectedWall.start, pxPerMeter).x}
+                    y={metersToPx(selectedWall.start, pxPerMeter).y}
+                    radius={6}
+                    fill={draggingHandle === "start" ? "#3b82f6" : "#ffffff"}
+                    stroke="#3b82f6"
+                    strokeWidth={2}
+                    hitStrokeWidth={16}
+                    draggable
+                    onDragStart={() => setDraggingHandle("start")}
+                    onDragMove={(e) => handleWallEndpointDrag(selectedWall, "start", e)}
+                    onDragEnd={(e) => {
+                      handleWallEndpointDrag(selectedWall, "start", e);
+                      setDraggingHandle(null);
+                    }}
+                  />
+                  <Circle
+                    name="object"
+                    x={metersToPx(selectedWall.end, pxPerMeter).x}
+                    y={metersToPx(selectedWall.end, pxPerMeter).y}
+                    radius={6}
+                    fill={draggingHandle === "end" ? "#3b82f6" : "#ffffff"}
+                    stroke="#3b82f6"
+                    strokeWidth={2}
+                    hitStrokeWidth={16}
+                    draggable
+                    onDragStart={() => setDraggingHandle("end")}
+                    onDragMove={(e) => handleWallEndpointDrag(selectedWall, "end", e)}
+                    onDragEnd={(e) => {
+                      handleWallEndpointDrag(selectedWall, "end", e);
+                      setDraggingHandle(null);
+                    }}
+                  />
+                </>
+              )}
+            </Layer>
+          </Stage>
+        </div>
+      )}
+      {step === "preview" && sceneSnapshot && (
+        <div data-testid="step-preview">
+          <button
+            type="button"
+            data-testid="back-to-edit-button"
+            onClick={handleBackToEdit}
+            className="mb-2 rounded border border-stone-300 bg-white px-3 py-1 text-sm font-medium text-stone-700"
+          >
+            返回編輯
+          </button>
+          <VenueSceneLoader
+            key={generation}
+            polygon={sceneSnapshot.polygon}
+            walls={sceneSnapshot.walls}
+            columns={sceneSnapshot.columns}
+          />
+        </div>
       )}
     </div>
   );

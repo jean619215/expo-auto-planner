@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import * as THREE from "three";
 import { Canvas } from "@react-three/fiber";
+import { OrbitControls } from "@react-three/drei";
 import {
   VENUE_SIZE_M,
   WALL_THICKNESS_M,
@@ -45,6 +46,7 @@ export default function VenueScene({ polygon, walls, columns }: VenueSceneProps)
     <div
       data-testid="venue-scene"
       data-generated="true"
+      data-orbit-controls="true"
       data-wall-mesh-count={walls.length}
       data-column-mesh-count={columns.length}
       data-floor-vertex-count={polygon.length}
@@ -58,6 +60,15 @@ export default function VenueScene({ polygon, walls, columns }: VenueSceneProps)
       >
         <ambientLight intensity={0.6} />
         <directionalLight position={[25, 40, 25]} intensity={0.8} />
+        <OrbitControls
+          enableRotate
+          enableZoom
+          enablePan
+          maxPolarAngle={Math.PI / 2 - 0.05}
+          minDistance={5}
+          maxDistance={150}
+          target={[VENUE_SIZE_M / 2, 0, VENUE_SIZE_M / 2]}
+        />
         <FloorMesh polygon={polygon} />
         {walls.map((wall) => {
           const rotationY = -Math.atan2(

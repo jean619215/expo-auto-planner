@@ -1,74 +1,68 @@
-# Orchestrator Output — 依平面圖資料建立 3D 白模
+# Orchestrator Output — 3D 檢視器整合
 
-> Story: 場地白模產生器 (階段一) | Task 4 of 5 | Generated: 2026-07-14T00:00:00+08:00
+> Story: 場地白模產生器 (階段一) | Task 5 of 5 (LAST task of story) | Generated: 2026-07-14T15:00:00+08:00
 
 ## Task Type
 FRONTEND
 
 ## Refined Requirement
-Add a one-click "產生 3D 模型" action to the venue editor page that builds a Three.js whitebox scene from the current 2D floor-plan state (`FloorPolygon`, `WallSegment[]`, `Column[]` from `src/lib/venue/plan.ts`), using `three` + `@react-three/fiber` (+ `@react-three/drei`, installed now though unused until Task 5).
+Two changes to `src/components/venue/VenueScene.tsx` and `src/components/venue/PlanEditor.tsx`:
 
-**Scope note vs. Tasks 1-3 change history**: the 3D approach (fixed 3m height, 0.1m floor slab, palette) was decided before the 2D editor pivoted from a grid-cell model to the current polygon/line-segment/object model. This task re-confirms those decisions still hold and restates the "no merge, one mesh per primitive" construction principle in terms of the current data shapes (polygon extrusion, per-segment wall boxes, per-instance column boxes) instead of the old per-cell boxes.
+**1. OrbitControls.** Add `@react-three/drei`'s `<OrbitControls>` inside the `<Canvas>` in `VenueScene.tsx` (drei is already installed, currently unused) so the user can rotate/zoom/pan the generated whitebox with the mouse. Configuration (not default unrestricted behavior):
+- `enableRotate`, `enableZoom`, `enablePan` all `true`.
+- `maxPolarAngle = Math.PI / 2 - 0.05` (camera cannot dip below the floor plane).
+- `minDistance` ≈ 5, `maxDistance` ≈ 150 (relative to `VENUE_SIZE_M` = 50, so the user can neither zoom into nothing nor scroll away to a vanishing whitebox).
+- `target` set to the scene's approximate center, `[VENUE_SIZE_M / 2, 0, VENUE_SIZE_M / 2]` (i.e. `[25, 0, 25]`), not world origin, so orbit pivots around the whitebox rather than a corner.
+- Expose a `data-orbit-controls="true"` attribute on the 3D canvas container (alongside the existing `data-testid="venue-scene"` and `data-generated`/`data-*-mesh-count` attributes) confirming `OrbitControls` is mounted when the 3D view is active — this is the DOM-observable proxy Playwright uses since actual camera drag/rotate behavior is opaque WebGL and cannot be asserted through the DOM.
 
-**Dependencies**: install `three`, `@react-three/fiber`, `@react-three/drei` together in this task.
+**2. Step-based (wizard) 2D/3D switching flow — replaces Task 4's "both stacked, always visible" placeholder.** This is a 2-step flow, NOT a tab bar (a tab-bar design was initially proposed by the orchestrator and explicitly rejected by the user in favor of a linear wizard):
 
-**Component structure**: follow the existing `PlanEditorLoader.tsx` pattern — a new client-only loader component wrapping `dynamic(() => import('./VenueScene'), { ssr: false })` (or equivalent name, architect's call), since R3F/Three cannot SSR. The R3F `<Canvas>` scene component reads the current `polygon`, `walls`, `columns` state (lifted or passed down from wherever `PlanEditor.tsx` currently owns it) and builds the whitebox on demand — not continuously live-synced; regeneration only happens when the button is pressed (see Clarified AC below for the "on demand" semantics).
-
-**Geometry construction** (meters, consuming `plan.ts` types directly — no unit conversion):
-- **Floor**: build a `THREE.Shape` from the `FloorPolygon` points (in the XZ plane, y=0 top surface), extrude with `ExtrudeGeometry({ depth: 0.1, bevelEnabled: false })`, oriented/translated so the extrusion goes downward (top face at y=0, bottom face at y=-0.1). One mesh for the whole floor (single `Shape`, not one per triangle/edge).
-- **Walls**: for each `WallSegment` in `walls`, one `BoxGeometry` sized `[wallLengthM(wall), 3, WALL_THICKNESS_M]` (length × height × thickness), positioned at the segment's midpoint `{(start.x+end.x)/2, 1.5, (start.y+end.y)/2}` (Three Y-up; plan-space y maps to Three Z), rotated about the Y axis by the segment's angle (`Math.atan2(end.y - start.y, end.x - start.x)` or equivalent, sign/axis convention is the architect's/developer's call as long as walls visually align with their 2D line segments). One mesh per wall, no merging.
-- **Columns**: for each `Column` in `columns`, one `BoxGeometry` sized `[col.w, 3, col.h]`, positioned at `{col.center.x, 1.5, col.center.y}`. One mesh per column, no merging/instancing.
-- Height is fixed at 3m for both walls and columns regardless of any per-instance data (there is no per-instance height field on `WallSegment`/`Column` — only `w`/`h` footprint on `Column`). No doors/windows/openings.
-
-**Materials/colors** (flat `MeshStandardMaterial`, no textures, matching the 2D Konva palette):
-- Floor: `#f5f5f4`
-- Walls: `#78350f`
-- Columns: `#78716c`
-
-**Trigger — "產生 3D 模型" button**:
-- Rendered on the venue editor page (`src/app/venue/page.tsx` / `PlanEditor.tsx` composition, architect's call on exact placement, e.g. a toolbar/action bar).
-- Disabled when `walls.length === 0 && columns.length === 0`. Floor always exists (`DEFAULT_FLOOR` guarantees at least the default polygon), so floor-only state does NOT count as empty — the button stays enabled once at least one wall or column exists, even with the default floor untouched.
-- On click, the 3D scene is (re)generated from the current 2D state at that moment (a snapshot-on-click, not a live-bound continuous sync — editing the 2D plan after generating does not retroactively update an already-rendered 3D scene until the button is pressed again). This scopes out needing a live-diffing/reactive 3D sync mechanism, which is not required by the story's acceptance criteria for this task.
-- Clicking the button renders/mounts the 3D canvas **below** the existing 2D Konva canvas on the same page — both remain visible simultaneously. No toggle/tab/replace behavior in this task; that switching UX belongs to Task 5. Before the first click, no 3D canvas is mounted at all (not just hidden) — clicking mounts it, and subsequent clicks re-generate its contents in place.
-- No lighting/camera-orbit polish requirement beyond what's needed to visually verify the geometry landed (basic ambient + directional light and a static default camera position framing the 50x50m bounds are sufficient; orbit controls are explicitly Task 5).
+- **Step 1 "編輯平面圖"** (default view on load): the existing 2D Konva editor — `<Stage>`, `PlanToolbar`, all current wall/column/vertex editing tools — exactly as it works today. Rendered inside a container with `data-testid="step-edit"`.
+- **"下一步" button** (`data-testid="next-step-button"`): **merges and replaces** the current standalone "產生 3D 模型" button (`data-testid="generate-3d-button"` retired/renamed). One click both (a) generates the 3D scene from current live `polygon`/`walls`/`columns` state — same snapshot-on-click, full-replace semantics as Task 4 (`setSceneSnapshot({ polygon, walls, columns })` + `setGeneration((g) => g + 1)`, unchanged) — and (b) advances the view to Step 2. Enablement rule is unchanged from Task 4: disabled when `walls.length === 0 && columns.length === 0` (floor-only state keeps it disabled).
+- **Step 2 "3D 預覽"**: shows only the 3D canvas (`VenueSceneLoader` → `VenueScene`, with `OrbitControls` per point 1) inside a container with `data-testid="step-preview"`. Step 1's 2D `<Stage>` is not rendered/visible in this step. Because "下一步" IS the generate-and-advance action, Step 2 can never be reached without a generated scene already existing — there is no empty/prompt state to design for in Step 2 (unlike a tab-bar design where free navigation to an ungenerated 3D tab was possible).
+- **"返回編輯" button** (`data-testid="back-to-edit-button"`), shown in Step 2: returns to Step 1. Going back does NOT discard or reset the 2D plan state (`polygon`/`walls`/`columns`) — it is purely a view/step switch; all 2D editor state (selection, mode, etc.) remains exactly as it was.
+- **Regeneration loop**: user can go back to Step 1, edit the plan freely, click "下一步" again — this regenerates the 3D scene from scratch (stale meshes from the prior generation fully replaced via the existing `key={generation}` remount pattern from Task 4, not incrementally appended) and advances to Step 2 showing the fresh scene. This loop is unlimited/repeatable.
+- Only one of Step 1 / Step 2 is ever mounted-and-visible at a time — this is the core "切換流程" (switching flow) requirement from the story text that Task 4 deliberately left as a stacked-both-visible placeholder.
 
 ## Clarified Acceptance Criteria
-- [ ] Given the venue editor page has loaded with the default floor polygon and no walls/columns, when the user views the page, then the "產生 3D 模型" button is visible but disabled.
-- [ ] Given the user has added at least one wall OR one column (via existing Task 2 tools), when the user views the page, then the "產生 3D 模型" button becomes enabled.
-- [ ] Given the button is enabled, when the user clicks "產生 3D 模型", then a Three.js/R3F canvas mounts below the 2D Konva canvas, rendering: the current floor polygon as a 0.1m-thick extruded slab (top face at y=0, color `#f5f5f4`), each current wall as a box sized to its length × 3m × 0.2m positioned/rotated along its 2D segment (color `#78350f`), and each current column as a box sized to its `w` × 3m × `h` footprint positioned at its 2D center (color `#78716c`).
-- [ ] Given the 3D canvas has been generated once, when the user edits the 2D plan (moves/adds/removes a wall, column, or floor vertex) without clicking the button again, then the already-rendered 3D scene does NOT change (no live sync).
-- [ ] Given the 3D canvas has been generated once, when the user edits the 2D plan and clicks "產生 3D 模型" again, then the 3D scene is rebuilt from scratch to reflect the current 2D state (stale meshes from the prior generation are not left behind).
-- [ ] Given the user removes all walls and columns after having generated a 3D scene (back to floor-only), when state updates, then the button becomes disabled again (existing generated 3D scene, if any, is left as-is — re-disabling the button does not retroactively clear an already-rendered scene).
-- [ ] Given the floor polygon is a concave/irregular shape (per Task 1), when the 3D scene is generated, then the floor slab extrusion follows the concave outline correctly (via `ExtrudeGeometry`/`Shape`, not a bounding-box approximation).
-- [ ] Given the page is server-rendered (Next.js App Router), when the page first loads, then no SSR error/mismatch occurs from the Three.js/R3F canvas (client-only via `dynamic(..., { ssr: false })`, consistent with `PlanEditorLoader.tsx`'s existing pattern).
+- [ ] Given the venue editor page has just loaded, when the user views the page, then Step 1 "編輯平面圖" (2D Konva editor) is shown by default and Step 2's 3D canvas is not mounted.
+- [ ] Given the venue editor page has loaded with only the default floor polygon and no walls/columns, when the user views Step 1, then "下一步" is visible but disabled.
+- [ ] Given the user has added at least one wall OR one column, when the user views Step 1, then "下一步" becomes enabled.
+- [ ] Given "下一步" is enabled, when the user clicks it, then (a) the 3D scene is generated from the current 2D state exactly as Task 4's generation logic already does (floor slab + wall boxes + column boxes, snapshot-on-click), and (b) the view advances to Step 2, where the 2D `<Stage>` is no longer rendered and the 3D canvas with mounted `OrbitControls` is shown.
+- [ ] Given Step 2 is showing a generated 3D scene, when the user clicks and drags on the 3D canvas, then the camera orbits around the whitebox (manual-only verification — see Testability notes).
+- [ ] Given Step 2 is active, when the user clicks "返回編輯", then the view returns to Step 1 showing the 2D editor with the polygon/walls/columns state fully intact (unchanged from before advancing to Step 2), and the 3D canvas is no longer mounted/visible.
+- [ ] Given the user returns to Step 1, edits the plan (adds/moves/removes a wall, column, or floor vertex), and clicks "下一步" again, then the 3D scene fully regenerates to reflect the new 2D state (no stale meshes from the prior generation persist) and the view advances to Step 2 again.
+- [ ] Given OrbitControls is active in Step 2, when the user attempts to orbit the camera below the floor plane, then the camera is prevented from going below `maxPolarAngle` (manual-only verification).
+- [ ] Given OrbitControls is active in Step 2, when the user scrolls to zoom, then zoom is clamped within `minDistance`/`maxDistance` bounds (manual-only verification).
+- [ ] Given the 3D canvas is mounted in Step 2, when inspected via the DOM, then it exposes `data-orbit-controls="true"` in addition to the existing `data-testid="venue-scene"`, `data-generated`, `data-wall-mesh-count`, `data-column-mesh-count`, `data-floor-vertex-count` attributes from Task 4.
 
 ## Edge Cases to Handle
-- Floor polygon with many vertices / highly concave (zig-zag) shapes must still extrude without `ExtrudeGeometry` throwing or producing degenerate/inverted-normal geometry — if `Shape`-from-polygon triangulation has known failure modes (e.g. self-intersecting edges), at minimum it must not crash the page; visual artifacts in a pathological self-intersecting case are acceptable (self-intersection was already out of scope/unvalidated in Task 1).
-- A wall with zero or near-zero length cannot occur from `plan.ts` (`createWall`/`moveWallEndpoint` reject same-start/end points), so no defensive handling needed for degenerate wall geometry.
-- Very large numbers of walls/columns (e.g. dozens) should still render without the page hanging — acceptable to rely on React/R3F's normal render path since each primitive is already capped by the 50x50m bounds; no special virtualization required for this task.
-- Rapid repeated clicks on "產生 3D 模型" (e.g. double-click) must not leave duplicate/overlapping meshes from concurrent generations — regeneration should fully replace the previous scene's meshes each time (e.g. via React key/state replacement, not incremental appends).
-- Wall rotation sign/axis convention: ensure the box's long axis actually aligns with the 2D segment direction (verify visually against at least one non-axis-aligned wall) — an inverted or perpendicular rotation would be a functional bug, not just cosmetic.
+- Rapid double-click on "下一步" must not cause a double-advance/race between the state-snapshot update and the step-view change — both should land from a single click handler synchronously (same pattern as Task 4's `handleGenerate3D`, just extended to also flip a step/view state value).
+- Going back to Step 1 and immediately clicking "下一步" again without any edits should still regenerate cleanly (identical snapshot content is fine — regeneration is not conditioned on the plan having changed).
+- Removing all walls/columns is only possible from Step 1 (Step 2 doesn't expose 2D editing tools), so the "下一步 disabled" re-check naturally only matters when the user is back in Step 1 — no special handling needed for "disabling mid-Step-2."
+- Browser back/forward or page refresh while in Step 2: since this story explicitly has no persistence (階段一 has no DB, no URL/route state requirement stated), refreshing resets to Step 1 with the default plan — this is consistent with the rest of the story's "no persistence" scope and does not need special handling.
+- WebGL unavailable in Step 2: consistent with Task 4's existing error-state decision, this should not crash the page — the 3D canvas area may show a broken/empty render, but "返回編輯" must still work to get back to a functional 2D editor.
 
 ## Error States
-- No network/API calls involved — this is pure client-side geometry generation from in-memory React state, so no server error states apply.
-- If Three.js/R3F fails to initialize in the browser (e.g. WebGL unavailable), the failure should not crash the whole page/2D editor — the 3D canvas area may show an empty/broken state, but the 2D editor and rest of the page must remain functional. No specific fallback UI copy is mandated by this task; a console error is acceptable as a baseline, richer UX (e.g. "WebGL not supported" message) is a nice-to-have left to the architect/developer's discretion.
+- No network/API calls involved — pure client-side view-state and geometry generation, no server error states apply.
+- If Three.js/R3F/OrbitControls fails to initialize in Step 2 (e.g. WebGL unavailable), the 2-step wizard chrome itself (the "返回編輯" button) must remain functional so the user is never stuck on a broken Step 2 — same baseline as Task 4 (console error acceptable, richer fallback UX is a nice-to-have, not mandated).
 
 ## Out of Scope
-- Orbit controls (rotate/zoom the 3D view) — Task 5.
-- 2D/3D toggle or replace UX, and any switching flow polish — Task 5.
-- Live/reactive sync between 2D edits and an already-rendered 3D scene — explicitly snapshot-on-click only (see AC above).
-- Doors, windows, openings, or any wall/column detail beyond flat-color boxes.
-- Per-instance wall/column height (all fixed at 3m; no data model change to add a height field).
-- Mesh merging/instancing/geometry optimization of any kind.
-- Textures, shadows, advanced lighting, materials beyond flat `MeshStandardMaterial`.
-- Persistence/database storage of the generated 3D scene or the 2D plan — out of scope for the whole story (階段一).
-- Camera framing/animation polish beyond a static default view sufficient to see the generated geometry.
+- Any tab-bar based switching UI — explicitly rejected by the user in favor of the 2-step wizard described above.
+- Free navigation to Step 2 before ever generating (not reachable by design, since "下一步" is the only way to advance and it always generates).
+- Auto-regeneration / live-sync between 2D edits and an already-shown Step 2 scene while remaining in Step 2 — regeneration only happens via the explicit Step 1 → "下一步" → Step 2 flow, consistent with Task 4's snapshot-on-click decision.
+- More than 2 steps, breadcrumbs, progress indicators, or step-skipping UI — this is a strict linear 2-step flow.
+- Persisting which step the user was on across page reloads (no persistence anywhere in this story per 階段一 scope).
+- Doors/windows, per-instance heights, mesh merging/instancing, textures/shadows — all already out of scope per Task 4 and unchanged here.
+- Camera framing/animation transitions between Step 1 and Step 2 (e.g. no crossfade/animation requirement — an instant view swap is sufficient).
 
 ## Assumptions Made
-- Button placement (toolbar vs. standalone) and exact loader/component file names (`VenueScene.tsx` or similar) are left to the architect — no user preference stated, follows `PlanEditorLoader.tsx` naming precedent loosely.
-- Coordinate mapping: 2D plan-space `(x, y)` maps to Three.js `(x, z)` with plan `y` becoming Three `z`, Three `y` reserved for height/vertical. This is the natural mapping for a top-down floor plan and wasn't separately raised as a question since it has no user-facing behavioral ambiguity — only an internal implementation convention.
-- "Snapshot-on-click" (no live sync) is inferred from the story's phrasing ("一鍵「產生 3D 模型」") implying an explicit generate action, not continuous binding; confirmed explicitly by user in the Q&A round (point 7 scoping split), stated here for the architect's benefit since it has real behavioral implications (AC 4 and 5 above).
-- Regeneration on repeated clicks fully replaces prior meshes (no accumulation) — treated as an implementation-obvious requirement of a "generate" button, not raised as a separate question.
+- Exact container/test-id names (`step-edit`, `step-preview`, `next-step-button`, `back-to-edit-button`) are the user's proposed defaults, explicitly left to the architect/developer to keep "consistent with existing `data-testid` conventions in this codebase" (per the user's own phrasing) — these are strong defaults, not rigid requirements, if the architect finds a more consistent naming convention already in use elsewhere in `PlanEditor.tsx`.
+- The existing `data-testid="generate-3d-button"` is retired/renamed to `data-testid="next-step-button"` since the user explicitly said these two actions "merge" into one — there is no longer a separate always-visible "產生 3D 模型" button coexisting with a step flow.
+- OrbitControls configuration (`maxPolarAngle`, `minDistance`/`maxDistance`, `target`) and the DOM-assertable vs. manual-only testability split were proposed with concrete numeric defaults in the Q&A round and went unobjected — treated as confirmed, not merely tentative.
+- Testability split (confirmed, unobjected): Playwright CAN assert — step container mount/visibility toggling on "下一步"/"返回編輯" clicks, that Step 1's 2D `<Stage>` is unmounted while Step 2 is active and vice versa, and `data-orbit-controls="true"` presence on the 3D canvas when Step 2 is active. Manual-only (goes into `manual-tests/venue-plan-editor.md` as a checklist, per the user's request for a delivered manual verification checklist) — actual mouse-drag orbit/rotate/zoom/pan behavior, polar-angle clamping at the floor, and min/max zoom distance enforcement, since these require visually driving opaque WebGL content.
+- Task type FRONTEND confirmed, unobjected.
+- **Flag for downstream playwright stage**: this is the LAST task (5 of 5) of the story `場地白模產生器 (階段一)`. When this task's work is approved and the playwright stage completes, it must mark not only this task complete but also the parent story's own row in the Stories database as `已完成` (per AGENTS.md's Notion sync section — "last task of a story" trigger). Not acted on now; noted here for the playwright agent to pick up later.
 
 ## Security Notes
-No new security-sensitive surface: this task is client-only geometry generation with no new API routes, no auth changes, no data persistence, and no user-supplied external input beyond existing in-memory 2D editor state (already validated/clamped by `plan.ts`). No secrets or credentials involved. Standard Next.js client-component/SSR considerations apply for the Three.js/R3F canvas (client-only rendering via `dynamic(..., { ssr: false })`), consistent with the existing Konva editor's pattern — not a new security concern.
+No new security-sensitive surface: this task is client-only view-state and geometry/orbit-control changes with no new API routes, no auth changes, no data persistence, and no new user-supplied external input. No secrets/credentials involved. Consistent with Task 4's assessment — standard Next.js client-component/SSR considerations only (unchanged, `dynamic(..., { ssr: false })` pattern retained).

@@ -35,7 +35,7 @@
 - [x] [FRONTEND] 物件系統:牆壁線段工具(固定厚度、端點拖拉)與柱子矩形工具(拖曳擺放),含選取/移動/刪除
 - [x] [FRONTEND] 縮放與尺寸標註:物件縮放把手、縮放/選取時即時顯示公尺尺寸、地板多邊形邊長標註
 - [x] [FRONTEND] 依平面圖資料建立 3D 白模(Three.js + react-three-fiber):地板多邊形擠出薄板、牆沿線段擠出、柱子箱體,固定高度 3m,「產生 3D 模型」按鈕
-- [ ] [FRONTEND] 3D 檢視器整合:orbit controls 旋轉/縮放,2D 編輯與 3D 預覽切換流程
+- [x] [FRONTEND] 3D 檢視器整合:orbit controls 旋轉/縮放,2D 編輯與 3D 預覽切換流程
 
 <!--
 給 STORY 撰寫者的備註:

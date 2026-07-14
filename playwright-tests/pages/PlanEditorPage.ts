@@ -44,18 +44,42 @@ export type EditorMode = "select" | "wall" | "column";
 // computed canvas coordinates. Note: a single <Stage> still renders as a
 // single <canvas> — the new toolbar (PlanToolbar.tsx) is plain DOM,
 // addressed by its own data-testid attributes below.
+//
+// Task 5 (2-step wizard): the wrapper's children are now split into two
+// mutually exclusive containers, [data-testid="step-edit"] (toolbar +
+// next-step-button + the Konva <Stage>) and [data-testid="step-preview"]
+// (back-to-edit-button + the 3D VenueSceneLoader/VenueScene), gated by
+// data-step on the wrapper. Only one is ever mounted at a time. The
+// existing containerBox()/canvas-based helpers (meterToScreen,
+// dragVertexTo, drawWall, etc.) still work exactly as before since exactly
+// one <canvas> exists whenever step-edit is mounted — but callers MUST
+// ensure they're in step === "edit" before calling any of them, since the
+// canvas does not exist at all while step === "preview". Bugfix (QA loop
+// iteration 1): `tabIndex`/`onKeyDown` (the Delete/Backspace handler) now
+// live on `step-edit` itself, not the outer `plan-editor` wrapper — this
+// structurally prevents Delete/Backspace from ever reaching the 2D-object
+// deletion logic while Step 2 is mounted (previously a stale
+// selectedObject/selectedVertex from Step 1 could be deleted via a keypress
+// while looking at the 3D preview). `pressDelete()` below focuses
+// `stepEdit`, not `editor`, accordingly.
 export class PlanEditorPage {
   readonly page: Page;
   readonly editor: Locator;
   readonly canvas: Locator;
-  readonly generateButton: Locator;
+  readonly nextStepButton: Locator;
+  readonly backToEditButton: Locator;
+  readonly stepEdit: Locator;
+  readonly stepPreview: Locator;
   readonly scene: Locator;
 
   constructor(page: Page) {
     this.page = page;
     this.editor = page.locator('[data-testid="plan-editor"]');
     this.canvas = this.editor.locator("canvas").first();
-    this.generateButton = page.locator('[data-testid="generate-3d-button"]');
+    this.nextStepButton = page.locator('[data-testid="next-step-button"]');
+    this.backToEditButton = page.locator('[data-testid="back-to-edit-button"]');
+    this.stepEdit = page.locator('[data-testid="step-edit"]');
+    this.stepPreview = page.locator('[data-testid="step-preview"]');
     this.scene = page.locator('[data-testid="venue-scene"]');
   }
 
@@ -238,9 +262,15 @@ export class PlanEditorPage {
     await this.page.mouse.up();
   }
 
-  /** Press Delete/Backspace (focuses the editor first so the keydown handler fires). */
+  /**
+   * Press Delete/Backspace (focuses the Step 1 container first so the
+   * keydown handler fires). Task 5 scoped `tabIndex`/`onKeyDown` to
+   * `[data-testid="step-edit"]` (not the outer `plan-editor` wrapper), so
+   * that Delete/Backspace can only ever fire while Step 1 is mounted. Only
+   * call this while `step === "edit"` — `stepEdit` does not exist in Step 2.
+   */
   async pressDelete() {
-    await this.editor.focus();
+    await this.stepEdit.focus();
     await this.page.keyboard.press("Delete");
   }
 
@@ -294,11 +324,6 @@ export class PlanEditorPage {
 
   // --- Task 4: 3D whitebox scene ---------------------------------------
 
-  /** Click the "產生 3D 模型" button. */
-  async clickGenerate3D() {
-    await this.generateButton.click();
-  }
-
   /** Whether a 3D scene has ever been generated (`data-scene-generated` on the wrapper). */
   async sceneGenerated(): Promise<boolean> {
     const raw = await this.editor.getAttribute("data-scene-generated");
@@ -327,5 +352,29 @@ export class PlanEditorPage {
   async sceneFloorVertexCount(): Promise<number> {
     const raw = await this.scene.getAttribute("data-floor-vertex-count");
     return Number(raw);
+  }
+
+  // --- Task 5: 2-step wizard (edit <-> preview) + OrbitControls --------
+
+  /** Click "下一步" — generates the 3D scene from current 2D state and advances to Step 2. */
+  async clickNextStep() {
+    await this.nextStepButton.click();
+  }
+
+  /** Click "返回編輯" — returns to Step 1 without touching 2D plan state. */
+  async clickBackToEdit() {
+    await this.backToEditButton.click();
+  }
+
+  /** Current wizard step (`data-step` on the wrapper). */
+  async currentStep(): Promise<"edit" | "preview"> {
+    const raw = await this.editor.getAttribute("data-step");
+    return (raw ?? "edit") as "edit" | "preview";
+  }
+
+  /** Whether `data-orbit-controls="true"` is present on the mounted 3D scene. */
+  async orbitControlsPresent(): Promise<boolean> {
+    const raw = await this.scene.getAttribute("data-orbit-controls");
+    return raw === "true";
   }
 }
