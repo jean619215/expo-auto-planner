@@ -31,6 +31,7 @@ import {
   type WallSegment,
 } from "@/lib/venue/plan";
 import PlanToolbar, { type EditorMode } from "./PlanToolbar";
+import VenueSceneLoader from "./VenueSceneLoader";
 
 const MIN_STAGE_PX = 320;
 const MAX_STAGE_PX = 800;
@@ -90,6 +91,12 @@ export default function PlanEditor() {
     y: -1 | 1;
   } | null>(null);
   const suppressObjectClickRef = useRef(false);
+  const [sceneSnapshot, setSceneSnapshot] = useState<{
+    polygon: FloorPolygon;
+    walls: WallSegment[];
+    columns: Column[];
+  } | null>(null);
+  const [generation, setGeneration] = useState(0);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -186,6 +193,11 @@ export default function PlanEditor() {
       setPolygon(next);
       setSelectedVertex(null);
     }
+  }
+
+  function handleGenerate3D() {
+    setSceneSnapshot({ polygon, walls, columns });
+    setGeneration((g) => g + 1);
   }
 
   function markObjectClickSuppressed() {
@@ -353,6 +365,8 @@ export default function PlanEditor() {
 
   const wallLabelText = selectedWall ? formatMeters(wallLengthM(selectedWall)) : "";
 
+  const canGenerate3D = walls.length > 0 || columns.length > 0;
+
   const edgeLabelTexts = polygon.map((vertex, i) => {
     const next = polygon[(i + 1) % polygon.length];
     return formatMeters(Math.hypot(next.x - vertex.x, next.y - vertex.y));
@@ -375,6 +389,8 @@ export default function PlanEditor() {
       data-column-label={columnLabelText}
       data-wall-label={wallLabelText}
       data-edge-labels={JSON.stringify(edgeLabelTexts)}
+      data-scene-generated={sceneSnapshot !== null}
+      data-generation={generation}
       tabIndex={0}
       onKeyDown={handleKeyDown}
       className="w-full outline-none"
@@ -385,6 +401,15 @@ export default function PlanEditor() {
         canDelete={selectedObject !== null}
         onDelete={deleteSelectedObject}
       />
+      <button
+        type="button"
+        data-testid="generate-3d-button"
+        disabled={!canGenerate3D}
+        onClick={handleGenerate3D}
+        className="mb-2 rounded border border-stone-300 bg-white px-3 py-1 text-sm font-medium text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        產生 3D 模型
+      </button>
       <Stage
         width={stagePx}
         height={stagePx}
@@ -761,6 +786,14 @@ export default function PlanEditor() {
           )}
         </Layer>
       </Stage>
+      {sceneSnapshot && (
+        <VenueSceneLoader
+          key={generation}
+          polygon={sceneSnapshot.polygon}
+          walls={sceneSnapshot.walls}
+          columns={sceneSnapshot.columns}
+        />
+      )}
     </div>
   );
 }

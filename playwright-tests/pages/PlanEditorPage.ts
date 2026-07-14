@@ -48,11 +48,15 @@ export class PlanEditorPage {
   readonly page: Page;
   readonly editor: Locator;
   readonly canvas: Locator;
+  readonly generateButton: Locator;
+  readonly scene: Locator;
 
   constructor(page: Page) {
     this.page = page;
     this.editor = page.locator('[data-testid="plan-editor"]');
     this.canvas = this.editor.locator("canvas").first();
+    this.generateButton = page.locator('[data-testid="generate-3d-button"]');
+    this.scene = page.locator('[data-testid="venue-scene"]');
   }
 
   async navigate() {
@@ -286,5 +290,42 @@ export class PlanEditorPage {
     await this.page.mouse.down();
     await this.page.mouse.move(end.x, end.y, { steps });
     await this.page.mouse.up();
+  }
+
+  // --- Task 4: 3D whitebox scene ---------------------------------------
+
+  /** Click the "產生 3D 模型" button. */
+  async clickGenerate3D() {
+    await this.generateButton.click();
+  }
+
+  /** Whether a 3D scene has ever been generated (`data-scene-generated` on the wrapper). */
+  async sceneGenerated(): Promise<boolean> {
+    const raw = await this.editor.getAttribute("data-scene-generated");
+    return raw === "true";
+  }
+
+  /** Generation counter (`data-generation` on the wrapper), increments every click. */
+  async generationCount(): Promise<number> {
+    const raw = await this.editor.getAttribute("data-generation");
+    return Number(raw);
+  }
+
+  /** Wall mesh count of the currently mounted `[data-testid="venue-scene"]`. */
+  async sceneWallMeshCount(): Promise<number> {
+    const raw = await this.scene.getAttribute("data-wall-mesh-count");
+    return Number(raw);
+  }
+
+  /** Column mesh count of the currently mounted `[data-testid="venue-scene"]`. */
+  async sceneColumnMeshCount(): Promise<number> {
+    const raw = await this.scene.getAttribute("data-column-mesh-count");
+    return Number(raw);
+  }
+
+  /** Floor polygon vertex count of the currently mounted `[data-testid="venue-scene"]`. */
+  async sceneFloorVertexCount(): Promise<number> {
+    const raw = await this.scene.getAttribute("data-floor-vertex-count");
+    return Number(raw);
   }
 }
