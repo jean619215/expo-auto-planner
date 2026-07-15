@@ -1,173 +1,188 @@
-# Architect Plan — 建立全站導覽 Header 元件
+# Architect Plan — 個人資料頁改為檢視/編輯模式切換
 
-> Story: 全站導覽 Header 與個人資料編輯模式 | Task type: FRONTEND | Generated: 2026-07-15T15:45:00+08:00
+> Story: 全站導覽 Header 與個人資料編輯模式 | Task type: FRONTEND | Generated: 2026-07-15T20:10:00+08:00
 
 ## Overview
 
-Extract the login-state detection/logout logic currently embedded in `AuthNav.tsx` into a shared client hook (`useAuthStatus`), build a new slim-bar `Header` component on top of that hook, mount it globally in `RootLayout`, strip the now-redundant `<AuthNav />` block from the home page, and delete `AuthNav.tsx` (fully superseded, no remaining callers). Update the Playwright page-object layer to reflect the new global header and add a dedicated spec for it.
+Restructure the nickname section of `src/app/profile/page.tsx` from an always-editable form into a two-state (view/edit) UI, driven by a new `mode` state variable, while reusing the existing `nickname`/`saving`/`saveError`/`saveSuccess` state and `updateNicknameRequest`/`isValidNickname` logic. Add a `lastSavedNickname` value as the read-only display source and 取消's revert target. Update the Playwright page object and add a new spec file covering the full view/edit state machine; no existing spec needs rework since none currently exercises nickname editing.
 
 ## Task Type Confirmed
 
-FRONTEND
+FRONTEND — confirmed against orchestrator-output.md. No new API route; reuses `src/lib/profile-client.ts` and `src/lib/validation.ts` as-is. No backend/DB/auth-model changes.
 
 ## Files to Create
 
 | File path | Purpose |
-| --- | --- |
-| `src/lib/useAuthStatus.ts` | Client hook extracted from `AuthNav.tsx`: owns `loading/loggedIn/loggedOut` state via `GET /api/profile`, and a `logout()` action wrapping `logoutRequest()` + `router.refresh()`. Single source of truth for auth-state detection so `Header.tsx` doesn't reimplement it. |
-| `src/components/Header.tsx` | New global slim horizontal nav bar, `"use client"`, consumes `useAuthStatus()`. Three sections (site title / middle nav links / auth actions) per spec. |
-| `playwright-tests/pages/HeaderPage.ts` | Page object for the header, usable from any spec regardless of which page is loaded (header is present everywhere). Wraps the `data-testid` locators defined below plus a `logout()` helper. |
-| `playwright-tests/site-header.spec.ts` | New spec covering header presence across all five routes, conditional nav-link visibility by auth state, navigation correctness, and confirming home page no longer double-renders login/register/logout controls. |
+| --------- | ------- |
+| `playwright-tests/profile-edit-mode.spec.ts` | New Playwright spec covering the view/edit toggle state machine (all acceptance criteria + edge cases from orchestrator-output.md) |
 
 ## Files to Modify
 
 | File path | What changes |
-| --- | --- |
-| `src/app/layout.tsx` | Import `Header` from `@/components/Header` and render `<Header />` as the first child inside `<body>`, immediately above `{children}`. |
-| `src/app/page.tsx` | Remove `import AuthNav from "@/components/AuthNav"` and the `<AuthNav />` element. Home page keeps only the `<h1>展覽自動排程</h1>` + description `<p>`; drop the now-unnecessary `sm:items-start`/gap wrapper only if it was solely there to seat `AuthNav` (see Implementation Steps — keep layout minimal but do not over-refactor spacing that still applies to the remaining two elements). |
-| `src/components/AuthNav.tsx` | **Delete.** After `page.tsx` is updated, this component has zero remaining imports anywhere in `src/` (confirmed: currently only referenced from `src/app/page.tsx`). Its behavior is fully absorbed into `useAuthStatus.ts` (detection) + `Header.tsx` (rendering). Leaving it in place would be dead code violating the Definition of Done. |
-| `playwright-tests/pages/HomePage.ts` | Remove `loginLink`, `registerLink`, `profileLink`, `logoutButton`, and the `logout()` method — these no longer belong to the home page, they belong to the header (now covered by `HeaderPage.ts`). `HomePage` keeps only `navigate()` plus any home-specific content locators (headline/description) if a spec needs them. |
-| `playwright-tests/membership-task7-task9.spec.ts` | Replace `homePage.logout()` call (AC4/AC5/AC6/AC7 test, currently around line 59-80) with `headerPage.logout()`, importing and instantiating `HeaderPage`. This is the only existing spec that exercises logout via `HomePage`; grep confirms no other spec references `HomePage.loginLink/registerLink/profileLink/logoutButton`. |
+| --------- | ------------ |
+| `src/app/profile/page.tsx` | Add `mode: "view" \| "edit"` and `lastSavedNickname` state; split the current always-rendered form into a conditional read-only block vs. edit-mode form; wire 編輯/儲存/取消 button handlers; add the 7 confirmed `data-testid`s; keep `pageState` loading/unauthenticated/error branches untouched |
+| `playwright-tests/pages/ProfilePage.ts` | Replace/extend the single `nicknameInput` locator (currently `page.getByLabel("暱稱")`, which will break once the input is no longer always rendered) with testid-based locators for both view and edit mode, plus helper methods for the edit/save/cancel flow |
 
 ## Implementation Steps
 
-1. **Create `src/lib/useAuthStatus.ts`.** Move the `AuthState` type, the `useState`/`useEffect` block (fetch `/api/profile`, `credentials: "same-origin"`, `.then`/`.catch` mapping to `loggedIn`/`loggedOut`, the `active` cleanup-flag guard), and the `handleLogout` async function (guarded by `loggingOut`, calls `logoutRequest()`, sets `loggedOut`, calls `router.refresh()`, `finally` resets `loggingOut`) verbatim out of `AuthNav.tsx` into this new file. Mark the file `"use client"`. Export a `useAuthStatus()` hook returning `{ state: AuthState, loggingOut: boolean, logout: () => Promise<void> }`. Do not alter the detection/logout semantics — this is a pure extraction, not a rewrite (per orchestrator constraint: "不得重寫偵測邏輯").
+1. In `src/app/profile/page.tsx`, add two new state variables alongside the existing ones (do not remove `nickname`/`saving`/`saveError`/`saveSuccess`):
+   - `const [mode, setMode] = useState<"view" | "edit">("view");`
+   - `const [lastSavedNickname, setLastSavedNickname] = useState("");`
 
-2. **Create `src/components/Header.tsx`.** `"use client"` component:
-   - Root element: `<header data-testid="site-header" className="...">` — slim horizontal bar. Use `border-b border-black/12 dark:border-white/18` for the bottom rule (existing token), `bg-background` or transparent (match existing `background`/`foreground` CSS vars used elsewhere), padding `px-4 py-3` or similar, `flex items-center justify-between` with a middle `flex-1` section for nav links, wrapping to a second line on narrow viewports via `flex-wrap gap-y-2` (no hamburger menu, per Out of Scope).
-   - **Left section:** `<Link href="/" data-testid="header-home-link" className="font-semibold text-black dark:text-zinc-50">展覽自動排程</Link>` (site title text sourced from `metadata.title`, per Assumptions).
-   - **Middle section:** rendered only when `state === "loggedIn"` (nothing rendered — not disabled, not hidden via CSS — while `loading` or `loggedOut`, per the edge case about avoiding UI flicker):
-     - `<Link href="/profile" data-testid="header-nav-profile-link">個人資訊</Link>`
-     - `<Link href="/venue" data-testid="header-nav-venue-link">場地規劃</Link>` — **use "場地規劃"**, not "場地產生器": `src/app/venue/page.tsx`'s own `<h1>` reads "場地規劃", and the orchestrator's Assumptions section explicitly instructs deferring to the existing page's title wording for site-wide naming consistency in this exact scenario. Flagging this here since it's a literal-text deviation from the orchestrator's own prose ("場地產生器") — it is deliberate and spec-sanctioned, not an oversight.
-     - Style as plain text links: `text-sm font-medium text-zinc-600 hover:text-black dark:text-zinc-400 dark:hover:text-zinc-50` (no pill/border, per confirmed slim-bar direction).
-   - **Right section**, driven by `useAuthStatus()`:
-     - `state === "loading"`: `<div data-testid="header-auth-loading" className="h-8 w-24 animate-pulse rounded bg-black/6 dark:bg-white/8" />` — small skeleton sized for a text-link bar (not the `h-11 w-40` rounded-full skeleton from `AuthNav`, which was sized for pill buttons).
-     - `state === "loggedIn"`: `<Link href="/profile" data-testid="header-profile-link" className="text-sm font-medium ...">個人資訊</Link>` followed by `<button type="button" data-testid="header-logout-button" onClick={logout} disabled={loggingOut} className="text-sm font-medium ... disabled:cursor-not-allowed disabled:opacity-60">{loggingOut ? "登出中…" : "登出"}</button>`. Per orchestrator AC this right-side "個人資訊" entry is required verbatim alongside the middle-nav one; keep both (Assumptions explicitly permits two entry points) but give them **distinct testids** (`header-nav-profile-link` vs `header-profile-link`) since both render the same accessible name "個人資訊" — a bare `getByRole("link", { name: "個人資訊" })` would be ambiguous (Playwright strict-mode violation), which is itself the concrete reason this task's Playwright hooks must use `data-testid` rather than the role/text selectors `LoginPage.ts` used historically (that file's rationale — "no data-testid anywhere yet" — no longer holds once this header ships two same-named links).
-     - `state === "loggedOut"`: `<Link href="/login" data-testid="header-login-link">登入</Link>` + `<Link href="/register" data-testid="header-register-link">註冊</Link>`, plain text-link styling (not `AuthNav`'s `bg-foreground` filled-pill primary CTA).
-   - Import `useAuthStatus` from `@/lib/useAuthStatus`; do not call `fetch`/`useState`/`useEffect` directly in this file for auth detection — that would be exactly the parallel-logic duplication the spec forbids.
+2. In the `getProfileRequest().then(...)` success branch (currently lines 40-43), after `setProfile(result.profile)`, set both `setNickname(result.profile.nickname ?? "")` (existing line, keep as the edit-input's initial value) and `setLastSavedNickname(result.profile.nickname ?? "")` (new — this becomes the single source of truth for the read-only display and the 取消 revert target). `mode` stays at its default `"view"`.
 
-3. **Mount in `src/app/layout.tsx`.** Add `import Header from "@/components/Header";` and change:
-   ```tsx
-   <body className="min-h-full flex flex-col">
-     <Header />
-     {children}
-   </body>
+3. Add a new handler `function handleEdit()`:
+   - `setNickname(lastSavedNickname);` (pre-fill the input with the current saved value, in case a previous edit was cancelled mid-typing and never reset — defensive, matches spec's "pre-filled with the current saved nickname")
+   - `setSaveError(""); setSaveSuccess("");` (clear any prior inline message per spec's message-persistence rule: "clicking 編輯... clears/replaces the previous message")
+   - `setMode("edit");`
+
+4. Add a new handler `function handleCancel()`:
+   - Guard: `if (saving) return;` (defense in depth — the 取消 button will also be `disabled` while saving, but keep the guard consistent with the existing `handleSubmit` pattern)
+   - `setNickname(lastSavedNickname);` (revert unsaved typed changes)
+   - `setSaveError(""); setSaveSuccess("");` (clear any prior message per spec)
+   - `setMode("view");`
+   - No API call — do not touch `saving`.
+
+5. Modify `handleSubmit` (currently the form's `onSubmit`, lines 56-84):
+   - Keep the `if (saving) return;` guard and the `setSaveError(""); setSaveSuccess("");` reset at the top (already clears prior message when a new 儲存 attempt starts, per spec).
+   - Keep the `isValidNickname` validation branch as-is — on failure, `setSaveError(...)` and `return` (this naturally stays in `mode === "edit"` since `mode` is untouched — no change needed here beyond leaving `mode` alone).
+   - On success (`result.ok && result.profile`): after `setProfile(result.profile)` and `setNickname(result.profile.nickname ?? "")`, add `setLastSavedNickname(result.profile.nickname ?? "")` and `setMode("view")`, then `setSaveSuccess("暱稱已更新")`.
+   - On failure (non-OK): keep existing `setSaveError(result.error ?? "儲存失敗，請稍後再試")` and the `result.status === 401` → `setPageState("unauthenticated")` branch, unchanged. Do NOT set `mode` — it stays `"edit"` automatically since nothing changes it, satisfying "remain in edit state... does NOT silently revert to read-only."
+   - The `finally { setSaving(false); }` stays as-is.
+   - Note: `handleSubmit` currently takes `event: React.FormEvent<HTMLFormElement>` and calls `event.preventDefault()`. Keep the edit-mode block as a `<form onSubmit={handleSubmit}>` so Enter-to-submit inside the input keeps working — only the read-only block is plain JSX (no form).
+
+6. Restructure the JSX inside the `pageState === "ready" && profile` block (lines 118-163). Keep the outer condition and the 身分/建立時間 read-only blocks exactly as they are (spec: "unaffected by this task"). Replace only the nickname `<label>` block and the message/button block with a conditional:
+
    ```
-   No other changes to `layout.tsx`. `RootLayout` stays a Server Component; `Header` itself is a client boundary (like `AuthNav` was), which is allowed to be rendered from a server component per existing project pattern (`page.tsx` already did this with `AuthNav`).
-
-4. **Update `src/app/page.tsx`.** Remove the `AuthNav` import and its `<AuthNav />` element. Resulting body:
-   ```tsx
-   export default function Home() {
-     return (
-       <div className="flex flex-1 items-center justify-center bg-zinc-50 px-4 py-16 font-sans dark:bg-black">
-         <main className="flex w-full max-w-xl flex-col items-center gap-8 text-center sm:items-start sm:text-left">
-           <div className="flex flex-col gap-4">
-             <h1 className="text-4xl font-semibold tracking-tight text-black dark:text-zinc-50">
-               展覽自動排程
-             </h1>
-             <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-               登入後即可管理個人資料並使用個人化的排程功能。
-             </p>
+   {pageState === "ready" && profile && (
+     <div className="mt-6 flex flex-col gap-4">
+       {mode === "view" && (
+         <>
+           <div className="flex flex-col gap-1 text-sm">
+             <span className="font-medium text-zinc-800 dark:text-zinc-200">暱稱</span>
+             {lastSavedNickname ? (
+               <p data-testid="profile-nickname-display" className="px-3 py-2 text-zinc-900 dark:text-zinc-100">
+                 {lastSavedNickname}
+               </p>
+             ) : (
+               <p data-testid="profile-nickname-display" className="px-3 py-2 text-zinc-400 dark:text-zinc-500">
+                 (未設定暱稱)
+               </p>
+             )}
            </div>
-         </main>
-       </div>
-     );
-   }
+
+           {/* 身分 / 建立時間 blocks unchanged, stay here */}
+
+           {saveError && <p role="alert" data-testid="profile-save-error" className="text-sm text-red-600 dark:text-red-400">{saveError}</p>}
+           {saveSuccess && <p role="status" data-testid="profile-save-success" className="text-sm text-green-600 dark:text-green-400">{saveSuccess}</p>}
+
+           <button type="button" data-testid="profile-edit-button" onClick={handleEdit}
+             className="mt-2 h-11 rounded-full bg-foreground px-5 font-medium text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc]">
+             編輯
+           </button>
+         </>
+       )}
+
+       {mode === "edit" && (
+         <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
+           <label className="flex flex-col gap-1 text-sm">
+             <span className="font-medium text-zinc-800 dark:text-zinc-200">暱稱</span>
+             <input type="text" name="nickname" data-testid="profile-nickname-input" value={nickname}
+               onChange={(e) => setNickname(e.target.value)} disabled={saving}
+               className="rounded-lg border border-black/12 bg-transparent px-3 py-2 text-base outline-none focus:border-zinc-500 disabled:opacity-60 dark:border-white/18" />
+           </label>
+
+           {/* 身分 / 建立時間 blocks unchanged, stay here too */}
+
+           {saveError && <p role="alert" data-testid="profile-save-error" className="text-sm text-red-600 dark:text-red-400">{saveError}</p>}
+           {saveSuccess && <p role="status" data-testid="profile-save-success" className="text-sm text-green-600 dark:text-green-400">{saveSuccess}</p>}
+
+           <div className="mt-2 flex gap-3">
+             <button type="submit" data-testid="profile-save-button" disabled={saving}
+               className="h-11 flex-1 rounded-full bg-foreground px-5 font-medium text-background transition-colors hover:bg-[#383838] disabled:cursor-not-allowed disabled:opacity-60 dark:hover:bg-[#ccc]">
+               {saving ? "儲存中…" : "儲存"}
+             </button>
+             <button type="button" data-testid="profile-cancel-button" onClick={handleCancel} disabled={saving}
+               className="h-11 flex-1 rounded-full border border-black/12 px-5 font-medium text-zinc-800 transition-colors hover:bg-black/4 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/18 dark:text-zinc-200 dark:hover:bg-white/6">
+               取消
+             </button>
+           </div>
+         </form>
+       )}
+     </div>
+   )}
    ```
-   Keep the outer `gap-8`/`items-center` wrapper as-is even though only one child (`<div>`) remains inside `<main>` — collapsing it is a cosmetic micro-refactor outside this task's scope and risks an unrelated visual regression; only remove the `<AuthNav />` line itself and its import.
 
-5. **Delete `src/components/AuthNav.tsx`.** Confirm via `grep -rn "AuthNav" src/ playwright-tests/` immediately before deleting that step 4 removed the only remaining import. (project-doc.md's Modularity/Cross-Cutting notes about `AuthNav.tsx` "client-side login-state detection" become stale once this lands — that's expected to be picked up by the next AGENTS.md delta scan, not manually edited here.)
+   Notes on this restructure:
+   - The 身分/建立時間 `<div>` blocks (existing lines 132-142) are duplicated into both branches verbatim (they render identically in both modes per spec — "remain read-only display as they are today, unaffected"). Do not attempt to hoist them outside the conditional in a way that changes their DOM position relative to the form — duplication is simpler and avoids a shared-element key/animation concern; flag as a minor duplication tradeoff (see Architecture Notes).
+   - Both `profile-save-error`/`profile-save-success` blocks appear in both branches, but only one is ever mounted at a time (mode is exclusive), so there is no duplicate-testid-in-DOM risk.
+   - The 編輯 button is `type="button"` (no form wrapping it needed) with an explicit `onClick`.
+   - The 儲存/取消 buttons sit inside the edit-mode `<form>`; 儲存 is `type="submit"` (keeps existing Enter-to-submit and `handleSubmit`'s `event.preventDefault()` behavior), 取消 is `type="button"` with `onClick={handleCancel}` and must NOT trigger form submission.
 
-6. **Add `playwright-tests/pages/HeaderPage.ts`:**
-   ```ts
-   import type { Page, Locator } from "@playwright/test";
+7. Double-check `pageState` branches for `"loading"`, `"unauthenticated"`, `"error"` (lines 93-116) are untouched — `mode`/`lastSavedNickname` are only read/written inside the `"ready"` branch and its handlers, so no interference.
 
-   export class HeaderPage {
-     readonly page: Page;
-     readonly homeLink: Locator;
-     readonly navProfileLink: Locator;
-     readonly navVenueLink: Locator;
-     readonly authLoading: Locator;
-     readonly profileLink: Locator;
-     readonly logoutButton: Locator;
-     readonly loginLink: Locator;
-     readonly registerLink: Locator;
+8. Update `playwright-tests/pages/ProfilePage.ts`:
+   - Remove the old `nicknameInput = page.getByLabel("暱稱")` locator (will silently fail once the input isn't always present) and replace with testid-based locators:
+     - `nicknameDisplay = page.getByTestId("profile-nickname-display")`
+     - `nicknameInput = page.getByTestId("profile-nickname-input")`
+     - `editButton = page.getByTestId("profile-edit-button")`
+     - `saveButton = page.getByTestId("profile-save-button")`
+     - `cancelButton = page.getByTestId("profile-cancel-button")`
+     - `saveSuccessMessage = page.getByTestId("profile-save-success")`
+     - `saveErrorMessage = page.getByTestId("profile-save-error")`
+   - Add convenience methods consistent with the existing class style (plain async methods, no over-abstraction): `async startEdit()` (click `editButton`), `async fillNickname(value: string)` (fill `nicknameInput`), `async save()` (click `saveButton`), `async cancel()` (click `cancelButton`).
+   - Keep `heading` and `loginPrompt` as-is (used by `membership-task7-task9.spec.ts` and unaffected by this task).
 
-     constructor(page: Page) {
-       this.page = page;
-       this.homeLink = page.getByTestId("header-home-link");
-       this.navProfileLink = page.getByTestId("header-nav-profile-link");
-       this.navVenueLink = page.getByTestId("header-nav-venue-link");
-       this.authLoading = page.getByTestId("header-auth-loading");
-       this.profileLink = page.getByTestId("header-profile-link");
-       this.logoutButton = page.getByTestId("header-logout-button");
-       this.loginLink = page.getByTestId("header-login-link");
-       this.registerLink = page.getByTestId("header-register-link");
-     }
+9. Confirm `playwright-tests/membership-task7-task9.spec.ts` needs NO changes: it only uses `profilePage.navigate()` and `profilePage.heading` (AC4 check), never touches nickname editing or the old `nicknameInput` locator. Verified via repo grep — no rework needed here (contrast with Task 1, which did require editing this file for the header logout relocation). State this explicitly in the QA/PR-reviewer handoff so it isn't second-guessed as a missed update.
 
-     async logout() {
-       await this.logoutButton.click();
-       await this.loginLink.waitFor({ state: "visible" });
-     }
-   }
-   ```
-
-7. **Update `playwright-tests/pages/HomePage.ts`:** remove `loginLink`, `registerLink`, `profileLink`, `logoutButton`, and `logout()` (moved to `HeaderPage`). Keep `navigate()`. If nothing else references this class's removed members, it becomes a thin `navigate()`-only wrapper — that's fine, don't delete the file since `membership-task7-task9.spec.ts` still imports `HomePage` for `navigate()`-adjacent assertions.
-
-8. **Update `playwright-tests/membership-task7-task9.spec.ts`:** in the AC4/AC5/AC6/AC7 test, add `import { HeaderPage } from "./pages/HeaderPage";`, instantiate `const headerPage = new HeaderPage(page);`, and replace the `homePage.logout()` call with `headerPage.logout()`. Leave all other assertions in that spec untouched — grep confirms this is the only spot referencing the removed `HomePage` members.
-
-9. **Add `playwright-tests/site-header.spec.ts`.** Structure (no new page objects beyond `HeaderPage`, reuse existing `LoginPage`/`ProfilePage`/`HomePage`):
-   - `test.describe("Header: presence and layout")`:
-     - Logged-out: visit `/`, `/login`, `/register` in turn, assert `headerPage.homeLink` visible on each (covers "consistent across pages" AC for the unauthenticated-reachable routes).
-   - `test.describe("Header: logged-out state")`:
-     - On `/`, assert `headerPage.loginLink` and `headerPage.registerLink` visible, `headerPage.navProfileLink`/`navVenueLink` **not present in DOM** (`toHaveCount(0)`, not just hidden), `headerPage.logoutButton` count 0.
-     - Click `headerPage.loginLink` → assert URL `/login`. Click `headerPage.homeLink` from `/login` → assert URL `/`. Similarly `registerLink` → `/register`.
-   - `test.describe("Header: logged-in state")` (uses `PW_VERIFIED_EMAIL`/`PW_VERIFIED_PASSWORD` from `.env.playwright.local`, same credentials pattern as `membership-task7-task9.spec.ts`):
-     - Log in via `LoginPage`, then assert on `/`: `headerPage.navProfileLink`, `headerPage.navVenueLink`, `headerPage.profileLink`, `headerPage.logoutButton` all visible; `headerPage.loginLink`/`registerLink` count 0.
-     - Click `headerPage.navVenueLink` → assert URL `/venue` and header still visible (`homeLink` visible) on the venue page.
-     - Click `headerPage.navProfileLink` (or `headerPage.profileLink`) → assert URL `/profile`.
-     - `headerPage.logout()` → assert back to logged-out header state (`loginLink` visible, `navProfileLink` count 0) — covers the no-full-reload AC since this happens within the same Playwright page context.
-   - `test.describe("Home page: no duplicate auth controls")`:
-     - Logged-out visit to `/`: assert there is exactly one `登入`-labelled control (`headerPage.loginLink`) and exactly one `註冊`-labelled control on the page (`page.getByRole("link", { name: "登入" })` count === 1), proving the old in-page `<AuthNav />` block is gone and the header isn't double-rendering.
-   - Reuse the `waitForLoadState("networkidle")` convention seen in `LoginPage.navigate()`/`ProfilePage.navigate()` for any raw `page.goto()` calls in this spec.
+10. Write `playwright-tests/profile-edit-mode.spec.ts` (new file), following the existing page-object + `.env.playwright.local` credential pattern from `membership-task7-task9.spec.ts` (reuse `PW_VERIFIED_EMAIL`/`PW_VERIFIED_PASSWORD`, log in via `LoginPage` first in each test or a `beforeEach`). Cover:
+    - Default view: after login and navigating to `/profile`, `profile-nickname-display` is visible and `profile-edit-button` is visible; `profile-nickname-input`/`profile-save-button`/`profile-cancel-button` are not present.
+    - Empty-nickname placeholder: if the test account's nickname is unset (or reset it via 儲存 with an empty string first), `profile-nickname-display` shows exactly `(未設定暱稱)`.
+    - Enter edit mode: click 編輯 → `profile-nickname-input` becomes visible, pre-filled with the current saved value; `profile-edit-button` is gone; `profile-save-button`/`profile-cancel-button` are visible.
+    - 取消 flow: enter edit mode, type a different value into the input, click 取消 → back to view mode, `profile-nickname-display` shows the original (unchanged) value, no `profile-save-success`/`profile-save-error` visible, and assert no PATCH request was sent (use `page.route`/`page.on("request")` to assert `/api/profile` PATCH was never called during this sequence, or simply assert the displayed nickname is unchanged as an indirect check — prefer the request-assertion for a stronger guarantee).
+    - Successful save: enter edit mode, type a new valid nickname, click 儲存 → view mode returns, `profile-nickname-display` shows the new value, `profile-save-success` is visible with `role="status"`. Then reload the page and confirm the new value persists (server round-trip sanity check). Restore the original nickname at the end of the test (or in an `afterEach`) so the test is idempotent across reruns, mirroring good hygiene even though no other spec currently depends on this account's nickname value.
+    - Client-side validation failure: enter edit mode, type a 51+ character string, click 儲存 → stays in edit mode (`profile-nickname-input` still visible), `profile-save-error` visible with `role="alert"` and text `暱稱長度不可超過 50 字`, and assert (via `page.route` intercept counting requests, or via `page.on("request")`) that no PATCH request was sent.
+    - API failure on save: use `page.route("**/api/profile", ...)` to intercept the PATCH call for this test only and `route.fulfill()` a 500 with `{ error: "..." }` (or `route.abort()` for a network failure), then attempt 儲存 with a valid nickname → stays in edit mode, `profile-save-error` visible with `role="alert"`, input retains the typed value.
+    - Saving-state button disabling: use `page.route` to delay the PATCH response (e.g. `await route.continue()` after a short artificial delay, or hold the route open before fulfilling) so the in-flight window is observable; assert `profile-save-button` shows text "儲存中…" and is disabled, and `profile-cancel-button` is disabled, during that window.
 
 ## Data Flow
 
-`Header` (client component, mounted once per page load inside `RootLayout`'s `<body>`) → `useAuthStatus()` hook → on mount, `fetch("/api/profile")` (same-origin, cookie-based session) → `src/proxy.ts` gate passes the request through to the route handler (already authenticated via `@supabase/ssr` cookie) → route handler responds 200 (profile payload, only status code consumed by the hook) or 401 → hook sets `loggedIn`/`loggedOut` → `Header` conditionally renders middle nav links + right-side auth controls. Logout: `Header`'s button → `useAuthStatus().logout()` → `logoutRequest()` (existing `src/lib/auth-client.ts` wrapper) → `POST /api/auth/logout` → cookie cleared server-side → hook sets `loggedOut` + `router.refresh()` (re-runs Server Component tree, e.g. re-evaluates any server-rendered auth-dependent content, though currently none besides `proxy.ts` redirects on next navigation). No new API routes, no new Supabase calls, no change to `src/proxy.ts`'s own access-control decisions — the header's link visibility is presentation-only, `proxy.ts` remains the actual enforcement boundary (per orchestrator Security Notes).
+1. Page mount → `getProfileRequest()` → on success, `profile`/`nickname`/`lastSavedNickname` all set from server response, `mode` stays `"view"`.
+2. User clicks 編輯 → `handleEdit()` resets `nickname` to `lastSavedNickname`, clears messages, `mode → "edit"`. No network call.
+3. User edits `nickname` locally (controlled input, no network call per keystroke).
+4. User clicks 取消 → `handleCancel()` resets `nickname` to `lastSavedNickname`, clears messages, `mode → "view"`. No network call.
+5. User clicks 儲存 → `handleSubmit()` → client validation (`isValidNickname`); on failure, inline error, stay in `"edit"`, no network call. On pass → `saving = true` → `updateNicknameRequest(nickname)` (PATCH `/api/profile`) → on success: `profile`/`nickname`/`lastSavedNickname` updated from `result.profile`, `mode → "view"`, success message shown. On failure: error message shown, `mode` stays `"edit"` (untouched), and on `401` additionally `pageState → "unauthenticated"` (page-level, supersedes the edit UI entirely).
 
 ## Test Plan
 
-- **Playwright (acceptance gate for this FRONTEND task):**
-  - New `playwright-tests/site-header.spec.ts` (Step 9 above) — covers all Clarified Acceptance Criteria: header presence on every page, left/middle/right sections, middle-nav hidden-not-disabled when logged out, right-side loading skeleton not flashing wrong state, right-side loggedIn/loggedOut rendering, logout flips state without full reload, home page has no duplicate auth controls.
-  - Updated `playwright-tests/membership-task7-task9.spec.ts` (Step 8) must still pass unmodified in outcome (only the locator source for `logout()` changes) — this is the regression check that `src/proxy.ts` page-protection behavior (Task 7) and the resend-cooldown flow (Task 9) are unaffected by the header refactor.
-  - Run the full existing suite (`venue-*.spec.ts`, `membership-task7-task9.spec.ts`) after the change, not just the new spec — the header now appears on `/venue` too, so `PlanEditorPage`-based specs must be re-verified to confirm the new `<header>` element doesn't shift any coordinate-dependent or viewport-dependent assertions (e.g. canvas click coordinates in `venue-plan-editor.spec.ts`/`venue-objects.spec.ts`). Flagging this explicitly as a risk area — see Architecture Notes.
-- **No manual checklist needed.** This task has no WebGL/canvas/opacity-timing concern (that was specific to the venue 3D scene's `venue-plan-editor.md` manual section) and no backend/API surface change requiring the Insomnia/SQL manual verification track — it is plain DOM/React/routing, fully Playwright-testable. Confirming explicitly per the task brief's requirement not to silently omit this decision.
-- **Edge cases to test (from orchestrator-output.md), mapped to spec:**
-  - Middle-nav flicker prevention while `loading` → covered by asserting `navProfileLink`/`navVenueLink` have count 0 immediately after `goto()` before `waitForLoadState("networkidle")` settles, if the timing is reliably observable; otherwise this remains a design guarantee validated indirectly via the loggedOut-state assertions (loading and loggedOut both render zero middle-nav links, so any flicker would only be visible mid-transition, which is inherently hard to assert deterministically in Playwright — acceptable, matches how `AuthNav`'s original loading state was never separately Playwright-tested either).
-  - Mobile-width layout (no hamburger required) → not a hard Playwright assertion per Out of Scope ("不要求做出收合互動"); optional smoke check via `page.setViewportSize` asserting `headerPage.homeLink` still visible/clickable at e.g. 375px width, no forced overlap assertion.
-  - `GET /api/profile` failure → same as existing `AuthNav` `.catch()` behavior, not independently re-tested (behavior is inherited unchanged from the extracted hook).
+- No unit tests (no JS unit framework installed per AGENTS.md).
+- Playwright (`playwright-tests/profile-edit-mode.spec.ts`) is the acceptance gate covering all items in Implementation Step 10 above, which maps 1:1 to every acceptance criterion and edge case in `orchestrator-output.md`.
+- `playwright-tests/pages/ProfilePage.ts` updated so both the new spec and any future spec touching this page can rely on stable testid-based locators.
+- `playwright-tests/membership-task7-task9.spec.ts` verified to require no changes (see Step 9) — confirm this again at implementation/review time by re-running it, not just by re-reading it.
+- Edge cases explicitly covered: empty/null nickname (placeholder in view, empty editable input in edit), rapid double-submit guard (`if (saving) return;` preserved, no new Playwright assertion needed for this — it's a pre-existing guard, not new logic), message clearing on 取消 when a prior message was showing, server-trimmed nickname on save (handled by trusting `result.profile.nickname` for both `nickname` and `lastSavedNickname`, not the locally-typed value — already correct in Step 5), exactly-50-char boundary (valid) vs. 51-char (invalid) for client validation.
 
 ## Architecture Notes
 
-- **Hook extraction, not duplication.** `useAuthStatus.ts` is the single implementation of login-state detection + logout; `Header.tsx` is the only consumer after `AuthNav.tsx` is deleted. If a future task needs the same state elsewhere, it imports the hook — no second copy.
-- **"場地規劃" vs "場地產生器" naming** — see Step 2. Using the venue page's actual `<h1>` text for consistency, per the orchestrator's own explicit instruction to defer to it. Flagged so this isn't mistaken for an unauthorized spec deviation during review.
-- **Two "個人資訊" links on one page when logged in** (middle nav + right side) — both point to `/profile`, distinguished only by `data-testid`, not by visually distinct copy. This is deliberate (Assumptions section permits it) but is a minor UX redundancy worth a 💡-level review note; not a defect.
-- **Risk area: viewport/coordinate regressions in venue specs.** The new persistent `<header>` reduces the vertical space available to `/venue`'s content compared to today's zero-header layout. `venue-plan-editor.spec.ts`/`venue-objects.spec.ts`/`venue-dimensions.spec.ts`/`venue-3d-scene.spec.ts` interact with a Konva `<Stage>` and Three.js canvas using pixel-relative or bounding-box-relative coordinates (via `PlanEditorPage.ts`), not fixed viewport offsets, so they should be unaffected — but this must be verified by actually running the full suite (Test Plan above), not assumed.
-- **No performance concerns** — `useAuthStatus` fires exactly one `fetch` per full page load, identical cost to today's `AuthNav`, just triggered from a layout-level mount instead of a page-level one (RootLayout persists across client-side navigations under App Router, so this remains one fetch per hard navigation/reload, not one per route change — consistent with existing "detect once on mount" behavior, no polling introduced).
+- **New pattern**: this is the first use of `data-testid` attributes anywhere in the codebase (prior Playwright specs used semantic/label-based selectors, per the comment in `LoginPage.ts`: "no `data-testid` attributes anywhere yet"). This is an explicit, locked decision from orchestrator-output.md for this task, not an architect deviation — flagging it here so PR Reviewer doesn't treat it as an unexplained convention break. Future tasks touching this page should continue using testids for consistency once introduced.
+- **JSX duplication of 身分/建立時間 blocks**: rather than hoisting the always-identical 身分/建立時間 display blocks outside the `mode` conditional (which would require restructuring the DOM tree in a way that mixes a `<form>` and non-form siblings awkwardly, or wrapping everything in one `<form>` even in view mode, which is semantically wrong when there's nothing to submit), this plan duplicates those two blocks into both the view and edit branches. This is a deliberate, minor tradeoff for JSX clarity and correctness (no stray `<form>` in view mode) over strict DRY-ness. Alternative considered and rejected: extracting a small local component/fragment for just those two blocks — deferred as unnecessary complexity for two `<div>`s; flag to developer as optional if it reads cleaner in practice, but not required.
+- **`page.route` usage in Playwright**: no existing spec uses `page.route` for request interception/mocking. This plan introduces it only for the two failure/timing-dependent test cases (API failure, saving-state visibility) where there's no other way to reliably trigger a server-side failure or observe a narrow in-flight window against the real cloud Supabase backend. Standard, well-supported Playwright API — not a deviation from AGENTS.md (which only mandates Playwright as the frontend gate, not a specific interception style).
+- **No performance concerns** — this is a small client-side state machine on an already-small page, no new data fetching patterns introduced.
 
 ## Security Checklist
 
-- [x] No hardcoded secrets or credentials — no new env-dependent code introduced.
-- [x] Input validation implemented at system boundaries — N/A, no new inputs/forms; Header only renders links/button, no data entry.
-- [x] Auth/permission checks in place (if applicable) — enforcement stays entirely in `src/proxy.ts` (unmodified); Header's conditional rendering is presentation-only and must not be mistaken for access control (explicitly noted in orchestrator Security Notes and repeated in Architecture Notes above).
-- [x] No sensitive data logged — no new logging added; `useAuthStatus` never logs the `/api/profile` response body, cookies, or tokens.
-- [x] No direct Supabase client usage introduced — `Header`/`useAuthStatus` only call `fetch("/api/profile")` and the existing `logoutRequest()` wrapper (which itself calls `/api/auth/logout`), never `@supabase/supabase-js` directly, per AGENTS.md Developer guardrail.
+- [ ] No hardcoded secrets or credentials (new Playwright spec reuses `.env.playwright.local` vars exactly as `membership-task7-task9.spec.ts` does — no new credentials introduced)
+- [ ] Input validation implemented at system boundaries (client-side `isValidNickname` reused unchanged; server-side validation in `/api/profile` untouched — out of scope per orchestrator-output.md)
+- [ ] Auth/permission checks in place (401 handling path preserved unchanged — transitions to `pageState === "unauthenticated"` exactly as before)
+- [ ] No sensitive data logged (no new logging introduced anywhere in this task)
+- [ ] Nickname remains rendered as React text content only (`{lastSavedNickname}` / `{nickname}` via JSX interpolation), never `dangerouslySetInnerHTML` — no new XSS surface
 
 ## Definition of Done
 
-- [ ] All implementation steps complete (`useAuthStatus.ts`, `Header.tsx` created; `layout.tsx`, `page.tsx` modified; `AuthNav.tsx` deleted; Playwright page objects and specs updated/added).
-- [ ] All tests from the Test Plan written and passing — `site-header.spec.ts` plus a full regression run of every existing `playwright-tests/*.spec.ts` file (not just a subset).
-- [ ] No TODOs, commented-out code, or debug logs.
-- [ ] Code follows all rules in AGENTS.md (path alias `@/*`, `eslint-config-next` clean, Supabase access only via existing factories/API routes, `data-testid` convention followed for new interactive/state elements).
-- [ ] Security checklist passed.
-- [ ] `grep -rn "AuthNav"` across `src/` and `playwright-tests/` returns zero hits before considering this task complete (confirms clean removal, no dangling references).
+- [ ] All implementation steps complete
+- [ ] `playwright-tests/profile-edit-mode.spec.ts` written and passing against the real cloud Supabase project (per AGENTS.md frontend gate)
+- [ ] `playwright-tests/pages/ProfilePage.ts` updated with testid-based locators; old `getByLabel("暱稱")` locator removed
+- [ ] `playwright-tests/membership-task7-task9.spec.ts` re-run and confirmed still passing unchanged (no edits needed, per Step 9)
+- [ ] No TODOs, commented-out code, or debug logs
+- [ ] Code follows all rules in AGENTS.md (`@/*` alias, `eslint-config-next` lint clean, no inline Supabase client, frontend calls only `/api/*` via `profile-client.ts`)
+- [ ] Security checklist passed
+- [ ] **This is the LAST task of the story "全站導覽 Header 與個人資料編輯模式".** When the `playwright` pipeline stage passes for this task, per AGENTS.md's Notion workflow it must, in addition to marking this task's card `已完成`, also update the parent story's own row in the Stories database to `狀態 = 已完成`. Flag this explicitly to the playwright-stage agent — do not let it fall through as "just another task."
