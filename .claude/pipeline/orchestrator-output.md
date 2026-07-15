@@ -1,68 +1,65 @@
-# Orchestrator Output — 3D 檢視器整合
+# Orchestrator Output — 建立全站導覽 Header 元件
 
-> Story: 場地白模產生器 (階段一) | Task 5 of 5 (LAST task of story) | Generated: 2026-07-14T15:00:00+08:00
+> Story: 全站導覽 Header 與個人資料編輯模式 | Task 1 of 2 | Generated: 2026-07-15T00:00:00+08:00
 
 ## Task Type
 FRONTEND
 
 ## Refined Requirement
-Two changes to `src/components/venue/VenueScene.tsx` and `src/components/venue/PlanEditor.tsx`:
+新增一個全站共用的 Header 元件,掛載在 `src/app/layout.tsx`(RootLayout)的 `<body>` 內、`{children}` 之上,讓所有頁面(首頁、登入、註冊、個人資料、場地產生器)都能看到同一個固定導覽列。
 
-**1. OrbitControls.** Add `@react-three/drei`'s `<OrbitControls>` inside the `<Canvas>` in `VenueScene.tsx` (drei is already installed, currently unused) so the user can rotate/zoom/pan the generated whitebox with the mouse. Configuration (not default unrestricted behavior):
-- `enableRotate`, `enableZoom`, `enablePan` all `true`.
-- `maxPolarAngle = Math.PI / 2 - 0.05` (camera cannot dip below the floor plane).
-- `minDistance` ≈ 5, `maxDistance` ≈ 150 (relative to `VENUE_SIZE_M` = 50, so the user can neither zoom into nothing nor scroll away to a vanishing whitebox).
-- `target` set to the scene's approximate center, `[VENUE_SIZE_M / 2, 0, VENUE_SIZE_M / 2]` (i.e. `[25, 0, 25]`), not world origin, so orbit pivots around the whitebox rather than a corner.
-- Expose a `data-orbit-controls="true"` attribute on the 3D canvas container (alongside the existing `data-testid="venue-scene"` and `data-generated`/`data-*-mesh-count` attributes) confirming `OrbitControls` is mounted when the 3D view is active — this is the DOM-observable proxy Playwright uses since actual camera drag/rotate behavior is opaque WebGL and cannot be asserted through the DOM.
+Header 採用「一個 slim 水平長條」的版面風格(不是 `AuthNav.tsx` 現有的置中大型 pill-button CTA 樣式),內容由左到右分為三段(user 已於 Q&A 確認此順序):
 
-**2. Step-based (wizard) 2D/3D switching flow — replaces Task 4's "both stacked, always visible" placeholder.** This is a 2-step flow, NOT a tab bar (a tab-bar design was initially proposed by the orchestrator and explicitly rejected by the user in favor of a linear wizard):
+1. **左側**:站名/首頁連結(例如「展覽自動排程」文字或簡短 logo),點擊導向 `/`。
+2. **中間**:導覽連結,依序為「個人資訊」(`/profile`)、「場地產生器」(`/venue`)——以純文字連結呈現,非 pill 按鈕。**這兩個連結只在已登入時渲染**;未登入時完全不顯示(不是顯示後靠 `proxy.ts` redirect,是直接不出現在 DOM 中)。
+3. **右側**:登入狀態對應的操作——復用 `AuthNav.tsx` 既有的登入狀態偵測邏輯(`GET /api/profile`,200=loggedIn / 401=loggedOut)與登出邏輯(`logoutRequest()` 呼叫 + `router.refresh()`)。未登入顯示「登入」「註冊」連結;已登入顯示「個人資訊」入口與「登出」按鈕。
 
-- **Step 1 "編輯平面圖"** (default view on load): the existing 2D Konva editor — `<Stage>`, `PlanToolbar`, all current wall/column/vertex editing tools — exactly as it works today. Rendered inside a container with `data-testid="step-edit"`.
-- **"下一步" button** (`data-testid="next-step-button"`): **merges and replaces** the current standalone "產生 3D 模型" button (`data-testid="generate-3d-button"` retired/renamed). One click both (a) generates the 3D scene from current live `polygon`/`walls`/`columns` state — same snapshot-on-click, full-replace semantics as Task 4 (`setSceneSnapshot({ polygon, walls, columns })` + `setGeneration((g) => g + 1)`, unchanged) — and (b) advances the view to Step 2. Enablement rule is unchanged from Task 4: disabled when `walls.length === 0 && columns.length === 0` (floor-only state keeps it disabled).
-- **Step 2 "3D 預覽"**: shows only the 3D canvas (`VenueSceneLoader` → `VenueScene`, with `OrbitControls` per point 1) inside a container with `data-testid="step-preview"`. Step 1's 2D `<Stage>` is not rendered/visible in this step. Because "下一步" IS the generate-and-advance action, Step 2 can never be reached without a generated scene already existing — there is no empty/prompt state to design for in Step 2 (unlike a tab-bar design where free navigation to an ungenerated 3D tab was possible).
-- **"返回編輯" button** (`data-testid="back-to-edit-button"`), shown in Step 2: returns to Step 1. Going back does NOT discard or reset the 2D plan state (`polygon`/`walls`/`columns`) — it is purely a view/step switch; all 2D editor state (selection, mode, etc.) remains exactly as it was.
-- **Regeneration loop**: user can go back to Step 1, edit the plan freely, click "下一步" again — this regenerates the 3D scene from scratch (stale meshes from the prior generation fully replaced via the existing `key={generation}` remount pattern from Task 4, not incrementally appended) and advances to Step 2 showing the fresh scene. This loop is unlimited/repeatable.
-- Only one of Step 1 / Step 2 is ever mounted-and-visible at a time — this is the core "切換流程" (switching flow) requirement from the story text that Task 4 deliberately left as a stacked-both-visible placeholder.
+新元件不得直接複製貼上 `AuthNav.tsx` 的 pill-button class,而要用符合水平長條版面的樣式(文字連結 + 少量強調樣式),但沿用專案既有的顏色/dark-mode token(`text-black dark:text-zinc-50`、`text-zinc-600 dark:text-zinc-400`、`border-black/12 dark:border-white/18` 等既有慣例色階),維持視覺一致性,只是版面(layout)不同,不是換一套色系。
+
+登入狀態偵測邏輯本身(fetch `/api/profile`、loading/loggedIn/loggedOut 三態、登出流程)必須複用,不得重新實作一份平行邏輯——具體實作方式(抽成 hook、共用元件內部 state,或其他重構手法)由架構師決定,本規格只鎖定「行為必須一致、不得重寫偵測邏輯」這個產品層面的要求。
+
+首頁(`src/app/page.tsx`)現有置中的 `<AuthNav />` 區塊要移除,首頁內容簡化為只剩標題(`展覽自動排程`)與說明文字,不再自行渲染登入/註冊/個人資料/登出按鈕——因為新 Header 已經全站涵蓋這些操作,保留會造成畫面上出現兩組重複的登入/註冊按鈕。
 
 ## Clarified Acceptance Criteria
-- [ ] Given the venue editor page has just loaded, when the user views the page, then Step 1 "編輯平面圖" (2D Konva editor) is shown by default and Step 2's 3D canvas is not mounted.
-- [ ] Given the venue editor page has loaded with only the default floor polygon and no walls/columns, when the user views Step 1, then "下一步" is visible but disabled.
-- [ ] Given the user has added at least one wall OR one column, when the user views Step 1, then "下一步" becomes enabled.
-- [ ] Given "下一步" is enabled, when the user clicks it, then (a) the 3D scene is generated from the current 2D state exactly as Task 4's generation logic already does (floor slab + wall boxes + column boxes, snapshot-on-click), and (b) the view advances to Step 2, where the 2D `<Stage>` is no longer rendered and the 3D canvas with mounted `OrbitControls` is shown.
-- [ ] Given Step 2 is showing a generated 3D scene, when the user clicks and drags on the 3D canvas, then the camera orbits around the whitebox (manual-only verification — see Testability notes).
-- [ ] Given Step 2 is active, when the user clicks "返回編輯", then the view returns to Step 1 showing the 2D editor with the polygon/walls/columns state fully intact (unchanged from before advancing to Step 2), and the 3D canvas is no longer mounted/visible.
-- [ ] Given the user returns to Step 1, edits the plan (adds/moves/removes a wall, column, or floor vertex), and clicks "下一步" again, then the 3D scene fully regenerates to reflect the new 2D state (no stale meshes from the prior generation persist) and the view advances to Step 2 again.
-- [ ] Given OrbitControls is active in Step 2, when the user attempts to orbit the camera below the floor plane, then the camera is prevented from going below `maxPolarAngle` (manual-only verification).
-- [ ] Given OrbitControls is active in Step 2, when the user scrolls to zoom, then zoom is clamped within `minDistance`/`maxDistance` bounds (manual-only verification).
-- [ ] Given the 3D canvas is mounted in Step 2, when inspected via the DOM, then it exposes `data-orbit-controls="true"` in addition to the existing `data-testid="venue-scene"`, `data-generated`, `data-wall-mesh-count`, `data-column-mesh-count`, `data-floor-vertex-count` attributes from Task 4.
+- [ ] Given 使用者造訪任何頁面(首頁、登入頁、註冊頁、個人資料頁、場地產生器頁),when 頁面載入完成,then 畫面上方顯示固定的 Header,且 Header 在所有頁面間版面一致。
+- [ ] Given Header 已渲染,when 使用者查看左側,then 看到站名/首頁連結,點擊後導向 `/`。
+- [ ] Given 使用者已登入,when 查看 Header 中間區塊,then 看到「個人資訊」與「場地產生器」文字連結,點擊分別導向 `/profile`、`/venue`。
+- [ ] Given 使用者未登入,when 查看 Header 中間區塊,then 「個人資訊」與「場地產生器」連結不顯示(DOM 中不存在,而非顯示但 disabled)。
+- [ ] Given 使用者未登入,when 查看 Header 右側,then 看到「登入」「註冊」連結,點擊分別導向 `/login`、`/register`。
+- [ ] Given 使用者已登入,when 查看 Header 右側,then 看到「個人資訊」入口與「登出」按鈕(登入狀態的呈現細節與現有 `AuthNav.tsx` 已登入分支一致,例如登出中文案「登出中…」與 disabled 狀態)。
+- [ ] Given 使用者已登入且點擊 Header 的「登出」,when 登出請求成功,then 狀態切換回未登入(中間導覽連結消失、右側變回登入/註冊),且不需整頁重新整理即可反映(維持 `AuthNav.tsx` 現有的 `router.refresh()` 行為)。
+- [ ] Given Header 正在偵測登入狀態(尚未收到 `/api/profile` 回應),when 使用者查看畫面,then 顯示 loading 狀態(不得閃爍顯示錯誤的登入/未登入 UI 後又切換,維持現有 `AuthNav.tsx` 的 loading skeleton 慣例)。
+- [ ] Given 首頁載入,when 使用者查看畫面,then 只看到標題與說明文字,不再看到重複的登入/註冊/個人資料/登出按鈕(這些操作已在全站 Header 提供)。
+- [ ] Given 使用者在受保護頁面(`/profile`)或未登入時嘗試直接輸入 `/profile` 網址,then 既有 `proxy.ts` 的頁面保護 redirect 行為不受影響(Header 本身不修改 `proxy.ts` 邏輯,只是消費登入狀態做顯示判斷)。
 
 ## Edge Cases to Handle
-- Rapid double-click on "下一步" must not cause a double-advance/race between the state-snapshot update and the step-view change — both should land from a single click handler synchronously (same pattern as Task 4's `handleGenerate3D`, just extended to also flip a step/view state value).
-- Going back to Step 1 and immediately clicking "下一步" again without any edits should still regenerate cleanly (identical snapshot content is fine — regeneration is not conditioned on the plan having changed).
-- Removing all walls/columns is only possible from Step 1 (Step 2 doesn't expose 2D editing tools), so the "下一步 disabled" re-check naturally only matters when the user is back in Step 1 — no special handling needed for "disabling mid-Step-2."
-- Browser back/forward or page refresh while in Step 2: since this story explicitly has no persistence (階段一 has no DB, no URL/route state requirement stated), refreshing resets to Step 1 with the default plan — this is consistent with the rest of the story's "no persistence" scope and does not need special handling.
-- WebGL unavailable in Step 2: consistent with Task 4's existing error-state decision, this should not crash the page — the 3D canvas area may show a broken/empty render, but "返回編輯" must still work to get back to a functional 2D editor.
+- 登入狀態偵測尚未完成(loading)時,中間導覽連結(個人資訊/場地產生器)不應該提前顯示或提前隱藏造成畫面跳動——loading 態下不顯示這兩個連結,等狀態確定為 loggedIn 才顯示,與右側 loading skeleton 的處理精神一致。
+- 使用者在其他分頁登出(或 session 過期)後,回到已開啟分頁操作:Header 目前只在掛載時偵測一次登入狀態(沿用 `AuthNav.tsx` 現有行為,不做輪詢或跨分頁同步),此為既有已知限制,非本任務範圍要修正的行為。
+- 視窗寬度縮小(手機尺寸):Header 三段式版面需可讀、不重疊;文字連結可換行或適度縮小間距,但不要求做出漢堡選單(見「Out of Scope」)。
+- 使用者已登入但暱稱/個人資料尚未設定:與本任務無關,Header 不需顯示暱稱,只需文字連結「個人資訊」與登出按鈕。
+- login/register 頁面在已登入狀態下短暫可見(`proxy.ts` redirect 生效前的畫面閃現):Header 仍應正常渲染已登入狀態,不因該頁面即將被導頁而顯示錯誤/未登入態。
 
 ## Error States
-- No network/API calls involved — pure client-side view-state and geometry generation, no server error states apply.
-- If Three.js/R3F/OrbitControls fails to initialize in Step 2 (e.g. WebGL unavailable), the 2-step wizard chrome itself (the "返回編輯" button) must remain functional so the user is never stuck on a broken Step 2 — same baseline as Task 4 (console error acceptable, richer fallback UX is a nice-to-have, not mandated).
+- `GET /api/profile` 請求失敗(網路錯誤、逾時、非 401 的其他錯誤狀態碼):比照 `AuthNav.tsx` 現有 `.catch()` 行為,視同未登入(`loggedOut`),不顯示錯誤訊息、不阻塞頁面渲染。
+- 登出請求(`logoutRequest()`)失敗:比照 `AuthNav.tsx` 現有行為——`finally` 區塊解除 `loggingOut` 狀態,允許重試;本任務不新增額外的錯誤訊息 UI(如需改善,超出本任務範圍)。
 
 ## Out of Scope
-- Any tab-bar based switching UI — explicitly rejected by the user in favor of the 2-step wizard described above.
-- Free navigation to Step 2 before ever generating (not reachable by design, since "下一步" is the only way to advance and it always generates).
-- Auto-regeneration / live-sync between 2D edits and an already-shown Step 2 scene while remaining in Step 2 — regeneration only happens via the explicit Step 1 → "下一步" → Step 2 flow, consistent with Task 4's snapshot-on-click decision.
-- More than 2 steps, breadcrumbs, progress indicators, or step-skipping UI — this is a strict linear 2-step flow.
-- Persisting which step the user was on across page reloads (no persistence anywhere in this story per 階段一 scope).
-- Doors/windows, per-instance heights, mesh merging/instancing, textures/shadows — all already out of scope per Task 4 and unchanged here.
-- Camera framing/animation transitions between Step 1 and Step 2 (e.g. no crossfade/animation requirement — an instant view swap is sufficient).
+- 手機版漢堡選單/收合導覽(本任務只要求水平長條在窄螢幕下不破版,不要求做出收合互動)。
+- 個人資料頁的檢視/編輯模式切換(此為同故事的 Task 2,獨立處理)。
+- 登入狀態的跨分頁即時同步或輪詢偵測(維持 `AuthNav.tsx` 現有的「掛載時偵測一次」行為)。
+- 修改 `src/proxy.ts` 的頁面保護/redirect 邏輯(Header 只是消費既有的登入狀態,不改變路由保護規則)。
+- 新增任何新頁面或新路由(所有連結都指向 `proxy.ts` 已知的既有路徑:`/`、`/profile`、`/venue`、`/login`、`/register`)。
+- 是否保留、移除或重構 `AuthNav.tsx` 本身(是否讓 Header 直接複用/包裝 `AuthNav`,或抽出共用 hook,由架構師決定技術方案;產品規格只要求「行為一致、不重寫偵測邏輯」)。
+- Header 的 SEO/meta 相關調整。
 
 ## Assumptions Made
-- Exact container/test-id names (`step-edit`, `step-preview`, `next-step-button`, `back-to-edit-button`) are the user's proposed defaults, explicitly left to the architect/developer to keep "consistent with existing `data-testid` conventions in this codebase" (per the user's own phrasing) — these are strong defaults, not rigid requirements, if the architect finds a more consistent naming convention already in use elsewhere in `PlanEditor.tsx`.
-- The existing `data-testid="generate-3d-button"` is retired/renamed to `data-testid="next-step-button"` since the user explicitly said these two actions "merge" into one — there is no longer a separate always-visible "產生 3D 模型" button coexisting with a step flow.
-- OrbitControls configuration (`maxPolarAngle`, `minDistance`/`maxDistance`, `target`) and the DOM-assertable vs. manual-only testability split were proposed with concrete numeric defaults in the Q&A round and went unobjected — treated as confirmed, not merely tentative.
-- Testability split (confirmed, unobjected): Playwright CAN assert — step container mount/visibility toggling on "下一步"/"返回編輯" clicks, that Step 1's 2D `<Stage>` is unmounted while Step 2 is active and vice versa, and `data-orbit-controls="true"` presence on the 3D canvas when Step 2 is active. Manual-only (goes into `manual-tests/venue-plan-editor.md` as a checklist, per the user's request for a delivered manual verification checklist) — actual mouse-drag orbit/rotate/zoom/pan behavior, polar-angle clamping at the floor, and min/max zoom distance enforcement, since these require visually driving opaque WebGL content.
-- Task type FRONTEND confirmed, unobjected.
-- **Flag for downstream playwright stage**: this is the LAST task (5 of 5) of the story `場地白模產生器 (階段一)`. When this task's work is approved and the playwright stage completes, it must mark not only this task complete but also the parent story's own row in the Stories database as `已完成` (per AGENTS.md's Notion sync section — "last task of a story" trigger). Not acted on now; noted here for the playwright agent to pick up later.
+- 「個人資訊」在 Header 中間導覽與右側已登入操作中,產品意圖是同一個目的地(`/profile`),不需要是兩個視覺上分開、文案不同的入口;實際是否合併為一個連結或保留兩個入口點,留給架構師/開發者依版面美觀判斷,只要不違反「已登入時個人資訊必須可達」與「未登入時中間導覽連結不顯示」兩條驗收條件。
+- 站名/首頁連結的確切文案沿用現有 `metadata.title`「展覽自動排程」,不引入新的 logo 圖片資產(專案目前無 logo 圖檔)。
+- 「場地產生器」連結文案直接對應 `/venue` 路由,沿用故事描述中的既有稱呼;若架構師/開發者在 `src/app/venue/page.tsx` 發現既有標題用語不同,以既有頁面標題用語為準,保持全站命名一致。
+- 本任務不要求新增 Playwright 測試涵蓋所有既有頁面(login/register/venue)的全新快照,但既有 Playwright 套件若因新增 Header 導致選擇器衝突(例如既有測試依賴首頁的 `<AuthNav />` DOM 結構或位置),需要同步修正——此為實作/測試階段常規維護,非新增範圍外功能。
+- 五項確認皆由使用者於 Q&A 中明確採用建議預設值(順序、隱藏而非顯示後跳轉、移除首頁重複 AuthNav、水平長條文字連結風格、FRONTEND 任務類型),視為已鎖定,非待確認事項。
 
 ## Security Notes
-No new security-sensitive surface: this task is client-only view-state and geometry/orbit-control changes with no new API routes, no auth changes, no data persistence, and no new user-supplied external input. No secrets/credentials involved. Consistent with Task 4's assessment — standard Next.js client-component/SSR considerations only (unchanged, `dynamic(..., { ssr: false })` pattern retained).
+- Header 不新增任何 API 呼叫或資料存取邏輯,純粹消費既有 `GET /api/profile`(已受 `proxy.ts` 保護)與既有 `logoutRequest()`(呼叫既有的 `/api/auth/logout`)——不涉及新的認證/授權面。
+- 中間導覽連結(個人資訊/場地產生器)的顯示/隱藏是前端 UX 層面的呈現邏輯,**不是安全邊界**——真正的存取控制仍由 `src/proxy.ts` 的 `PROTECTED_PAGES` 頁面保護把關(未登入直接輸入 `/profile` 網址仍會被導向 `/login`)。本任務不應被誤解為「隱藏連結=足夠的存取控制」。
+- 未發現需要新增或修改的 secrets/tokens/連線字串處理;不涉及 auth/session/`DATABASE_URL` 變更,依 AGENTS.md 標準本任務本身不屬於自動 🔴 Critical 類別,但 PR Reviewer 仍應確認 Header 未意外引入直接呼叫 Supabase client 或繞過 `/api/*` 的行為。

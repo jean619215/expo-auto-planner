@@ -1,5 +1,3 @@
-import AuthNav from "@/components/AuthNav";
-
 export default function Home() {
   return (
     <div className="flex flex-1 items-center justify-center bg-zinc-50 px-4 py-16 font-sans dark:bg-black">
@@ -12,7 +10,6 @@ export default function Home() {
             登入後即可管理個人資料並使用個人化的排程功能。
           </p>
         </div>
-        <AuthNav />
       </main>
     </div>
   );

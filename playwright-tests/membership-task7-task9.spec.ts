@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { LoginPage } from "./pages/LoginPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { HomePage } from "./pages/HomePage";
+import { HeaderPage } from "./pages/HeaderPage";
 
 // Combined Playwright acceptance pass for 會員系統 Task 7 (src/proxy.ts page
 // route protection) and Task 9 (login page "重新寄送驗證信" resend button +
@@ -62,6 +63,7 @@ test.describe("Task 7: src/proxy.ts route protection", () => {
     const loginPage = new LoginPage(page);
     const homePage = new HomePage(page);
     const profilePage = new ProfilePage(page);
+    const headerPage = new HeaderPage(page);
 
     await loginPage.navigate();
     await loginPage.login(VERIFIED_EMAIL, VERIFIED_PASSWORD);
@@ -85,7 +87,7 @@ test.describe("Task 7: src/proxy.ts route protection", () => {
     // AC7: after logout, /profile is protected again (reload/back-nav case
     // from §9.1 item 9).
     await homePage.navigate();
-    await homePage.logout();
+    await headerPage.logout();
     await profilePage.navigate();
     await expect(page).toHaveURL(/\/login$/);
   });
