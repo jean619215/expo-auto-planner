@@ -8,6 +8,10 @@ import {
   type Profile,
 } from "@/lib/profile-client";
 import { isValidNickname, NICKNAME_MAX_LENGTH } from "@/lib/validation";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 type PageState = "loading" | "ready" | "unauthenticated" | "error";
 
@@ -104,156 +108,180 @@ export default function ProfilePage() {
   }
 
   return (
-    <main className="flex flex-1 items-center justify-center bg-zinc-50 px-4 py-16 dark:bg-black">
-      <div className="w-full max-w-sm rounded-2xl border border-black/8 bg-white p-8 shadow-sm dark:border-white/[.145] dark:bg-zinc-950">
-        <h1 className="text-2xl font-semibold tracking-tight text-black dark:text-zinc-50">
-          個人資料
-        </h1>
+    <main className="flex flex-1 items-center justify-center px-4 py-16">
+      <Card className="w-full max-w-sm p-8">
+        <CardHeader className="p-0">
+          <CardTitle className="text-2xl font-semibold tracking-tight text-foreground">
+            個人資料
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          {pageState === "loading" && (
+            <div className="mt-6 flex flex-col gap-4">
+              <div className="h-11 w-full animate-pulse rounded-lg bg-black/6" />
+              <div className="h-5 w-2/3 animate-pulse rounded bg-black/6" />
+            </div>
+          )}
 
-        {pageState === "loading" && (
-          <div className="mt-6 flex flex-col gap-4">
-            <div className="h-11 w-full animate-pulse rounded-lg bg-black/6 dark:bg-white/8" />
-            <div className="h-5 w-2/3 animate-pulse rounded bg-black/6 dark:bg-white/8" />
-          </div>
-        )}
+          {pageState === "unauthenticated" && (
+            <p className="mt-6 text-sm text-zinc-600">
+              請先登入。{" "}
+              <Link
+                href="/login"
+                className="font-medium text-zinc-950 underline"
+              >
+                前往登入
+              </Link>
+            </p>
+          )}
 
-        {pageState === "unauthenticated" && (
-          <p className="mt-6 text-sm text-zinc-600 dark:text-zinc-400">
-            請先登入。{" "}
-            <Link
-              href="/login"
-              className="font-medium text-zinc-950 underline dark:text-zinc-50"
-            >
-              前往登入
-            </Link>
-          </p>
-        )}
+          {pageState === "error" && (
+            <p role="alert" className="mt-6 text-sm text-red-600">
+              {pageError}
+            </p>
+          )}
 
-        {pageState === "error" && (
-          <p role="alert" className="mt-6 text-sm text-red-600 dark:text-red-400">
-            {pageError}
-          </p>
-        )}
+          {pageState === "ready" && profile && (
+            <div className="mt-6 flex flex-col gap-4">
+              {mode === "view" && (
+                <>
+                  <div className="flex flex-col gap-1 text-sm">
+                    <span className="font-medium text-zinc-800">暱稱</span>
+                    {lastSavedNickname ? (
+                      <p
+                        data-testid="profile-nickname-display"
+                        className="px-3 py-2 text-zinc-900"
+                      >
+                        {lastSavedNickname}
+                      </p>
+                    ) : (
+                      <p
+                        data-testid="profile-nickname-display"
+                        className="px-3 py-2 text-zinc-400"
+                      >
+                        (未設定暱稱)
+                      </p>
+                    )}
+                  </div>
 
-        {pageState === "ready" && profile && (
-          <div className="mt-6 flex flex-col gap-4">
-            {mode === "view" && (
-              <>
-                <div className="flex flex-col gap-1 text-sm">
-                  <span className="font-medium text-zinc-800 dark:text-zinc-200">暱稱</span>
-                  {lastSavedNickname ? (
-                    <p
-                      data-testid="profile-nickname-display"
-                      className="px-3 py-2 text-zinc-900 dark:text-zinc-100"
-                    >
-                      {lastSavedNickname}
+                  <div className="flex flex-col gap-1 text-sm">
+                    <span className="font-medium text-zinc-800">身分</span>
+                    <p className="px-3 py-2 text-zinc-600">{profile.role}</p>
+                  </div>
+
+                  <div className="flex flex-col gap-1 text-sm">
+                    <span className="font-medium text-zinc-800">建立時間</span>
+                    <p className="px-3 py-2 text-zinc-600">
+                      {formatCreatedAt(profile.created_at)}
                     </p>
-                  ) : (
+                  </div>
+
+                  {saveError && (
                     <p
-                      data-testid="profile-nickname-display"
-                      className="px-3 py-2 text-zinc-400 dark:text-zinc-500"
+                      role="alert"
+                      data-testid="profile-save-error"
+                      className="text-sm text-red-600"
                     >
-                      (未設定暱稱)
+                      {saveError}
                     </p>
                   )}
-                </div>
+                  {saveSuccess && (
+                    <p
+                      role="status"
+                      data-testid="profile-save-success"
+                      className="text-sm text-green-600"
+                    >
+                      {saveSuccess}
+                    </p>
+                  )}
 
-                <div className="flex flex-col gap-1 text-sm">
-                  <span className="font-medium text-zinc-800 dark:text-zinc-200">身分</span>
-                  <p className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{profile.role}</p>
-                </div>
-
-                <div className="flex flex-col gap-1 text-sm">
-                  <span className="font-medium text-zinc-800 dark:text-zinc-200">建立時間</span>
-                  <p className="px-3 py-2 text-zinc-600 dark:text-zinc-400">
-                    {formatCreatedAt(profile.created_at)}
-                  </p>
-                </div>
-
-                {saveError && (
-                  <p role="alert" data-testid="profile-save-error" className="text-sm text-red-600 dark:text-red-400">
-                    {saveError}
-                  </p>
-                )}
-                {saveSuccess && (
-                  <p role="status" data-testid="profile-save-success" className="text-sm text-green-600 dark:text-green-400">
-                    {saveSuccess}
-                  </p>
-                )}
-
-                <button
-                  type="button"
-                  data-testid="profile-edit-button"
-                  onClick={handleEdit}
-                  className="mt-2 h-11 rounded-full bg-foreground px-5 font-medium text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc]"
-                >
-                  編輯
-                </button>
-              </>
-            )}
-
-            {mode === "edit" && (
-              <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
-                <label className="flex flex-col gap-1 text-sm">
-                  <span className="font-medium text-zinc-800 dark:text-zinc-200">暱稱</span>
-                  <input
-                    type="text"
-                    name="nickname"
-                    data-testid="profile-nickname-input"
-                    value={nickname}
-                    onChange={(e) => setNickname(e.target.value)}
-                    disabled={saving}
-                    className="rounded-lg border border-black/12 bg-transparent px-3 py-2 text-base outline-none focus:border-zinc-500 disabled:opacity-60 dark:border-white/18"
-                  />
-                </label>
-
-                <div className="flex flex-col gap-1 text-sm">
-                  <span className="font-medium text-zinc-800 dark:text-zinc-200">身分</span>
-                  <p className="px-3 py-2 text-zinc-600 dark:text-zinc-400">{profile.role}</p>
-                </div>
-
-                <div className="flex flex-col gap-1 text-sm">
-                  <span className="font-medium text-zinc-800 dark:text-zinc-200">建立時間</span>
-                  <p className="px-3 py-2 text-zinc-600 dark:text-zinc-400">
-                    {formatCreatedAt(profile.created_at)}
-                  </p>
-                </div>
-
-                {saveError && (
-                  <p role="alert" data-testid="profile-save-error" className="text-sm text-red-600 dark:text-red-400">
-                    {saveError}
-                  </p>
-                )}
-                {saveSuccess && (
-                  <p role="status" data-testid="profile-save-success" className="text-sm text-green-600 dark:text-green-400">
-                    {saveSuccess}
-                  </p>
-                )}
-
-                <div className="mt-2 flex gap-3">
-                  <button
-                    type="submit"
-                    data-testid="profile-save-button"
-                    disabled={saving}
-                    className="h-11 flex-1 rounded-full bg-foreground px-5 font-medium text-background transition-colors hover:bg-[#383838] disabled:cursor-not-allowed disabled:opacity-60 dark:hover:bg-[#ccc]"
-                  >
-                    {saving ? "儲存中…" : "儲存"}
-                  </button>
-                  <button
+                  <Button
                     type="button"
-                    data-testid="profile-cancel-button"
-                    onClick={handleCancel}
-                    disabled={saving}
-                    className="h-11 flex-1 rounded-full border border-black/12 px-5 font-medium text-zinc-800 transition-colors hover:bg-black/4 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/18 dark:text-zinc-200 dark:hover:bg-white/6"
+                    data-testid="profile-edit-button"
+                    onClick={handleEdit}
+                    className="mt-2"
                   >
-                    取消
-                  </button>
-                </div>
-              </form>
-            )}
-          </div>
-        )}
-      </div>
+                    編輯
+                  </Button>
+                </>
+              )}
+
+              {mode === "edit" && (
+                <form
+                  onSubmit={handleSubmit}
+                  className="flex flex-col gap-4"
+                  noValidate
+                >
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="nickname">暱稱</Label>
+                    <Input
+                      id="nickname"
+                      type="text"
+                      name="nickname"
+                      data-testid="profile-nickname-input"
+                      value={nickname}
+                      onChange={(e) => setNickname(e.target.value)}
+                      disabled={saving}
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1 text-sm">
+                    <span className="font-medium text-zinc-800">身分</span>
+                    <p className="px-3 py-2 text-zinc-600">{profile.role}</p>
+                  </div>
+
+                  <div className="flex flex-col gap-1 text-sm">
+                    <span className="font-medium text-zinc-800">建立時間</span>
+                    <p className="px-3 py-2 text-zinc-600">
+                      {formatCreatedAt(profile.created_at)}
+                    </p>
+                  </div>
+
+                  {saveError && (
+                    <p
+                      role="alert"
+                      data-testid="profile-save-error"
+                      className="text-sm text-red-600"
+                    >
+                      {saveError}
+                    </p>
+                  )}
+                  {saveSuccess && (
+                    <p
+                      role="status"
+                      data-testid="profile-save-success"
+                      className="text-sm text-green-600"
+                    >
+                      {saveSuccess}
+                    </p>
+                  )}
+
+                  <div className="mt-2 flex gap-3">
+                    <Button
+                      type="submit"
+                      data-testid="profile-save-button"
+                      disabled={saving}
+                      className="flex-1"
+                    >
+                      {saving ? "儲存中…" : "儲存"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      data-testid="profile-cancel-button"
+                      onClick={handleCancel}
+                      disabled={saving}
+                      className="flex-1"
+                    >
+                      取消
+                    </Button>
+                  </div>
+                </form>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </main>
   );
 }

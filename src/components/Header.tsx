@@ -3,8 +3,7 @@
 import Link from "next/link";
 import { useAuthStatus } from "@/lib/useAuthStatus";
 
-const navLinkClassName =
-  "text-sm font-medium text-zinc-600 hover:text-black dark:text-zinc-400 dark:hover:text-zinc-50";
+const navLinkClassName = "text-sm font-medium text-foreground/70 hover:text-foreground";
 
 export default function Header() {
   const { state, loggingOut, logout } = useAuthStatus();
@@ -12,34 +11,25 @@ export default function Header() {
   return (
     <header
       data-testid="site-header"
-      className="flex flex-wrap items-center justify-between gap-y-2 border-b border-black/12 px-4 py-3 dark:border-white/18"
+      className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-y-2 border-b border-line/70 bg-background/70 px-4 py-3 backdrop-blur-md"
     >
       <Link
         href="/"
         data-testid="header-home-link"
-        className="font-semibold text-black dark:text-zinc-50"
+        className="font-semibold text-foreground"
       >
         展覽自動排程
       </Link>
 
       <nav className="flex flex-1 items-center justify-center gap-6">
         {state === "loggedIn" && (
-          <>
-            <Link
-              href="/profile"
-              data-testid="header-nav-profile-link"
-              className={navLinkClassName}
-            >
-              個人資訊
-            </Link>
-            <Link
-              href="/venue"
-              data-testid="header-nav-venue-link"
-              className={navLinkClassName}
-            >
-              場地規劃
-            </Link>
-          </>
+          <Link
+            href="/venue"
+            data-testid="header-nav-venue-link"
+            className={navLinkClassName}
+          >
+            場地規劃
+          </Link>
         )}
       </nav>
 

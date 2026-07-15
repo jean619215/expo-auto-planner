@@ -38,7 +38,6 @@ test.describe("Header: logged-out state", () => {
 
     await expect(headerPage.loginLink).toBeVisible();
     await expect(headerPage.registerLink).toBeVisible();
-    await expect(headerPage.navProfileLink).toHaveCount(0);
     await expect(headerPage.navVenueLink).toHaveCount(0);
     await expect(headerPage.logoutButton).toHaveCount(0);
 
@@ -64,7 +63,6 @@ test.describe("Header: logged-in state", () => {
     await loginPage.login(VERIFIED_EMAIL, VERIFIED_PASSWORD);
     await expect(page).toHaveURL(/\/$/);
 
-    await expect(headerPage.navProfileLink).toBeVisible();
     await expect(headerPage.navVenueLink).toBeVisible();
     await expect(headerPage.profileLink).toBeVisible();
     await expect(headerPage.logoutButton).toBeVisible();
@@ -75,12 +73,11 @@ test.describe("Header: logged-in state", () => {
     await expect(page).toHaveURL(/\/venue$/);
     await expect(headerPage.homeLink).toBeVisible();
 
-    await headerPage.navProfileLink.click();
+    await headerPage.profileLink.click();
     await expect(page).toHaveURL(/\/profile$/);
 
     await headerPage.logout();
     await expect(headerPage.loginLink).toBeVisible();
-    await expect(headerPage.navProfileLink).toHaveCount(0);
   });
 });
 

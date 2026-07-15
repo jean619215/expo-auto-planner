@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/ui/button";
+
 export type EditorMode = "select" | "wall" | "column";
 
 interface PlanToolbarProps {
@@ -26,31 +28,27 @@ export default function PlanToolbar({
       {MODE_BUTTONS.map((btn) => {
         const pressed = mode === btn.mode;
         return (
-          <button
+          <Button
             key={btn.mode}
             type="button"
+            variant={pressed ? "default" : "outline"}
             data-testid={btn.testId}
             aria-pressed={pressed}
             onClick={() => onModeChange(btn.mode)}
-            className={
-              pressed
-                ? "rounded border border-blue-600 bg-blue-600 px-3 py-1 text-sm font-medium text-white"
-                : "rounded border border-stone-300 bg-white px-3 py-1 text-sm font-medium text-stone-700"
-            }
           >
             {btn.label}
-          </button>
+          </Button>
         );
       })}
-      <button
+      <Button
         type="button"
+        variant="outline"
         data-testid="tool-delete"
         disabled={!canDelete}
         onClick={onDelete}
-        className="rounded border border-stone-300 bg-white px-3 py-1 text-sm font-medium text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
       >
         刪除
-      </button>
+      </Button>
     </div>
   );
 }

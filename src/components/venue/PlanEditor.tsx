@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Circle, Layer, Line, Rect, Stage, Text } from "react-konva";
 import type Konva from "konva";
 import {
@@ -32,6 +32,8 @@ import {
 } from "@/lib/venue/plan";
 import PlanToolbar, { type EditorMode } from "./PlanToolbar";
 import VenueSceneLoader from "./VenueSceneLoader";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 
 const MIN_STAGE_PX = 320;
 const MAX_STAGE_PX = 800;
@@ -61,6 +63,53 @@ function buildGridLines(pxPerMeter: number) {
   }
 
   return lines;
+}
+
+const WIZARD_STEPS: { step: WizardStep; label: string }[] = [
+  { step: "edit", label: "1. 繪製平面圖" },
+  { step: "preview", label: "2. 預覽 3D 場景" },
+];
+
+function StepProgress({ current }: { current: WizardStep }) {
+  const currentIndex = WIZARD_STEPS.findIndex((s) => s.step === current);
+  return (
+    <ol data-testid="step-progress" className="mb-4 flex items-center gap-2">
+      {WIZARD_STEPS.map((s, index) => {
+        const isDone = index < currentIndex;
+        const isCurrent = index === currentIndex;
+        return (
+          <li key={s.step} className="flex items-center gap-2">
+            <span
+              className={
+                "flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium " +
+                (isCurrent
+                  ? "bg-blueprint text-white"
+                  : isDone
+                    ? "bg-blueprint-light text-blueprint"
+                    : "bg-stone-100 text-stone-400")
+              }
+            >
+              {index + 1}
+            </span>
+            <span
+              className={
+                "text-sm " +
+                (isCurrent ? "font-medium text-foreground" : "text-foreground/50")
+              }
+            >
+              {s.label}
+            </span>
+            {index < WIZARD_STEPS.length - 1 && (
+              <Progress
+                value={index < currentIndex ? 100 : 0}
+                className="mx-1 w-8"
+              />
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  );
 }
 
 function angleDegrees(start: PlanPoint, end: PlanPoint): number {
@@ -384,6 +433,14 @@ export default function PlanEditor() {
     return formatMeters(Math.hypot(next.x - vertex.x, next.y - vertex.y));
   });
 
+  const floorCentroidPx = metersToPx(
+    {
+      x: polygon.reduce((sum, p) => sum + p.x, 0) / polygon.length,
+      y: polygon.reduce((sum, p) => sum + p.y, 0) / polygon.length,
+    },
+    pxPerMeter,
+  );
+
   return (
     <div
       ref={containerRef}
@@ -406,6 +463,7 @@ export default function PlanEditor() {
       data-step={step}
       className="w-full outline-none"
     >
+      <StepProgress current={step} />
       {step === "edit" && (
         <div
           data-testid="step-edit"
@@ -419,15 +477,15 @@ export default function PlanEditor() {
             canDelete={selectedObject !== null}
             onDelete={deleteSelectedObject}
           />
-          <button
+          <Button
             type="button"
             data-testid="next-step-button"
             disabled={!canGenerate3D}
             onClick={handleNextStep}
-            className="mb-2 rounded border border-stone-300 bg-white px-3 py-1 text-sm font-medium text-stone-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="mb-2"
           >
             下一步
-          </button>
+          </Button>
           <Stage
             width={stagePx}
             height={stagePx}
@@ -507,9 +565,20 @@ export default function PlanEditor() {
                 points={polygonPx}
                 closed
                 fill="rgba(191, 219, 254, 0.5)"
-                stroke="#3b82f6"
+                stroke="#1F4E79"
                 strokeWidth={2}
                 onDblClick={handleEdgeDblClick}
+              />
+              <Text
+                listening={false}
+                x={floorCentroidPx.x}
+                y={floorCentroidPx.y}
+                text="地板"
+                fontSize={13}
+                fontStyle="bold"
+                fill="#1F4E79"
+                offsetX={13}
+                offsetY={7}
               />
               {polygon.map((vertex, index) => {
                 const px = metersToPx(vertex, pxPerMeter);
@@ -519,8 +588,8 @@ export default function PlanEditor() {
                     x={px.x}
                     y={px.y}
                     radius={6}
-                    fill={selectedVertex === index ? "#3b82f6" : "#ffffff"}
-                    stroke="#3b82f6"
+                    fill={selectedVertex === index ? "#1F4E79" : "#ffffff"}
+                    stroke="#1F4E79"
                     strokeWidth={2}
                     hitStrokeWidth={16}
                     draggable
@@ -568,39 +637,61 @@ export default function PlanEditor() {
                   wall.end.y - wall.start.y,
                 );
                 const lengthPx = lengthM * pxPerMeter;
+                const wallColor = isSelected ? "#1F4E79" : "#78350f";
+                const wallMidPx = metersToPx(
+                  {
+                    x: (wall.start.x + wall.end.x) / 2,
+                    y: (wall.start.y + wall.end.y) / 2,
+                  },
+                  pxPerMeter,
+                );
                 return (
-                  <Rect
-                    key={wall.id}
-                    name="object"
-                    x={startPx.x}
-                    y={startPx.y}
-                    width={lengthPx}
-                    height={thicknessPx}
-                    offsetY={thicknessPx / 2}
-                    rotation={angleDegrees(wall.start, wall.end)}
-                    fill="#78350f"
-                    stroke={isSelected ? "#3b82f6" : undefined}
-                    strokeWidth={isSelected ? 3 : 0}
-                    draggable={isSelected && mode === "select"}
-                    onClick={() => {
-                      if (suppressObjectClickRef.current) {
-                        suppressObjectClickRef.current = false;
-                        return;
-                      }
-                      setSelectedObject({ type: "wall", id: wall.id });
-                      setSelectedVertex(null);
-                    }}
-                    onTap={() => {
-                      if (suppressObjectClickRef.current) {
-                        suppressObjectClickRef.current = false;
-                        return;
-                      }
-                      setSelectedObject({ type: "wall", id: wall.id });
-                      setSelectedVertex(null);
-                    }}
-                    onDragMove={(e) => handleWallBodyDrag(wall, e)}
-                    onDragEnd={(e) => handleWallBodyDrag(wall, e)}
-                  />
+                  <Fragment key={wall.id}>
+                    <Rect
+                      name="object"
+                      x={startPx.x}
+                      y={startPx.y}
+                      width={lengthPx}
+                      height={thicknessPx}
+                      offsetY={thicknessPx / 2}
+                      rotation={angleDegrees(wall.start, wall.end)}
+                      fill="#78350f"
+                      stroke={isSelected ? "#1F4E79" : undefined}
+                      strokeWidth={isSelected ? 3 : 0}
+                      draggable={isSelected && mode === "select"}
+                      onClick={() => {
+                        if (suppressObjectClickRef.current) {
+                          suppressObjectClickRef.current = false;
+                          return;
+                        }
+                        setSelectedObject({ type: "wall", id: wall.id });
+                        setSelectedVertex(null);
+                      }}
+                      onTap={() => {
+                        if (suppressObjectClickRef.current) {
+                          suppressObjectClickRef.current = false;
+                          return;
+                        }
+                        setSelectedObject({ type: "wall", id: wall.id });
+                        setSelectedVertex(null);
+                      }}
+                      onDragMove={(e) => handleWallBodyDrag(wall, e)}
+                      onDragEnd={(e) => handleWallBodyDrag(wall, e)}
+                    />
+                    {lengthPx > 24 && (
+                      <Text
+                        listening={false}
+                        x={wallMidPx.x}
+                        y={wallMidPx.y}
+                        text="牆壁"
+                        fontSize={11}
+                        fill={wallColor}
+                        rotation={angleDegrees(wall.start, wall.end)}
+                        offsetX={11}
+                        offsetY={5}
+                      />
+                    )}
+                  </Fragment>
                 );
               })}
               {columns.map((column) => {
@@ -610,39 +701,53 @@ export default function PlanEditor() {
                 const centerPx = metersToPx(column.center, pxPerMeter);
                 const widthPx = column.w * pxPerMeter;
                 const heightPx = column.h * pxPerMeter;
+                const columnColor = isSelected ? "#1F4E79" : "#57534e";
                 return (
-                  <Rect
-                    key={column.id}
-                    name="object"
-                    x={centerPx.x}
-                    y={centerPx.y}
-                    width={widthPx}
-                    height={heightPx}
-                    offsetX={widthPx / 2}
-                    offsetY={heightPx / 2}
-                    fill="#78716c"
-                    stroke={isSelected ? "#3b82f6" : "#57534e"}
-                    strokeWidth={isSelected ? 3 : 1.5}
-                    draggable={isSelected && mode === "select"}
-                    onClick={() => {
-                      if (suppressObjectClickRef.current) {
-                        suppressObjectClickRef.current = false;
-                        return;
-                      }
-                      setSelectedObject({ type: "column", id: column.id });
-                      setSelectedVertex(null);
-                    }}
-                    onTap={() => {
-                      if (suppressObjectClickRef.current) {
-                        suppressObjectClickRef.current = false;
-                        return;
-                      }
-                      setSelectedObject({ type: "column", id: column.id });
-                      setSelectedVertex(null);
-                    }}
-                    onDragMove={(e) => handleColumnBodyDrag(column, e)}
-                    onDragEnd={(e) => handleColumnBodyDrag(column, e)}
-                  />
+                  <Fragment key={column.id}>
+                    <Rect
+                      name="object"
+                      x={centerPx.x}
+                      y={centerPx.y}
+                      width={widthPx}
+                      height={heightPx}
+                      offsetX={widthPx / 2}
+                      offsetY={heightPx / 2}
+                      fill="#78716c"
+                      stroke={columnColor}
+                      strokeWidth={isSelected ? 3 : 1.5}
+                      draggable={isSelected && mode === "select"}
+                      onClick={() => {
+                        if (suppressObjectClickRef.current) {
+                          suppressObjectClickRef.current = false;
+                          return;
+                        }
+                        setSelectedObject({ type: "column", id: column.id });
+                        setSelectedVertex(null);
+                      }}
+                      onTap={() => {
+                        if (suppressObjectClickRef.current) {
+                          suppressObjectClickRef.current = false;
+                          return;
+                        }
+                        setSelectedObject({ type: "column", id: column.id });
+                        setSelectedVertex(null);
+                      }}
+                      onDragMove={(e) => handleColumnBodyDrag(column, e)}
+                      onDragEnd={(e) => handleColumnBodyDrag(column, e)}
+                    />
+                    {widthPx > 20 && heightPx > 14 && (
+                      <Text
+                        listening={false}
+                        x={centerPx.x}
+                        y={centerPx.y}
+                        text="柱子"
+                        fontSize={11}
+                        fill={columnColor}
+                        offsetX={11}
+                        offsetY={5}
+                      />
+                    )}
+                  </Fragment>
                 );
               })}
               {selectedColumn &&
@@ -671,8 +776,8 @@ export default function PlanEditor() {
                       x={cornerPx.x}
                       y={cornerPx.y}
                       radius={6}
-                      fill={isDragging ? "#3b82f6" : "#ffffff"}
-                      stroke="#3b82f6"
+                      fill={isDragging ? "#1F4E79" : "#ffffff"}
+                      stroke="#1F4E79"
                       strokeWidth={2}
                       // The minimum column size (0.5m) can place corners only a
                       // few px from the center at typical scale, so the default
@@ -771,8 +876,8 @@ export default function PlanEditor() {
                     x={metersToPx(selectedWall.start, pxPerMeter).x}
                     y={metersToPx(selectedWall.start, pxPerMeter).y}
                     radius={6}
-                    fill={draggingHandle === "start" ? "#3b82f6" : "#ffffff"}
-                    stroke="#3b82f6"
+                    fill={draggingHandle === "start" ? "#1F4E79" : "#ffffff"}
+                    stroke="#1F4E79"
                     strokeWidth={2}
                     hitStrokeWidth={16}
                     draggable
@@ -788,8 +893,8 @@ export default function PlanEditor() {
                     x={metersToPx(selectedWall.end, pxPerMeter).x}
                     y={metersToPx(selectedWall.end, pxPerMeter).y}
                     radius={6}
-                    fill={draggingHandle === "end" ? "#3b82f6" : "#ffffff"}
-                    stroke="#3b82f6"
+                    fill={draggingHandle === "end" ? "#1F4E79" : "#ffffff"}
+                    stroke="#1F4E79"
                     strokeWidth={2}
                     hitStrokeWidth={16}
                     draggable
@@ -808,14 +913,15 @@ export default function PlanEditor() {
       )}
       {step === "preview" && sceneSnapshot && (
         <div data-testid="step-preview">
-          <button
+          <Button
             type="button"
+            variant="outline"
             data-testid="back-to-edit-button"
             onClick={handleBackToEdit}
-            className="mb-2 rounded border border-stone-300 bg-white px-3 py-1 text-sm font-medium text-stone-700"
+            className="mb-2"
           >
             返回編輯
-          </button>
+          </Button>
           <VenueSceneLoader
             key={generation}
             polygon={sceneSnapshot.polygon}

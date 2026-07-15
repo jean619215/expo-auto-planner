@@ -3,7 +3,6 @@ import type { Page, Locator } from "@playwright/test";
 export class HeaderPage {
   readonly page: Page;
   readonly homeLink: Locator;
-  readonly navProfileLink: Locator;
   readonly navVenueLink: Locator;
   readonly authLoading: Locator;
   readonly profileLink: Locator;
@@ -14,7 +13,6 @@ export class HeaderPage {
   constructor(page: Page) {
     this.page = page;
     this.homeLink = page.getByTestId("header-home-link");
-    this.navProfileLink = page.getByTestId("header-nav-profile-link");
     this.navVenueLink = page.getByTestId("header-nav-venue-link");
     this.authLoading = page.getByTestId("header-auth-loading");
     this.profileLink = page.getByTestId("header-profile-link");

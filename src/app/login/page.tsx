@@ -3,14 +3,32 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { EMAIL_NOT_CONFIRMED_ERROR, loginRequest, resendVerificationRequest } from "@/lib/auth-client";
-import { isValidEmail, isValidPassword, MIN_PASSWORD_LENGTH } from "@/lib/validation";
+import {
+  EMAIL_NOT_CONFIRMED_ERROR,
+  loginRequest,
+  resendVerificationRequest,
+} from "@/lib/auth-client";
+import {
+  isValidEmail,
+  isValidPassword,
+  MIN_PASSWORD_LENGTH,
+} from "@/lib/validation";
 import {
   RESEND_COOLDOWN_MS,
   clearCooldownEndsAt,
   readCooldownEndsAt,
   writeCooldownEndsAt,
 } from "@/lib/resend-cooldown";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -121,93 +139,97 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex flex-1 items-center justify-center bg-zinc-50 px-4 py-16 dark:bg-black">
-      <div className="w-full max-w-sm rounded-2xl border border-black/8 bg-white p-8 shadow-sm dark:border-white/[.145] dark:bg-zinc-950">
-        <h1 className="text-2xl font-semibold tracking-tight text-black dark:text-zinc-50">
-          登入
-        </h1>
-        <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-          使用註冊時的 email 與密碼登入。
-        </p>
-
-        <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4" noValidate>
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="font-medium text-zinc-800 dark:text-zinc-200">Email</span>
-            <input
-              type="email"
-              name="email"
-              autoComplete="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              disabled={submitting}
-              required
-              className="rounded-lg border border-black/12 bg-transparent px-3 py-2 text-base outline-none focus:border-zinc-500 disabled:opacity-60 dark:border-white/18"
-            />
-          </label>
-
-          <label className="flex flex-col gap-1 text-sm">
-            <span className="font-medium text-zinc-800 dark:text-zinc-200">密碼</span>
-            <input
-              type="password"
-              name="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              disabled={submitting}
-              required
-              className="rounded-lg border border-black/12 bg-transparent px-3 py-2 text-base outline-none focus:border-zinc-500 disabled:opacity-60 dark:border-white/18"
-            />
-          </label>
-
-          {errorMsg && (
-            <p role="alert" className="text-sm text-red-600 dark:text-red-400">
-              {errorMsg}
-            </p>
-          )}
-
-          {showResend && (
-            <div className="flex flex-col gap-2 rounded-lg border border-black/8 bg-zinc-50 p-3 dark:border-white/[.145] dark:bg-zinc-900">
-              <button
-                type="button"
-                onClick={handleResendClick}
-                disabled={resendLoading || inCooldown}
-                className="h-10 rounded-full border border-black/12 px-4 text-sm font-medium transition-colors hover:bg-black/5 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/18 dark:hover:bg-white/5"
-              >
-                {resendLoading
-                  ? "寄送中…"
-                  : inCooldown
-                    ? `重新寄送驗證信 (${remainingSeconds} 秒後可重試)`
-                    : "重新寄送驗證信"}
-              </button>
-
-              {resendMessage && (
-                <p className="text-sm text-zinc-700 dark:text-zinc-300">{resendMessage}</p>
-              )}
-
-              {resendError && (
-                <p role="alert" className="text-sm text-amber-600 dark:text-amber-400">
-                  {resendError}
-                </p>
-              )}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={submitting}
-            className="mt-2 h-11 rounded-full bg-foreground px-5 font-medium text-background transition-colors hover:bg-[#383838] disabled:cursor-not-allowed disabled:opacity-60 dark:hover:bg-[#ccc]"
+    <main className="flex flex-1 items-center justify-center px-4 py-16">
+      <Card className="w-full max-w-sm p-8">
+        <CardHeader className="p-0">
+          <CardTitle className="text-2xl font-semibold tracking-tight text-foreground">
+            登入
+          </CardTitle>
+          <CardDescription>使用註冊時的 email 與密碼登入。</CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          <form
+            onSubmit={handleSubmit}
+            className="mt-6 flex flex-col gap-4"
+            noValidate
           >
-            {submitting ? "登入中…" : "登入"}
-          </button>
-        </form>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                name="email"
+                autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled={submitting}
+                required
+              />
+            </div>
 
-        <p className="mt-6 text-center text-sm text-zinc-600 dark:text-zinc-400">
-          還沒有帳號？{" "}
-          <Link href="/register" className="font-medium text-zinc-950 underline dark:text-zinc-50">
-            前往註冊
-          </Link>
-        </p>
-      </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="password">密碼</Label>
+              <Input
+                id="password"
+                type="password"
+                name="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={submitting}
+                required
+              />
+            </div>
+
+            {errorMsg && (
+              <p role="alert" className="text-sm text-red-600">
+                {errorMsg}
+              </p>
+            )}
+
+            {showResend && (
+              <div className="flex flex-col gap-2 rounded-lg border border-line bg-secondary p-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleResendClick}
+                  disabled={resendLoading || inCooldown}
+                >
+                  {resendLoading
+                    ? "寄送中…"
+                    : inCooldown
+                      ? `重新寄送驗證信 (${remainingSeconds} 秒後可重試)`
+                      : "重新寄送驗證信"}
+                </Button>
+
+                {resendMessage && (
+                  <p className="text-sm text-zinc-700">{resendMessage}</p>
+                )}
+
+                {resendError && (
+                  <p role="alert" className="text-sm text-amber-600">
+                    {resendError}
+                  </p>
+                )}
+              </div>
+            )}
+
+            <Button type="submit" disabled={submitting} className="mt-2">
+              {submitting ? "登入中…" : "登入"}
+            </Button>
+          </form>
+
+          <p className="mt-6 text-center text-sm text-zinc-600">
+            還沒有帳號？{" "}
+            <Link
+              href="/register"
+              className="font-medium text-zinc-950 underline"
+            >
+              前往註冊
+            </Link>
+          </p>
+        </CardContent>
+      </Card>
     </main>
   );
 }
