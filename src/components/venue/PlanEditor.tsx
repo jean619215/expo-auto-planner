@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Circle, Layer, Line, Rect, Stage, Text } from "react-konva";
 import type Konva from "konva";
+import { Ruler } from "lucide-react";
 import {
   DEFAULT_FLOOR,
   GRID_MAJOR_M,
@@ -11,6 +12,7 @@ import {
   WALL_THICKNESS_M,
   computePxPerMeter,
   createColumn,
+  createDefaultFloor,
   createWall,
   findClosestEdge,
   formatMeters,
@@ -30,22 +32,47 @@ import {
   type PlanPoint,
   type WallSegment,
 } from "@/lib/venue/plan";
+import { FURNITURE_DEFAULTS, type FurnitureItem } from "@/lib/venue/furniture";
 import PlanToolbar, { type EditorMode } from "./PlanToolbar";
 import VenueSceneLoader from "./VenueSceneLoader";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const MIN_STAGE_PX = 320;
 const MAX_STAGE_PX = 800;
+const MIN_VENUE_SIZE_M = 10;
+const MAX_VENUE_SIZE_M = 200;
 
-type SelectedObject = { type: "wall" | "column"; id: string } | null;
+type SelectedObject =
+  | { type: "wall" | "column" | "furniture"; id: string }
+  | null;
 type WizardStep = "edit" | "preview";
 
-function buildGridLines(pxPerMeter: number) {
+function buildGridLines(pxPerMeter: number, venueSizeM: number) {
   const lines: { key: string; points: number[]; stroke: string; strokeWidth: number }[] = [];
-  const sizePx = VENUE_SIZE_M * pxPerMeter;
+  const sizePx = venueSizeM * pxPerMeter;
 
-  for (let m = 0; m <= VENUE_SIZE_M; m += GRID_MINOR_M) {
+  for (let m = 0; m <= venueSizeM; m += GRID_MINOR_M) {
     const isMajor = m % GRID_MAJOR_M === 0;
     const pos = m * pxPerMeter;
     lines.push({
@@ -125,12 +152,14 @@ function targetName(
 export default function PlanEditor() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [stagePx, setStagePx] = useState(MIN_STAGE_PX);
+  const [venueSizeM, setVenueSizeM] = useState(VENUE_SIZE_M);
   const [polygon, setPolygon] = useState<FloorPolygon>(DEFAULT_FLOOR);
   const [selectedVertex, setSelectedVertex] = useState<number | null>(null);
 
   const [mode, setMode] = useState<EditorMode>("select");
   const [walls, setWalls] = useState<WallSegment[]>([]);
   const [columns, setColumns] = useState<Column[]>([]);
+  const [furniture, setFurniture] = useState<FurnitureItem[]>([]);
   const [selectedObject, setSelectedObject] = useState<SelectedObject>(null);
   const [draftWall, setDraftWall] = useState<{ start: PlanPoint; end: PlanPoint } | null>(
     null,
@@ -145,9 +174,15 @@ export default function PlanEditor() {
     polygon: FloorPolygon;
     walls: WallSegment[];
     columns: Column[];
+    furniture: FurnitureItem[];
   } | null>(null);
   const [generation, setGeneration] = useState(0);
   const [step, setStep] = useState<WizardStep>("edit");
+
+  const [sizeDialogOpen, setSizeDialogOpen] = useState(false);
+  const [sizeInput, setSizeInput] = useState(String(VENUE_SIZE_M));
+  const [pendingSizeM, setPendingSizeM] = useState<number | null>(null);
+  const [sizeConfirmOpen, setSizeConfirmOpen] = useState(false);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -165,8 +200,50 @@ export default function PlanEditor() {
     return () => observer.disconnect();
   }, []);
 
-  const pxPerMeter = computePxPerMeter(stagePx);
-  const gridLines = buildGridLines(pxPerMeter);
+  const pxPerMeter = computePxPerMeter(stagePx, venueSizeM);
+  const gridLines = buildGridLines(pxPerMeter, venueSizeM);
+
+  function openSizeDialog() {
+    setSizeInput(String(venueSizeM));
+    setSizeDialogOpen(true);
+  }
+
+  function applyVenueSize(nextSizeM: number) {
+    setVenueSizeM(nextSizeM);
+    setPolygon(createDefaultFloor(nextSizeM));
+    setWalls([]);
+    setColumns([]);
+    setFurniture([]);
+    setSelectedObject(null);
+    setSelectedVertex(null);
+  }
+
+  function handleSizeDialogConfirm() {
+    const next = Math.round(Number(sizeInput));
+    if (!Number.isFinite(next)) return;
+    const clamped = Math.min(MAX_VENUE_SIZE_M, Math.max(MIN_VENUE_SIZE_M, next));
+    if (clamped === venueSizeM) {
+      setSizeDialogOpen(false);
+      return;
+    }
+    const isEmpty = walls.length === 0 && columns.length === 0 && furniture.length === 0;
+    if (isEmpty) {
+      applyVenueSize(clamped);
+      setSizeDialogOpen(false);
+      return;
+    }
+    setPendingSizeM(clamped);
+    setSizeDialogOpen(false);
+    setSizeConfirmOpen(true);
+  }
+
+  function handleSizeConfirmAccept() {
+    if (pendingSizeM !== null) {
+      applyVenueSize(pendingSizeM);
+    }
+    setPendingSizeM(null);
+    setSizeConfirmOpen(false);
+  }
 
   function handleVertexDragMove(
     index: number,
@@ -174,7 +251,7 @@ export default function PlanEditor() {
   ) {
     const node = e.target;
     const meterPoint = pxToMeters({ x: node.x(), y: node.y() }, pxPerMeter);
-    const next = moveVertex(polygon, index, meterPoint);
+    const next = moveVertex(polygon, index, meterPoint, venueSizeM);
     setPolygon(next);
     const snappedPx = metersToPx(next[index], pxPerMeter);
     node.position(snappedPx);
@@ -186,7 +263,7 @@ export default function PlanEditor() {
   ) {
     const node = e.target;
     const meterPoint = pxToMeters({ x: node.x(), y: node.y() }, pxPerMeter);
-    const next = moveVertex(polygon, index, meterPoint);
+    const next = moveVertex(polygon, index, meterPoint, venueSizeM);
     setPolygon(next);
     const snappedPx = metersToPx(next[index], pxPerMeter);
     node.position(snappedPx);
@@ -201,7 +278,7 @@ export default function PlanEditor() {
     const { edgeIndex, distance } = findClosestEdge(polygon, meterPoint);
     // 只有點在邊附近 (0.5m 內) 才插入頂點 — 點在多邊形內部深處不動作。
     if (distance > 0.5) return;
-    const next = insertVertexOnEdge(polygon, edgeIndex, meterPoint);
+    const next = insertVertexOnEdge(polygon, edgeIndex, meterPoint, venueSizeM);
     setPolygon(next);
   }
 
@@ -224,8 +301,10 @@ export default function PlanEditor() {
     if (selectedObject === null) return;
     if (selectedObject.type === "wall") {
       setWalls((prev) => prev.filter((w) => w.id !== selectedObject.id));
-    } else {
+    } else if (selectedObject.type === "column") {
       setColumns((prev) => prev.filter((c) => c.id !== selectedObject.id));
+    } else {
+      setFurniture((prev) => prev.filter((f) => f.id !== selectedObject.id));
     }
     setSelectedObject(null);
   }
@@ -247,7 +326,7 @@ export default function PlanEditor() {
   }
 
   function handleNextStep() {
-    setSceneSnapshot({ polygon, walls, columns });
+    setSceneSnapshot({ polygon, walls, columns, furniture });
     setGeneration((g) => g + 1);
     setStep("preview");
     // 進入 Step 2 前清除既有選取,避免殘留的 selectedObject/selectedVertex
@@ -257,7 +336,20 @@ export default function PlanEditor() {
     setSelectedVertex(null);
   }
 
+  function handleSceneChange(next: {
+    walls: WallSegment[];
+    columns: Column[];
+    furniture: FurnitureItem[];
+  }) {
+    setSceneSnapshot((prev) => (prev ? { ...prev, ...next } : prev));
+  }
+
   function handleBackToEdit() {
+    if (sceneSnapshot) {
+      setWalls(sceneSnapshot.walls);
+      setColumns(sceneSnapshot.columns);
+      setFurniture(sceneSnapshot.furniture);
+    }
     setStep("edit");
   }
 
@@ -291,7 +383,7 @@ export default function PlanEditor() {
     const meterPoint = pxToMeters(pointer, pxPerMeter);
 
     if (mode === "wall") {
-      const snapped = snapPoint(meterPoint);
+      const snapped = snapPoint(meterPoint, venueSizeM);
       setDraftWall({ start: snapped, end: snapped });
       return;
     }
@@ -309,7 +401,7 @@ export default function PlanEditor() {
     const pointer = stage?.getPointerPosition();
     if (!pointer) return;
     const meterPoint = pxToMeters(pointer, pxPerMeter);
-    const snapped = snapPoint(meterPoint);
+    const snapped = snapPoint(meterPoint, venueSizeM);
     setDraftWall({ start: draftWall.start, end: snapped });
   }
 
@@ -318,7 +410,7 @@ export default function PlanEditor() {
   ) {
     if (mode === "wall") {
       if (draftWall) {
-        const wall = createWall(draftWall.start, draftWall.end);
+        const wall = createWall(draftWall.start, draftWall.end, venueSizeM);
         if (wall) {
           setWalls((prev) => [...prev, wall]);
           setSelectedObject({ type: "wall", id: wall.id });
@@ -336,7 +428,7 @@ export default function PlanEditor() {
       const pointer = stage?.getPointerPosition();
       if (!pointer) return;
       const meterPoint = pxToMeters(pointer, pxPerMeter);
-      const column = createColumn(meterPoint);
+      const column = createColumn(meterPoint, venueSizeM);
       setColumns((prev) => [...prev, column]);
       setSelectedObject({ type: "column", id: column.id });
       setSelectedVertex(null);
@@ -353,7 +445,7 @@ export default function PlanEditor() {
     const originPx = metersToPx(wall.start, pxPerMeter);
     const deltaPx = { x: node.x() - originPx.x, y: node.y() - originPx.y };
     const deltaM = pxToMeters(deltaPx, pxPerMeter);
-    const updated = translateWall(wall, deltaM);
+    const updated = translateWall(wall, deltaM, venueSizeM);
     setWalls((prev) => prev.map((w) => (w.id === wall.id ? updated : w)));
     const snappedPx = metersToPx(updated.start, pxPerMeter);
     node.position(snappedPx);
@@ -367,7 +459,7 @@ export default function PlanEditor() {
     const originPx = metersToPx(column.center, pxPerMeter);
     const deltaPx = { x: node.x() - originPx.x, y: node.y() - originPx.y };
     const deltaM = pxToMeters(deltaPx, pxPerMeter);
-    const updated = translateColumn(column, deltaM);
+    const updated = translateColumn(column, deltaM, venueSizeM);
     setColumns((prev) => prev.map((c) => (c.id === column.id ? updated : c)));
     const snappedPx = metersToPx(updated.center, pxPerMeter);
     node.position(snappedPx);
@@ -380,7 +472,7 @@ export default function PlanEditor() {
   ) {
     const node = e.target;
     const meterPoint = pxToMeters({ x: node.x(), y: node.y() }, pxPerMeter);
-    const updated = moveWallEndpoint(wall, which, meterPoint);
+    const updated = moveWallEndpoint(wall, which, meterPoint, venueSizeM);
     setWalls((prev) => prev.map((w) => (w.id === wall.id ? updated : w)));
     const snappedPx = metersToPx(updated[which], pxPerMeter);
     node.position(snappedPx);
@@ -393,7 +485,7 @@ export default function PlanEditor() {
   ) {
     const node = e.target;
     const meterPoint = pxToMeters({ x: node.x(), y: node.y() }, pxPerMeter);
-    const updated = resizeColumnCorner(column, corner, meterPoint);
+    const updated = resizeColumnCorner(column, corner, meterPoint, venueSizeM);
     setColumns((prev) => prev.map((c) => (c.id === column.id ? updated : c)));
     const cornerMeter = {
       x: updated.center.x + (corner.x * updated.w) / 2,
@@ -452,9 +544,11 @@ export default function PlanEditor() {
       data-mode={mode}
       data-wall-count={walls.length}
       data-column-count={columns.length}
+      data-furniture-count={furniture.length}
       data-selected-id={selectedObject?.id ?? ""}
       data-selected-type={selectedObject?.type ?? ""}
       data-objects={JSON.stringify({ walls, columns })}
+      data-furniture={JSON.stringify(furniture)}
       data-column-label={columnLabelText}
       data-wall-label={wallLabelText}
       data-edge-labels={JSON.stringify(edgeLabelTexts)}
@@ -471,12 +565,24 @@ export default function PlanEditor() {
           onKeyDown={handleKeyDown}
           className="outline-none"
         >
-          <PlanToolbar
-            mode={mode}
-            onModeChange={handleModeChange}
-            canDelete={selectedObject !== null}
-            onDelete={deleteSelectedObject}
-          />
+          <div className="mb-2 flex items-center gap-2">
+            <PlanToolbar
+              mode={mode}
+              onModeChange={handleModeChange}
+              canDelete={selectedObject !== null}
+              onDelete={deleteSelectedObject}
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              data-testid="venue-size-button"
+              onClick={openSizeDialog}
+            >
+              <Ruler />
+              場地尺寸
+            </Button>
+          </div>
           <Button
             type="button"
             data-testid="next-step-button"
@@ -517,7 +623,7 @@ export default function PlanEditor() {
             </Layer>
             <Layer listening={false}>
               {Array.from(
-                { length: VENUE_SIZE_M / GRID_MAJOR_M + 1 },
+                { length: venueSizeM / GRID_MAJOR_M + 1 },
                 (_, i) => i * GRID_MAJOR_M,
               ).map((m) => (
                 <Text
@@ -530,7 +636,7 @@ export default function PlanEditor() {
                 />
               ))}
               {Array.from(
-                { length: VENUE_SIZE_M / GRID_MAJOR_M + 1 },
+                { length: venueSizeM / GRID_MAJOR_M + 1 },
                 (_, i) => i * GRID_MAJOR_M,
               ).map((m) => (
                 <Text
@@ -750,6 +856,54 @@ export default function PlanEditor() {
                   </Fragment>
                 );
               })}
+              {furniture.map((item) => {
+                const isSelected =
+                  selectedObject?.type === "furniture" && selectedObject.id === item.id;
+                const centerPx = metersToPx(item.center, pxPerMeter);
+                const widthPx = item.w * pxPerMeter;
+                const heightPx = item.h * pxPerMeter;
+                const defaults = FURNITURE_DEFAULTS[item.kind];
+                const itemColor = isSelected ? "#1F4E79" : defaults.color;
+                return (
+                  <Fragment key={item.id}>
+                    <Rect
+                      name="object"
+                      x={centerPx.x}
+                      y={centerPx.y}
+                      width={widthPx}
+                      height={heightPx}
+                      offsetX={widthPx / 2}
+                      offsetY={heightPx / 2}
+                      rotation={item.rotationDeg}
+                      fill={defaults.color}
+                      opacity={0.6}
+                      stroke={itemColor}
+                      strokeWidth={isSelected ? 3 : 1.5}
+                      onClick={() => {
+                        setSelectedObject({ type: "furniture", id: item.id });
+                        setSelectedVertex(null);
+                      }}
+                      onTap={() => {
+                        setSelectedObject({ type: "furniture", id: item.id });
+                        setSelectedVertex(null);
+                      }}
+                    />
+                    {widthPx > 20 && heightPx > 14 && (
+                      <Text
+                        listening={false}
+                        x={centerPx.x}
+                        y={centerPx.y}
+                        rotation={item.rotationDeg}
+                        text={defaults.label}
+                        fontSize={11}
+                        fill={itemColor}
+                        offsetX={11}
+                        offsetY={5}
+                      />
+                    )}
+                  </Fragment>
+                );
+              })}
               {selectedColumn &&
                 mode === "select" &&
                 (
@@ -927,9 +1081,62 @@ export default function PlanEditor() {
             polygon={sceneSnapshot.polygon}
             walls={sceneSnapshot.walls}
             columns={sceneSnapshot.columns}
+            furniture={sceneSnapshot.furniture}
+            venueSizeM={venueSizeM}
+            onSceneChange={handleSceneChange}
           />
         </div>
       )}
+      <Dialog open={sizeDialogOpen} onOpenChange={setSizeDialogOpen}>
+        <DialogContent data-testid="venue-size-dialog">
+          <DialogHeader>
+            <DialogTitle>場地尺寸</DialogTitle>
+            <DialogDescription>設定場地白模的邊長。</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="venue-size-input">邊長（公尺）</Label>
+            <Input
+              id="venue-size-input"
+              data-testid="venue-size-input"
+              type="number"
+              min={MIN_VENUE_SIZE_M}
+              max={MAX_VENUE_SIZE_M}
+              value={sizeInput}
+              onChange={(e) => setSizeInput(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              data-testid="venue-size-confirm-button"
+              onClick={handleSizeDialogConfirm}
+            >
+              確認
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <AlertDialog open={sizeConfirmOpen} onOpenChange={setSizeConfirmOpen}>
+        <AlertDialogContent data-testid="venue-size-confirm-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>變更場地尺寸？</AlertDialogTitle>
+            <AlertDialogDescription>
+              變更場地尺寸將清除目前所有牆壁、柱子與家具配置，確定要繼續嗎？
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="venue-size-confirm-cancel">
+              取消
+            </AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="venue-size-confirm-accept"
+              onClick={handleSizeConfirmAccept}
+            >
+              確定變更
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -26,20 +26,34 @@ function safeNumber(v: number): number {
   return Number.isFinite(v) ? v : 0;
 }
 
+// Centered square floor sized proportionally to the venue (inset to the
+// [0.4s, 0.6s] band, matching DEFAULT_FLOOR's 20-30 band at s=50), snapped
+// to the 0.5m grid.
+export function createDefaultFloor(sizeM: number = VENUE_SIZE_M): FloorPolygon {
+  const inset = Math.round(sizeM * 0.4 * 2) / 2;
+  const outset = Math.round(sizeM * 0.6 * 2) / 2;
+  return [
+    { x: inset, y: inset },
+    { x: outset, y: inset },
+    { x: outset, y: outset },
+    { x: inset, y: outset },
+  ];
+}
+
 export function snapToGrid(v: number): number {
   const safe = safeNumber(v);
   return Math.round(safe / SNAP_M) * SNAP_M;
 }
 
-export function clampToBounds(v: number): number {
+export function clampToBounds(v: number, sizeM: number = VENUE_SIZE_M): number {
   const safe = safeNumber(v);
-  return Math.min(VENUE_SIZE_M, Math.max(0, safe));
+  return Math.min(sizeM, Math.max(0, safe));
 }
 
-export function snapPoint(p: PlanPoint): PlanPoint {
+export function snapPoint(p: PlanPoint, sizeM: number = VENUE_SIZE_M): PlanPoint {
   return {
-    x: clampToBounds(snapToGrid(p.x)),
-    y: clampToBounds(snapToGrid(p.y)),
+    x: clampToBounds(snapToGrid(p.x), sizeM),
+    y: clampToBounds(snapToGrid(p.y), sizeM),
   };
 }
 
@@ -100,11 +114,12 @@ export function insertVertexOnEdge(
   polygon: FloorPolygon,
   edgeIndex: number,
   rawPoint: PlanPoint,
+  sizeM: number = VENUE_SIZE_M,
 ): FloorPolygon {
   const a = polygon[edgeIndex];
   const b = polygon[(edgeIndex + 1) % polygon.length];
   const projected = closestPointOnSegment(a, b, rawPoint);
-  const snapped = snapPoint(projected);
+  const snapped = snapPoint(projected, sizeM);
 
   if (samePoint(snapped, a) || samePoint(snapped, b)) {
     return polygon;
@@ -129,13 +144,14 @@ export function moveVertex(
   polygon: FloorPolygon,
   index: number,
   rawPoint: PlanPoint,
+  sizeM: number = VENUE_SIZE_M,
 ): FloorPolygon {
-  const snapped = snapPoint(rawPoint);
+  const snapped = snapPoint(rawPoint, sizeM);
   return polygon.map((vertex, i) => (i === index ? snapped : vertex));
 }
 
-export function computePxPerMeter(stagePx: number): number {
-  return stagePx / VENUE_SIZE_M;
+export function computePxPerMeter(stagePx: number, sizeM: number = VENUE_SIZE_M): number {
+  return stagePx / sizeM;
 }
 
 export function metersToPx(p: PlanPoint, pxPerMeter: number): PlanPoint {
@@ -181,9 +197,10 @@ export function createObjectId(): string {
 export function createWall(
   rawStart: PlanPoint,
   rawEnd: PlanPoint,
+  sizeM: number = VENUE_SIZE_M,
 ): WallSegment | null {
-  const start = snapPoint(rawStart);
-  const end = snapPoint(rawEnd);
+  const start = snapPoint(rawStart, sizeM);
+  const end = snapPoint(rawEnd, sizeM);
   if (samePoint(start, end)) {
     return null;
   }
@@ -198,20 +215,30 @@ export function createWall(
 // translateColumn calls during a multi-step drag) would corrupt it back onto
 // the grid (e.g. 0.25 -> 0.5). Callers that need to snap first (e.g.
 // createColumn) do so explicitly before calling this.
-export function clampColumnCenter(p: PlanPoint, w: number, h: number): PlanPoint {
+export function clampColumnCenter(
+  p: PlanPoint,
+  w: number,
+  h: number,
+  sizeM: number = VENUE_SIZE_M,
+): PlanPoint {
   const halfW = w / 2;
   const halfH = h / 2;
   const safe = { x: safeNumber(p.x), y: safeNumber(p.y) };
   return {
-    x: Math.min(VENUE_SIZE_M - halfW, Math.max(halfW, safe.x)),
-    y: Math.min(VENUE_SIZE_M - halfH, Math.max(halfH, safe.y)),
+    x: Math.min(sizeM - halfW, Math.max(halfW, safe.x)),
+    y: Math.min(sizeM - halfH, Math.max(halfH, safe.y)),
   };
 }
 
-export function createColumn(rawCenter: PlanPoint): Column {
+export function createColumn(rawCenter: PlanPoint, sizeM: number = VENUE_SIZE_M): Column {
   return {
     id: createObjectId(),
-    center: clampColumnCenter(snapPoint(rawCenter), COLUMN_SIZE_M, COLUMN_SIZE_M),
+    center: clampColumnCenter(
+      snapPoint(rawCenter, sizeM),
+      COLUMN_SIZE_M,
+      COLUMN_SIZE_M,
+      sizeM,
+    ),
     w: COLUMN_SIZE_M,
     h: COLUMN_SIZE_M,
   };
@@ -220,6 +247,7 @@ export function createColumn(rawCenter: PlanPoint): Column {
 export function translateWall(
   wall: WallSegment,
   deltaRaw: PlanPoint,
+  sizeM: number = VENUE_SIZE_M,
 ): WallSegment {
   const deltaX = snapToGrid(deltaRaw.x);
   const deltaY = snapToGrid(deltaRaw.y);
@@ -230,11 +258,11 @@ export function translateWall(
   const maxY = Math.max(wall.start.y, wall.end.y);
 
   const clampedDeltaX = Math.min(
-    VENUE_SIZE_M - maxX,
+    sizeM - maxX,
     Math.max(-minX, deltaX),
   );
   const clampedDeltaY = Math.min(
-    VENUE_SIZE_M - maxY,
+    sizeM - maxY,
     Math.max(-minY, deltaY),
   );
 
@@ -251,7 +279,11 @@ export function translateWall(
   };
 }
 
-export function translateColumn(col: Column, deltaRaw: PlanPoint): Column {
+export function translateColumn(
+  col: Column,
+  deltaRaw: PlanPoint,
+  sizeM: number = VENUE_SIZE_M,
+): Column {
   const deltaX = snapToGrid(deltaRaw.x);
   const deltaY = snapToGrid(deltaRaw.y);
   const moved = {
@@ -260,7 +292,7 @@ export function translateColumn(col: Column, deltaRaw: PlanPoint): Column {
   };
   return {
     id: col.id,
-    center: clampColumnCenter(moved, col.w, col.h),
+    center: clampColumnCenter(moved, col.w, col.h, sizeM),
     w: col.w,
     h: col.h,
   };
@@ -281,6 +313,7 @@ export function resizeColumnCorner(
   column: Column,
   corner: { x: -1 | 1; y: -1 | 1 },
   rawPoint: PlanPoint,
+  sizeM: number = VENUE_SIZE_M,
 ): Column {
   const left = column.center.x - column.w / 2;
   const right = column.center.x + column.w / 2;
@@ -292,7 +325,7 @@ export function resizeColumnCorner(
     y: corner.y === -1 ? bottom : top,
   };
 
-  const snapped = snapPoint(rawPoint);
+  const snapped = snapPoint(rawPoint, sizeM);
 
   // 1) Minimum-size clamp: floor the new width/height at SNAP_M.
   //
@@ -309,14 +342,14 @@ export function resizeColumnCorner(
   let newHeight = Math.max(SNAP_M, corner.y * (snapped.y - anchor.y));
 
   // 2) Boundary clamp: cap growth so the anchor-relative extent stays within
-  // [0, VENUE_SIZE_M], without moving the anchor.
-  if (corner.x === 1 && anchor.x + newWidth > VENUE_SIZE_M) {
-    newWidth = VENUE_SIZE_M - anchor.x;
+  // [0, sizeM], without moving the anchor.
+  if (corner.x === 1 && anchor.x + newWidth > sizeM) {
+    newWidth = sizeM - anchor.x;
   } else if (corner.x === -1 && anchor.x - newWidth < 0) {
     newWidth = anchor.x;
   }
-  if (corner.y === 1 && anchor.y + newHeight > VENUE_SIZE_M) {
-    newHeight = VENUE_SIZE_M - anchor.y;
+  if (corner.y === 1 && anchor.y + newHeight > sizeM) {
+    newHeight = sizeM - anchor.y;
   } else if (corner.y === -1 && anchor.y - newHeight < 0) {
     newHeight = anchor.y;
   }
@@ -341,8 +374,9 @@ export function moveWallEndpoint(
   wall: WallSegment,
   which: "start" | "end",
   rawPoint: PlanPoint,
+  sizeM: number = VENUE_SIZE_M,
 ): WallSegment {
-  const snapped = snapPoint(rawPoint);
+  const snapped = snapPoint(rawPoint, sizeM);
   const newStart = which === "start" ? snapped : wall.start;
   const newEnd = which === "end" ? snapped : wall.end;
   if (samePoint(newStart, newEnd)) {
