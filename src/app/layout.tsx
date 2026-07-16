@@ -6,7 +6,7 @@ import "./globals.css";
 const notoSansTC = Noto_Sans_TC({
   variable: "--font-noto-sans-tc",
   subsets: ["latin"],
-  weight: ["400", "500", "700"],
+  weight: ["400", "500", "700", "900"],
 });
 
 const plexMono = IBM_Plex_Mono({

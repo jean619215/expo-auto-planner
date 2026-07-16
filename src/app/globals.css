@@ -4,7 +4,9 @@
 
 :root {
   --color-blueprint: #1f4e79;
+  --color-blueprint-dark: #163a5c;
   --color-blueprint-light: #c7d6e8;
+  --color-blueprint-wash: #eef3f8;
   --color-line: #d8d4c9;
   --background: #fafaf8;
   --foreground: #1a2130;
@@ -31,7 +33,9 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-blueprint: var(--color-blueprint);
+  --color-blueprint-dark: var(--color-blueprint-dark);
   --color-blueprint-light: var(--color-blueprint-light);
+  --color-blueprint-wash: var(--color-blueprint-wash);
   --color-line: var(--color-line);
   --font-sans: var(--font-noto-sans-tc);
   --font-mono: var(--font-plex-mono);

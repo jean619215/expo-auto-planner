@@ -16,7 +16,7 @@ export default function Header() {
       <Link
         href="/"
         data-testid="header-home-link"
-        className="font-semibold text-foreground"
+        className="font-black text-foreground"
       >
         展覽自動排程
       </Link>

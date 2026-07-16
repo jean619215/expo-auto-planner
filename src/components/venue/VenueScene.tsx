@@ -24,6 +24,7 @@ import {
   type FurnitureKind,
 } from "@/lib/venue/furniture";
 import { Button } from "@/components/ui/button";
+import { segmentClassName } from "./PlanToolbar";
 
 const WALL_HEIGHT_M = 3;
 const FLOOR_THICKNESS_M = 0.1;
@@ -210,25 +211,25 @@ export default function VenueScene({
           );
         })}
         {selectedFurniture && (
-          <div className="ml-auto flex items-center gap-1 rounded-lg border border-line bg-card p-1">
-            <Button
+          <div className="ml-auto inline-flex overflow-hidden rounded-md border-[1.5px] border-blueprint bg-card">
+            <button
               type="button"
-              size="sm"
-              variant={transformMode === "translate" ? "default" : "outline"}
               data-testid="furniture-mode-translate"
+              aria-pressed={transformMode === "translate"}
               onClick={() => setTransformMode("translate")}
+              className={segmentClassName}
             >
               移動
-            </Button>
-            <Button
+            </button>
+            <button
               type="button"
-              size="sm"
-              variant={transformMode === "rotate" ? "default" : "outline"}
               data-testid="furniture-mode-rotate"
+              aria-pressed={transformMode === "rotate"}
               onClick={() => setTransformMode("rotate")}
+              className={segmentClassName}
             >
               旋轉
-            </Button>
+            </button>
           </div>
         )}
       </div>

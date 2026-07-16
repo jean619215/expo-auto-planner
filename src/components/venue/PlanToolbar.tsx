@@ -1,7 +1,7 @@
 "use client";
 
 import { MousePointer2, Minus, Square, Trash2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export type EditorMode = "select" | "wall" | "column";
 
@@ -23,6 +23,18 @@ const MODE_BUTTONS: {
   { mode: "column", label: "柱子", testId: "tool-column", Icon: Square },
 ];
 
+// 一體式分段控制:共用一圈藍框、段間細分隔線、選中段整塊填藍。
+// VenueScene 的移動/旋轉切換也複用這組樣式。
+export const segmentClassName = cn(
+  "inline-flex h-[34px] items-center gap-1.5 px-3.5 text-sm font-medium",
+  "border-l border-l-blueprint-light first:border-l-0",
+  "text-blueprint outline-none transition-colors",
+  "hover:bg-blueprint-wash focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50",
+  "disabled:pointer-events-none disabled:opacity-50",
+  "aria-pressed:bg-blueprint aria-pressed:font-bold aria-pressed:text-white",
+  "[&_svg]:size-3.5 [&_svg]:shrink-0",
+);
+
 export default function PlanToolbar({
   mode,
   onModeChange,
@@ -31,37 +43,35 @@ export default function PlanToolbar({
 }: PlanToolbarProps) {
   return (
     <div
-      className="mb-2 flex items-center gap-1 rounded-lg border border-line bg-card p-1"
+      className="inline-flex overflow-hidden rounded-md border-[1.5px] border-blueprint bg-card"
       role="group"
     >
       {MODE_BUTTONS.map((btn) => {
         const pressed = mode === btn.mode;
         return (
-          <Button
+          <button
             key={btn.mode}
             type="button"
-            size="sm"
-            variant={pressed ? "default" : "outline"}
             data-testid={btn.testId}
             aria-pressed={pressed}
             onClick={() => onModeChange(btn.mode)}
+            className={segmentClassName}
           >
             <btn.Icon />
             {btn.label}
-          </Button>
+          </button>
         );
       })}
-      <Button
+      <button
         type="button"
-        size="sm"
-        variant="outline"
         data-testid="tool-delete"
         disabled={!canDelete}
         onClick={onDelete}
+        className={segmentClassName}
       >
         <Trash2 />
         刪除
-      </Button>
+      </button>
     </div>
   );
 }

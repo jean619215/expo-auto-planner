@@ -142,7 +142,7 @@ export default function LoginPage() {
     <main className="flex flex-1 items-center justify-center px-4 py-16">
       <Card className="w-full max-w-sm p-8">
         <CardHeader className="p-0">
-          <CardTitle className="text-2xl font-semibold tracking-tight text-foreground">
+          <CardTitle className="text-2xl font-black tracking-tight text-foreground">
             登入
           </CardTitle>
           <CardDescription>使用註冊時的 email 與密碼登入。</CardDescription>

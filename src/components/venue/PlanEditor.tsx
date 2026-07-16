@@ -36,7 +36,6 @@ import { FURNITURE_DEFAULTS, type FurnitureItem } from "@/lib/venue/furniture";
 import PlanToolbar, { type EditorMode } from "./PlanToolbar";
 import VenueSceneLoader from "./VenueSceneLoader";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -92,44 +91,37 @@ function buildGridLines(pxPerMeter: number, venueSizeM: number) {
   return lines;
 }
 
-const WIZARD_STEPS: { step: WizardStep; label: string }[] = [
-  { step: "edit", label: "1. 繪製平面圖" },
-  { step: "preview", label: "2. 預覽 3D 場景" },
+const WIZARD_STEPS: { step: WizardStep; no: string; label: string }[] = [
+  { step: "edit", no: "01", label: "繪製平面圖" },
+  { step: "preview", no: "02", label: "預覽 3D 場景" },
 ];
 
+// 圖紙頁籤式步驟指示:等寬字大號編號 + 粗藍底線標記當前步,
+// 整條底線同時作為版面分隔線。
 function StepProgress({ current }: { current: WizardStep }) {
-  const currentIndex = WIZARD_STEPS.findIndex((s) => s.step === current);
   return (
-    <ol data-testid="step-progress" className="mb-4 flex items-center gap-2">
-      {WIZARD_STEPS.map((s, index) => {
-        const isDone = index < currentIndex;
-        const isCurrent = index === currentIndex;
+    <ol
+      data-testid="step-progress"
+      className="mb-4 flex max-w-md gap-7 border-b-2 border-line"
+    >
+      {WIZARD_STEPS.map((s) => {
+        const isCurrent = s.step === current;
         return (
-          <li key={s.step} className="flex items-center gap-2">
-            <span
-              className={
-                "flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium " +
-                (isCurrent
-                  ? "bg-blueprint text-white"
-                  : isDone
-                    ? "bg-blueprint-light text-blueprint"
-                    : "bg-stone-100 text-stone-400")
-              }
-            >
-              {index + 1}
-            </span>
-            <span
-              className={
-                "text-sm " +
-                (isCurrent ? "font-medium text-foreground" : "text-foreground/50")
-              }
-            >
+          <li
+            key={s.step}
+            className={
+              "relative flex items-baseline gap-2 pb-2.5 " +
+              (isCurrent ? "text-blueprint" : "text-muted-foreground")
+            }
+          >
+            <span className="font-mono text-xl tracking-tight">{s.no}</span>
+            <span className={"text-sm " + (isCurrent ? "font-bold" : "")}>
               {s.label}
             </span>
-            {index < WIZARD_STEPS.length - 1 && (
-              <Progress
-                value={index < currentIndex ? 100 : 0}
-                className="mx-1 w-8"
+            {isCurrent && (
+              <span
+                aria-hidden="true"
+                className="absolute inset-x-0 -bottom-0.5 h-[3px] bg-blueprint"
               />
             )}
           </li>

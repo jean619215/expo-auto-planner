@@ -4,7 +4,7 @@ export default function VenuePage() {
   return (
     <main className="flex flex-1 flex-col items-center gap-8 px-4 py-16">
       <div className="w-full max-w-5xl">
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+        <h1 className="text-2xl font-black tracking-tight text-foreground">
           場地規劃
         </h1>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-foreground/70">
