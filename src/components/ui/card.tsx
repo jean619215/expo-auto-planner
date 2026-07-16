@@ -33,9 +33,11 @@ function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
-function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
+// h3(非 shadcn base-nova 預設的 div):卡片標題需要 heading role — 頁面
+// 標題語意與 Playwright 的 getByRole("heading") 斷言都依賴它。
+function CardTitle({ className, ...props }: React.ComponentProps<"h3">) {
   return (
-    <div
+    <h3
       data-slot="card-title"
       className={cn(
         "text-base leading-snug font-medium group-data-[size=sm]/card:text-sm",
