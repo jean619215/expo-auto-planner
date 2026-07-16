@@ -1,10 +1,23 @@
 "use client";
 
-import { useRef, useState, useMemo, type RefObject } from "react";
+import {
+  useRef,
+  useState,
+  useMemo,
+  type ComponentRef,
+  type RefObject,
+} from "react";
 import * as THREE from "three";
 import { Canvas, type ThreeEvent } from "@react-three/fiber";
 import { OrbitControls, TransformControls } from "@react-three/drei";
-import { Table2, Armchair, Archive } from "lucide-react";
+import {
+  Table2,
+  Armchair,
+  Archive,
+  RotateCcw,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from "lucide-react";
 import {
   VENUE_SIZE_M,
   WALL_THICKNESS_M,
@@ -93,8 +106,14 @@ export default function VenueScene({
     "translate",
   );
   const [placingKind, setPlacingKind] = useState<FurnitureKind | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const selectedMeshRef = useRef<THREE.Object3D | null>(null);
   const dragStartRef = useRef<{ x: number; z: number } | null>(null);
+  const orbitRef = useRef<ComponentRef<typeof OrbitControls>>(null);
+
+  function resetView() {
+    orbitRef.current?.reset();
+  }
 
   function selectObject(next: NonNullable<SelectedId>) {
     setSelectedId(next);
@@ -193,47 +212,99 @@ export default function VenueScene({
       data-floor-vertex-count={polygon.length}
       className="mt-4 w-full"
     >
-      <div className="mb-2 flex items-center gap-2">
-        {(Object.keys(FURNITURE_DEFAULTS) as FurnitureKind[]).map((kind) => {
-          const Icon = FURNITURE_ICONS[kind];
-          return (
+      <div className="flex gap-3">
+        {/* 左側可開合側欄:家具面板 + 選取後的移動/旋轉工具列。收合時只留切換鈕。 */}
+        <aside
+          data-testid="venue-sidebar"
+          data-open={sidebarOpen}
+          className={
+            (sidebarOpen ? "w-48" : "w-11") +
+            " shrink-0 rounded-md border border-stone-300 bg-card p-2"
+          }
+        >
+          <button
+            type="button"
+            data-testid="sidebar-toggle"
+            aria-label={sidebarOpen ? "收合側欄" : "展開側欄"}
+            aria-expanded={sidebarOpen}
+            onClick={() => setSidebarOpen((prev) => !prev)}
+            className="flex h-7 w-full items-center justify-center rounded text-blueprint hover:bg-blueprint-wash [&_svg]:size-4"
+          >
+            {sidebarOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
+          </button>
+          {sidebarOpen && (
+            <div className="mt-2 flex flex-col gap-3">
+              <div className="flex flex-col gap-1.5">
+                <span className="px-0.5 text-xs font-bold text-muted-foreground">
+                  家具
+                </span>
+                {(Object.keys(FURNITURE_DEFAULTS) as FurnitureKind[]).map(
+                  (kind) => {
+                    const Icon = FURNITURE_ICONS[kind];
+                    return (
+                      <Button
+                        key={kind}
+                        type="button"
+                        size="sm"
+                        variant={placingKind === kind ? "default" : "outline"}
+                        data-testid={`furniture-place-${kind}`}
+                        onClick={() =>
+                          setPlacingKind((prev) => (prev === kind ? null : kind))
+                        }
+                        className="w-full justify-start"
+                      >
+                        <Icon />
+                        {FURNITURE_DEFAULTS[kind].label}
+                      </Button>
+                    );
+                  },
+                )}
+              </div>
+              {selectedFurniture && (
+                <div className="flex flex-col gap-1.5">
+                  <span className="px-0.5 text-xs font-bold text-muted-foreground">
+                    調整
+                  </span>
+                  <div className="inline-flex overflow-hidden rounded-md border-[1.5px] border-blueprint bg-card">
+                    <button
+                      type="button"
+                      data-testid="furniture-mode-translate"
+                      aria-pressed={transformMode === "translate"}
+                      onClick={() => setTransformMode("translate")}
+                      className={segmentClassName + " flex-1 justify-center"}
+                    >
+                      移動
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="furniture-mode-rotate"
+                      aria-pressed={transformMode === "rotate"}
+                      onClick={() => setTransformMode("rotate")}
+                      className={segmentClassName + " flex-1 justify-center"}
+                    >
+                      旋轉
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </aside>
+        <div className="min-w-0 flex-1">
+          <div className="mb-2 flex items-center">
             <Button
-              key={kind}
               type="button"
               size="sm"
-              variant={placingKind === kind ? "default" : "outline"}
-              data-testid={`furniture-place-${kind}`}
-              onClick={() => setPlacingKind((prev) => (prev === kind ? null : kind))}
+              variant="outline"
+              data-testid="reset-view-button"
+              onClick={resetView}
+              className="ml-auto"
             >
-              <Icon />
-              {FURNITURE_DEFAULTS[kind].label}
+              <RotateCcw />
+              重設視角
             </Button>
-          );
-        })}
-        {selectedFurniture && (
-          <div className="ml-auto inline-flex overflow-hidden rounded-md border-[1.5px] border-blueprint bg-card">
-            <button
-              type="button"
-              data-testid="furniture-mode-translate"
-              aria-pressed={transformMode === "translate"}
-              onClick={() => setTransformMode("translate")}
-              className={segmentClassName}
-            >
-              移動
-            </button>
-            <button
-              type="button"
-              data-testid="furniture-mode-rotate"
-              aria-pressed={transformMode === "rotate"}
-              onClick={() => setTransformMode("rotate")}
-              className={segmentClassName}
-            >
-              旋轉
-            </button>
           </div>
-        )}
-      </div>
-      <div className="h-[480px] w-full overflow-hidden rounded border border-stone-300 bg-stone-100">
+          <div className="h-[480px] w-full overflow-hidden rounded border border-stone-300 bg-stone-100">
         <Canvas
           camera={{
             position: [venueSizeM * 0.7, venueSizeM * 0.9, venueSizeM * 0.7],
@@ -243,6 +314,7 @@ export default function VenueScene({
           <ambientLight intensity={0.6} />
           <directionalLight position={[25, 40, 25]} intensity={0.8} />
           <OrbitControls
+            ref={orbitRef}
             makeDefault
             enableRotate
             enableZoom
@@ -348,7 +420,9 @@ export default function VenueScene({
               onMouseUp={commitTransform}
             />
           )}
-        </Canvas>
+          </Canvas>
+          </div>
+        </div>
       </div>
     </div>
   );

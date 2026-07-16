@@ -14,14 +14,14 @@ import { PlanEditorPage } from "./pages/PlanEditorPage";
 // behavior is manual-only (see manual-tests/venue-plan-editor.md Task 5).
 
 test.describe("Venue Plan Editor - Task 4 & 5: 3D whitebox scene + step wizard", () => {
-  test("default state: next-step button visible and disabled, no scene mounted, Step 1 active", async ({
+  test("default state: next-step button visible and enabled (floor-only is valid), no scene mounted, Step 1 active", async ({
     page,
   }) => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
 
     await expect(editor.nextStepButton).toBeVisible();
-    await expect(editor.nextStepButton).toBeDisabled();
+    await expect(editor.nextStepButton).toBeEnabled();
     await expect(editor.scene).toHaveCount(0);
     expect(await editor.sceneGenerated()).toBe(false);
     await expect(editor.stepEdit).toBeVisible();
@@ -83,7 +83,7 @@ test.describe("Venue Plan Editor - Task 4 & 5: 3D whitebox scene + step wizard",
     await expect(editor.stepPreview).toBeVisible();
   });
 
-  test("deleting all walls/columns back to floor-only disables the button but leaves the existing scene's data attributes intact", async ({
+  test("deleting all walls/columns back to floor-only keeps the button enabled and leaves the existing scene's data attributes intact", async ({
     page,
   }) => {
     const editor = new PlanEditorPage(page);
@@ -100,11 +100,10 @@ test.describe("Venue Plan Editor - Task 4 & 5: 3D whitebox scene + step wizard",
 
     expect(await editor.wallCount()).toBe(0);
     expect(await editor.columnCount()).toBe(0);
-    await expect(editor.nextStepButton).toBeDisabled();
-    // Existing generated scene's data attributes are left as-is, not
-    // retroactively cleared just because the button is now disabled — the
-    // prior generation simply can't be re-viewed without re-enabling and
-    // clicking 下一步 again.
+    // Floor-only is a valid venue, so 下一步 stays enabled.
+    await expect(editor.nextStepButton).toBeEnabled();
+    // Existing generated scene's data attributes are left as-is until the
+    // user clicks 下一步 again to regenerate.
     expect(await editor.sceneGenerated()).toBe(true);
     expect(await editor.generationCount()).toBe(generationBefore);
   });

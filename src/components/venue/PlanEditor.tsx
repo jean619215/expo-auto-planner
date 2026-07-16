@@ -39,14 +39,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -171,7 +163,7 @@ export default function PlanEditor() {
   const [generation, setGeneration] = useState(0);
   const [step, setStep] = useState<WizardStep>("edit");
 
-  const [sizeDialogOpen, setSizeDialogOpen] = useState(false);
+  const [sizeEditorOpen, setSizeEditorOpen] = useState(false);
   const [sizeInput, setSizeInput] = useState(String(VENUE_SIZE_M));
   const [pendingSizeM, setPendingSizeM] = useState<number | null>(null);
   const [sizeConfirmOpen, setSizeConfirmOpen] = useState(false);
@@ -195,9 +187,9 @@ export default function PlanEditor() {
   const pxPerMeter = computePxPerMeter(stagePx, venueSizeM);
   const gridLines = buildGridLines(pxPerMeter, venueSizeM);
 
-  function openSizeDialog() {
+  function openSizeEditor() {
     setSizeInput(String(venueSizeM));
-    setSizeDialogOpen(true);
+    setSizeEditorOpen(true);
   }
 
   function applyVenueSize(nextSizeM: number) {
@@ -210,22 +202,23 @@ export default function PlanEditor() {
     setSelectedVertex(null);
   }
 
-  function handleSizeDialogConfirm() {
+  function handleSizeConfirm() {
     const next = Math.round(Number(sizeInput));
     if (!Number.isFinite(next)) return;
     const clamped = Math.min(MAX_VENUE_SIZE_M, Math.max(MIN_VENUE_SIZE_M, next));
     if (clamped === venueSizeM) {
-      setSizeDialogOpen(false);
+      setSizeEditorOpen(false);
       return;
     }
     const isEmpty = walls.length === 0 && columns.length === 0 && furniture.length === 0;
+    // 空場地無改動可失,直接套用,不跳警告彈窗。
     if (isEmpty) {
       applyVenueSize(clamped);
-      setSizeDialogOpen(false);
+      setSizeEditorOpen(false);
       return;
     }
     setPendingSizeM(clamped);
-    setSizeDialogOpen(false);
+    setSizeEditorOpen(false);
     setSizeConfirmOpen(true);
   }
 
@@ -510,8 +503,6 @@ export default function PlanEditor() {
 
   const wallLabelText = selectedWall ? formatMeters(wallLengthM(selectedWall)) : "";
 
-  const canGenerate3D = walls.length > 0 || columns.length > 0;
-
   const edgeLabelTexts = polygon.map((vertex, i) => {
     const next = polygon[(i + 1) % polygon.length];
     return formatMeters(Math.hypot(next.x - vertex.x, next.y - vertex.y));
@@ -564,26 +555,67 @@ export default function PlanEditor() {
               canDelete={selectedObject !== null}
               onDelete={deleteSelectedObject}
             />
+            {sizeEditorOpen ? (
+              <div
+                data-testid="venue-size-editor"
+                className="inline-flex h-[34px] items-center gap-1.5 rounded-md border-[1.5px] border-blueprint bg-card px-2"
+              >
+                <Label
+                  htmlFor="venue-size-input"
+                  className="shrink-0 text-sm text-blueprint"
+                >
+                  邊長(公尺)
+                </Label>
+                <Input
+                  id="venue-size-input"
+                  data-testid="venue-size-input"
+                  type="number"
+                  min={MIN_VENUE_SIZE_M}
+                  max={MAX_VENUE_SIZE_M}
+                  value={sizeInput}
+                  onChange={(e) => setSizeInput(e.target.value)}
+                  className="h-6 w-20"
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  data-testid="venue-size-confirm-button"
+                  onClick={handleSizeConfirm}
+                >
+                  確認
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  data-testid="venue-size-cancel-button"
+                  onClick={() => setSizeEditorOpen(false)}
+                >
+                  取消
+                </Button>
+              </div>
+            ) : (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                data-testid="venue-size-button"
+                onClick={openSizeEditor}
+                className="h-[34px]"
+              >
+                <Ruler />
+                場地尺寸
+              </Button>
+            )}
             <Button
               type="button"
-              size="sm"
-              variant="outline"
-              data-testid="venue-size-button"
-              onClick={openSizeDialog}
+              data-testid="next-step-button"
+              onClick={handleNextStep}
+              className="ml-auto h-[34px]"
             >
-              <Ruler />
-              場地尺寸
+              下一步
             </Button>
           </div>
-          <Button
-            type="button"
-            data-testid="next-step-button"
-            disabled={!canGenerate3D}
-            onClick={handleNextStep}
-            className="mb-2"
-          >
-            下一步
-          </Button>
           <Stage
             width={stagePx}
             height={stagePx}
@@ -1066,7 +1098,7 @@ export default function PlanEditor() {
             onClick={handleBackToEdit}
             className="mb-2"
           >
-            返回編輯
+            上一步
           </Button>
           <VenueSceneLoader
             key={generation}
@@ -1079,35 +1111,6 @@ export default function PlanEditor() {
           />
         </div>
       )}
-      <Dialog open={sizeDialogOpen} onOpenChange={setSizeDialogOpen}>
-        <DialogContent data-testid="venue-size-dialog">
-          <DialogHeader>
-            <DialogTitle>場地尺寸</DialogTitle>
-            <DialogDescription>設定場地白模的邊長。</DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="venue-size-input">邊長（公尺）</Label>
-            <Input
-              id="venue-size-input"
-              data-testid="venue-size-input"
-              type="number"
-              min={MIN_VENUE_SIZE_M}
-              max={MAX_VENUE_SIZE_M}
-              value={sizeInput}
-              onChange={(e) => setSizeInput(e.target.value)}
-            />
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              data-testid="venue-size-confirm-button"
-              onClick={handleSizeDialogConfirm}
-            >
-              確認
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
       <AlertDialog open={sizeConfirmOpen} onOpenChange={setSizeConfirmOpen}>
         <AlertDialogContent data-testid="venue-size-confirm-dialog">
           <AlertDialogHeader>
