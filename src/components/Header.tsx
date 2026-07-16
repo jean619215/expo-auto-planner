@@ -23,13 +23,22 @@ export default function Header() {
 
       <nav className="flex flex-1 items-center justify-center gap-6">
         {state === "loggedIn" && (
-          <Link
-            href="/venue"
-            data-testid="header-nav-venue-link"
-            className={navLinkClassName}
-          >
-            場地規劃
-          </Link>
+          <>
+            <Link
+              href="/venue"
+              data-testid="header-nav-venue-link"
+              className={navLinkClassName}
+            >
+              場地規劃
+            </Link>
+            <Link
+              href="/shop"
+              data-testid="header-nav-shop-link"
+              className={navLinkClassName}
+            >
+              點數商店
+            </Link>
+          </>
         )}
       </nav>
 
