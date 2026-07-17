@@ -1,28 +1,28 @@
 {
   "story_file": "stories/ai-planner-assistant.md",
   "story_title": "場地規劃 AI 助理",
-  "task_index": 1,
-  "current_task": "[BACKEND] POST /api/ai/chat:接收前端對話歷史+可選圖片,後端注入系統提示與tool定義,先扣點後呼叫Claude,回傳回應與usage",
-  "task_type": "BACKEND",
+  "task_index": 2,
+  "current_task": "[FRONTEND] 場地規劃頁 AI 助理面板:對話UI/前端state存歷史/tool call套用到PlanEditor/點數與錯誤狀態,Playwright驗收",
+  "task_type": "FRONTEND",
   "stage": "complete",
   "iteration": {
     "review": 1,
     "qa": 1
   },
   "checkpoints": {
-    "scan": "pending",
+    "scan": "completed",
     "orchestrate": "completed",
-    "architect": "awaiting_approval",
+    "architect": "completed",
     "implement": "completed",
     "review": "completed",
     "qa": "completed",
-    "playwright": "pending"
+    "playwright": "completed"
   },
   "flags": {
     "review_critical_pending": false,
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "notes": "Task 2/3。Task 1完成(894f62e)。模型claude-sonnet-5(env var AI_MODEL)、@anthropic-ai/sdk、系統提示cache斷點、扣點用task1的deductPoints。QA 24/24通過(含4次真模型付費呼叫,cache驗證PASS cacheReadTokens=2993),BACKEND task無playwright關卡,stage=complete。",
-  "last_updated": "2026-07-17T19:40:00+08:00"
+  "notes": "Story「場地規劃AI助理」完成:3/3 tasks(扣點資料層/AI chat API/助理面板)。全套Playwright 87+1skip。branch feat/ai-planner。",
+  "last_updated": "2026-07-17T20:30:00+08:00"
 }

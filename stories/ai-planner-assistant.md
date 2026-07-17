@@ -17,7 +17,7 @@
 ## 任務清單
 - [x] [BACKEND] 點數 ledger 支援 AI 扣點:migration 放寬 `point_transactions.reason` check constraint 加入 `ai_usage`;扣點邏輯(餘額檢查 + service_role 寫入 + ref_id 冪等)抽成可重用 helper(`src/lib/points/` 內)
 - [x] [BACKEND] `POST /api/ai/chat`:接收前端帶來的完整對話歷史(API 原生 content blocks 格式)+ 可選圖片,後端注入系統提示(場地規劃 scope guard + plan schema 說明)與 tool 定義(plan 操作:add_object/move_object/remove_object/resize_venue/generate_plan),呼叫 Claude(`@anthropic-ai/sdk`,model 由 `AI_MODEL` env var 指定,prompt cache 斷點置於系統提示),先扣點後呼叫,回傳助理回應(含 tool calls)與 usage;usage 結構化 log
-- [ ] [FRONTEND] 場地規劃頁 AI 助理面板:對話 UI(訊息列表/輸入框/圖片上傳/loading 狀態)、對話歷史前端 state(API content blocks 格式)、tool call 執行層(將助理回傳的結構化操作套用到 PlanEditor 的 plan state 並同步 2D/3D)、點數不足與錯誤狀態顯示,Playwright 驗收(page object 模式)
+- [x] [FRONTEND] 場地規劃頁 AI 助理面板:對話 UI(訊息列表/輸入框/圖片上傳/loading 狀態)、對話歷史前端 state(API content blocks 格式)、tool call 執行層(將助理回傳的結構化操作套用到 PlanEditor 的 plan state 並同步 2D/3D)、點數不足與錯誤狀態顯示,Playwright 驗收(page object 模式)
 
 <!--
 背景決策(2026-07-17 討論定案):

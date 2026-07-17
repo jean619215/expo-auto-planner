@@ -1,86 +1,54 @@
-# Orchestrator Output — 場地規劃 AI 助理 / Task 2
+# Orchestrator Output — 場地規劃 AI 助理 / Task 3(最後 task)
 
 > Story: stories/ai-planner-assistant.md
-> Task 2 of 3: [BACKEND] `POST /api/ai/chat`
-> Task type: **BACKEND**
-> 性質:新實作。前端(task 3)之後才接,本 task 以 API 層驗收。
+> Task 3 of 3: [FRONTEND] 場地規劃頁 AI 助理面板
+> Task type: **FRONTEND**
+> 性質:新實作。API 已就緒(`POST /api/ai/chat`,contract 見 route.ts / task 2 紀錄)。
 
 ## 任務描述
-AI 對話 API:接收前端帶來的完整對話歷史 + 可選圖片,後端注入系統提示與 tool 定義,先扣點後呼叫 Claude,回傳助理回應(含 tool calls)與 usage。
-
-## API Contract
-
-`POST /api/ai/chat`(受 proxy 保護,登入必須)
-
-Request body:
-```json
-{
-  "messages": [ /* Anthropic 原生 MessageParam[],由前端維護;user/assistant 交錯 */ ]
-}
-```
-- 圖片:內嵌於 messages 的 content blocks(`{type:"image", source:{type:"base64", media_type, data}}`),不另設欄位。
-- **系統提示絕不接受 client 傳入** — body 出現 `system` 欄位直接忽略(不報錯,防探測)。
-
-Response 200:
-```json
-{
-  "content": [ /* 助理回應 content blocks(text 與 tool_use)原樣轉發 */ ],
-  "stopReason": "end_turn | tool_use | ...",
-  "usage": { "inputTokens": n, "outputTokens": n, "cacheReadTokens": n },
-  "balance": n  /* 扣點後餘額,前端顯示用 */
-}
-```
-
-錯誤:
-- 401 未登入(proxy + route 雙層)
-- 400 body 非 JSON / messages 缺失或非陣列 / 超過大小上限
-- **402 點數不足** `{ "error": "點數不足", "balance": n }` — 不呼叫模型
-- 502 模型呼叫失敗(上游錯誤,含 refusal 之外的 API error)— **扣點已發生,phase 1 不退點,記 log**(取捨,見 Assumptions)
+場地規劃頁加 AI 助理面板:對話 UI、前端 state 持有歷史、圖片上傳、tool call 執行層(套用到 PlanEditor 的 plan state 並同步 2D/3D)、點數/錯誤狀態,Playwright 驗收。
 
 ## Clarified Acceptance Criteria
 
-### AC1 — 認證與輸入驗證
-- 未登入 401;非 JSON 400;messages 非法 400。
-- 請求大小上限(含 base64 圖):5MB,超過 400。
+### AC1 — 面板 UI
+- 場地規劃頁(/venue)有 AI 助理開關(`ai-panel-toggle`),開啟顯示側欄面板(`ai-panel`):訊息列表(`ai-messages`)、輸入框(`ai-input`)、送出鈕(`ai-send`)、圖片上傳(`ai-image-input`)。
+- 送出中:輸入與按鈕 disabled、loading 指示(`ai-loading`)。
+- 面板顯示目前點數餘額(取自回應 `balance`,`ai-balance`)與每次呼叫成本提示。
 
-### AC2 — 扣點(先扣後呼叫)
-- 每次呼叫固定扣 `AI_CHAT_COST` 點(env var,預設 10)。
-- 用 task 1 `deductPoints`,`refId = ai:{server端uuid}`。
-- `insufficient_balance` → 402 + 目前餘額;`duplicate` 理論不發生(uuid),發生視同 500。
+### AC2 — 對話流程
+- 歷史存前端 state,格式 = Anthropic 原生 content blocks(升級落 DB 不需改邏輯)。
+- 送出:歷史 + 新訊息 POST `/api/ai/chat`;回應 append 助理訊息;text blocks 渲染文字。
+- 圖片:選圖後預覽,送出時轉 base64 image block 併入該則 user 訊息;限制單張 ≤3MB,超過顯示錯誤不送出。
+- 重新整理歷史消失 = 預期行為(phase 1)。
 
-### AC3 — Claude 呼叫
-- `@anthropic-ai/sdk`,model 由 `AI_MODEL` env var(預設 `claude-sonnet-5`),API key `ANTHROPIC_API_KEY` env var。
-- 系統提示(後端常數,凍結以吃 cache,`cache_control` 斷點置於系統提示尾):
-  - 角色:展場場地規劃助理。
-  - scope guard:僅回應場地規劃相關;離題禮貌拒絕並引導回主題。
-  - plan schema 摘要:50x50m 場地、0.5m snap、floor polygon ≥3 頂點、牆/柱/家具(table/chair/cabinet)。
-- Tool 定義(對齊 `src/lib/venue/plan.ts` / `furniture.ts` 型別;模型只回 tool call,執行在前端):
-  - `generate_plan` — 完整配置(floor polygon + walls + columns + furniture),用於圖生成/引導問答收齊後
-  - `add_furniture`、`move_item`、`remove_item`、`resize_floor` — 增量修改
-  - 全部 `strict: true`(structured outputs 保證合法參數)
-- 回傳 content blocks 原樣轉發(前端負責執行 tool call;本 API 單回合,不在後端跑 tool loop)。
+### AC3 — tool call 執行
+- 回應含 `tool_use` blocks 時逐一執行,套用到 PlanEditor state 並同步 2D/3D:
+  - `generate_plan` → 覆蓋 floor/walls/columns/furniture(id 由前端 `createObjectId()` 生成;數值過 snap/clamp 既有邏輯)
+  - `add_furniture` → append(預設尺寸查 FURNITURE_DEFAULTS)
+  - `move_item` / `remove_item` → 依 itemType+index 操作;index 越界 → 該操作跳過並在對話顯示警告
+  - `resize_floor` → setPolygon(≥3 點,否則跳過+警告)
+- 執行後對話中顯示動作摘要(`ai-action-summary`,如「已產生配置:4 頂點地板、2 件家具」)。
+- 執行完把 `tool_result` block(成功/跳過訊息)加入歷史 — 下輪模型看得到結果。
+- 每輪 user 訊息自動附帶目前配置 JSON(供模型 index 參照;附在訊息文字後,格式後端 prompt 已約定)。
 
-### AC4 — scope guard 行為
-- 離題輸入(如「幫我寫作文」)→ 模型拒絕並引導回主題(prompt 層,實測驗證)。
-- 場地規劃輸入 → 正常回應或 tool call。
+### AC4 — 錯誤與點數狀態
+- 402 → 顯示「點數不足」+ 目前餘額 + 商店連結(/shop),輸入的訊息保留可重送。
+- 400/500/502 → 對話顯示錯誤(`ai-error`,role=alert),歷史不留失敗輪。
+- 未登入(401)→ 引導登入(場地頁本身受 proxy 保護,理論上不會發生;防禦性處理)。
 
-### AC5 — usage 記錄
-- 每次呼叫後端結構化 log 一行:`{userId, refId, model, inputTokens, outputTokens, cacheReadTokens}`。不 log 對話內容、不 log 任何 key。
+### AC5 — Playwright 驗收(acceptance gate)
+- 新 spec `ai-panel.spec.ts` + page object `AiPanelPage.ts`。
+- **模型呼叫 mock**:Playwright `page.route()` 攔截 `/api/ai/chat` 回固定 fixture(文字回應/tool_use 回應/402)— 驗收不花真錢、不 flaky。真模型煙霧測試一條(`@paid` tag,預設 skip,手動跑)。
+- 覆蓋:面板開關、送訊息顯示回應、generate_plan fixture 套用後 2D 出現對應物件、402 顯示、輸入驗證。
+- 全套既有 spec 無迴歸。
 
-### AC6 — 安全
-- `ANTHROPIC_API_KEY` 僅 env var;route 為 server 端;`.env.example` 補新變數(AI_MODEL/AI_CHAT_COST/ANTHROPIC_API_KEY 佔位)。
-- proxy.ts:`/api/ai/chat` 屬保護路由 — 免改(fail-closed 預設),驗證確認即可。
-
-## 驗證方式(BACKEND)
-- dev server + fetch 腳本實測:401/400/402/200 各分支、扣點與餘額變化、重複請求不同 refId、scope guard 離題拒絕(真呼叫模型)、tool call 回傳格式、usage log 出現。
-- 測試扣點事後 service_role 補回(insert 正 delta 沖銷或直接刪測試列)。
-- tsc/lint + 全套 Playwright 迴歸。
-- 真模型呼叫花錢 — 驗證用最小輸入,次數控制在個位數。
+### AC6 — 規範
+- 走 `/api/ai/chat`,不直呼 Supabase/Anthropic;shadcn 元件;testid 覆蓋斷言點;無秘密進前端。
 
 ## Out of Scope
-- 前端 UI 與 tool call 執行(task 3)、streaming、退點機制、對話落 DB、跨供應商 adapter。
+- 對話落 DB、streaming、多 tab 同步、行動版排版優化。
 
 ## Assumptions
-1. 502 不退點:phase 1 取捨(退點邏輯 + 冪等複雜化);log 足以人工補償。記錄於 route 註解。
-2. 每次呼叫固定扣點(不按 token 計價)— 定價簡單,phase 1 夠用。
-3. 單回合設計:tool call 由前端執行後,結果隨下一輪 messages 帶回(`tool_result` block),本 API 天然支援。
+1. 面板整合方式(PlanEditor 子元件 vs 兄弟元件+state 提升)由 architect 定,以最小侵入為準。
+2. 目前配置 JSON 附帶格式:user 訊息文字後附 `\n\n[目前配置]\n{json}`;token 成本可接受(配置小)。
+3. 真模型煙霧測試不進 CI 門檻。

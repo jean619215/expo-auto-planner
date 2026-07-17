@@ -70,6 +70,12 @@ stories/           — ship-mate pipeline story files
 ## Service Communication
 Next.js API routes (backend logic co-located with frontend). Implemented: `/api/auth/register`, `/api/auth/login`, `/api/auth/logout`, `/api/auth/confirm`, `/api/auth/resend`, `/api/profile` (GET/PATCH), `/api/points/balance` (GET), `/api/points/checkout` (POST), `/api/points/webhook/mock` (POST, public — HMAC 簽章為唯一守門). Protected by `src/proxy.ts`.
 
+### AI 助理 (場地規劃)
+- `POST /api/ai/chat`(受保護):前端帶完整對話歷史,後端注入凍結系統提示(scope guard+plan schema,cache 斷點在 system block)與 5 支 strict tools,先扣 `AI_CHAT_COST` 點(`src/lib/points/ledger.ts` 的 `deductPoints`)後呼叫 Claude(`AI_MODEL` env var,預設 claude-sonnet-5)。上游失敗 502 不退點(usage log 為補償軌跡)。
+- `src/lib/ai/`(server-only:client/system/tools)vs `src/lib/ai-panel/`(client 端 action 型別+parseToolUse)— 邊界勿混。
+- 前端:`src/components/venue/AiPanel.tsx`(PlanEditor 子元件,`applyActions` props 套用 tool call,latest-ref 防 stale closure)。對話歷史前端 state(API 原生格式),不落 DB(phase 1)。
+- Playwright:`ai-panel.spec.ts` mock `/api/ai/chat`(page.route fixtures,不花錢);真模型煙霧 `@paid` 預設 skip(`PW_PAID_AI` 開啟)。
+
 ### 金流 (Payments)
 - `PaymentProvider` adapter (`src/lib/points/provider.ts`):`createCheckout` 回 redirectUrl、`verifyWebhook` 驗簽。Phase 1 僅 MockProvider(HMAC-SHA256 + timingSafeEqual);之後換綠界只需新增 EcpayProvider,購買/發點流程不動。
 - Webhook `/api/points/webhook/mock` 在 proxy.ts PUBLIC_API_PATHS 上;冪等由 `ref_id = order:{order_id}` unique constraint 承擔。
