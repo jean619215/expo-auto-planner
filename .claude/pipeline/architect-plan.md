@@ -1,47 +1,36 @@
-# Architect Plan — 會員點數系統與商店頁 / Task 2(補件驗證)
+# Architect Plan — 會員點數系統與商店頁 / Task 3(補件驗證,最後 task)
 
-> Task: [BACKEND] 點數 API — balance / checkout / webhook(mock)
-> 性質:驗證既有實作(commit 5c6c7d7)。發現缺口才修改。
-
-## 前提
-- dev server:`npm run dev`(接真雲端 Supabase)。
-- 登入態:fetch 腳本先打 `POST /api/auth/login`(Playwright 測試帳號),帶回 Set-Cookie 後續請求附上。
-- webhook 簽章:`signMockPayload`(scratchpad 腳本直接 import `src/lib/points/provider.ts` 的等價 HMAC 邏輯 — 用相同 secret 預設值 `mock-payment-dev-secret` 重算即可,不改動原始碼)。
-- 所有測試訂單/發點事後 service_role 清理(delete orders + ledger 測試列)。
+> Task: [FRONTEND] 商店頁 /shop + mock 結帳頁 + Header 連結 + Playwright
+> 性質:驗證既有實作與測試(commit 5c6c7d7)。缺口才修。
 
 ## 驗證步驟
 
-### Step 1 — 靜態核對(AC5)
-三支 route + provider.ts + proxy.ts 對照 AGENTS.md 規範:factory 使用、錯誤 shape、無秘密 log、admin client 使用點、webhook 註解與 allowlist 一致。已於 orchestrate 階段初步讀過,無明顯違規;review 階段獨立複核。
+### Step 1 — 靜態核對(AC1/AC2/AC3 對照原始碼)
+- `src/app/shop/page.tsx`、`src/app/shop/mock-checkout/page.tsx`、`src/components/Header.tsx`、`src/proxy.ts`(已於 orchestrate 讀過:/shop 在 PROTECTED_PAGES + matcher 雙處,Header 登入時顯示點數商店連結)。
+- 規範:shadcn 元件、`@/*` alias、frontend 只打 `/api/*`(無直呼 Supabase)、testid 覆蓋 AC 所需斷言點。
 
-### Step 2 — balance API(AC1)
-1. 未登入 GET → 401 `請先登入`。
-2. 登入 GET → 200,balance = 該帳號 ledger delta 總和(以 service_role 平行查核對),transactions ≤ 20 筆、降冪。
+### Step 2 — spec 覆蓋度核對(AC5 對 AC1-AC4)
+逐條映射 points-shop.spec.ts 9 測試 → AC:
+- AC1:access control 3 測試(/shop redirect、balance 401、checkout 401)✓
+- AC2:balance+packages 測試(餘額數字、三卡、註冊禮出現在交易記錄)✓;**缺口候選**:載入骨架/錯誤狀態/unauthenticated 頁面狀態無測試(骨架與 error 屬 UI 細節,可接受 — QA 判定)
+- AC3:end-to-end 購買、取消不扣款 ✓;**缺口候選**:購買中按鈕 disabled 文案無測試(可接受 — 手動)
+- AC4:重送冪等、竄改簽章 ✓
+- checkout 未知方案 400 ✓
 
-### Step 3 — checkout API(AC2)
-1. 未登入 POST → 401。
-2. 登入 + 非 JSON body → 400 `請求格式錯誤`。
-3. 登入 + `{"packageId":123}` / `{"packageId":"nope"}` → 400 `無效的點數方案`。
-4. 登入 + `{"packageId":"basic"}` → 200 `{ orderId, redirectUrl }`;service_role 查單:pending、amount_twd=100、points=100、provider=mock、user_id 正確(server 端快照,未信任 client)。
+### Step 3 — review(獨立)
+UI 程式碼 + spec 品質(等待邏輯、flaky 風險、憑證不硬編)。
 
-### Step 4 — webhook(AC3)
-以 Step 3 的訂單走完整流程:
-1. 壞簽章 POST → 400 `invalid webhook`,訂單仍 pending、無發點。
-2. 正確簽章 POST → 200;查:ledger 有 `order:{id}` +100 點、訂單 paid + provider_txn_id + paid_at。
-3. 重送同 payload → 200;ledger 仍只一筆(冪等)。
-4. 簽章正確但 orderId 不存在(隨機 uuid,自簽)→ 400 同訊息。
-5. 非 JSON body → 400。
-6. 未帶 cookie 直打(模擬 server-to-server)成功 — 證明 public allowlist 生效;另打一支非 allowlist 的 `/api/points/balance` 無 cookie 應 401(對照組)。
+### Step 4 — QA(獨立)
+AC 逐條 + edge case 判定(Step 2 缺口候選是否需補測試)。
 
-### Step 5 — production 守門(AC4)
-node 一次性探測:`NODE_ENV=production` 且無 `MOCK_PAYMENT_SECRET` 下呼叫 `getPaymentProvider()` 應 throw(以 tsx/ts-node 或抽出等價邏輯驗證;若工具鏈不便,退回程式碼靜態核對並註明)。
-
-### Step 6 — checklist
-新增 `supabase/tests/points_api_manual.md`:上述全部探測項與預期結果。
+### Step 5 — playwright 驗收關卡(最後把關)
+- 乾淨 dev server(重啟背景 npm run dev)跑 `points-shop.spec.ts` 全 9 測試。
+- Story 收尾:跑全套 spec(8 支檔案,含既有 70 測試 + points-shop 9)確認無迴歸。
+- 全綠 → task [x]、story 3/3 完成、Notion task 卡 + story 列標已完成。
 
 ## 產出物
-- scratchpad fetch 驗證腳本(不進 repo)
-- `supabase/tests/points_api_manual.md`(進 repo)
+- 驗收結果記入 qa-report / task-log
+- (若 QA 判定需補測試)points-shop.spec.ts 增測 — 屬缺口修補,非重新實作
 
 ## Escalation 檢查
-- 無 API contract 變更(驗證既有 contract)。webhook 為 auth-adjacent(public 路由 + 簽章守門)→ review 自動 🔴 等級檢視。無 escalation 觸發。
+- 無 API contract / schema / auth 變更。無 escalation。

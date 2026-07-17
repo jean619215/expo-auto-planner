@@ -1,11 +1,17 @@
 import { test, expect, type Page } from "@playwright/test";
 import { LoginPage } from "./pages/LoginPage";
+import { HeaderPage } from "./pages/HeaderPage";
 import { ShopPage } from "./pages/ShopPage";
 
 // 會員點數系統 Phase 1 acceptance: shop page, mock purchase flow (full
 // webhook path), ledger idempotency, and access control.
-const VERIFIED_EMAIL = process.env.PW_VERIFIED_EMAIL!;
-const VERIFIED_PASSWORD = process.env.PW_VERIFIED_PASSWORD!;
+if (!process.env.PW_VERIFIED_EMAIL || !process.env.PW_VERIFIED_PASSWORD) {
+  throw new Error(
+    "缺少 PW_VERIFIED_EMAIL / PW_VERIFIED_PASSWORD — 請設定 .env.playwright.local"
+  );
+}
+const VERIFIED_EMAIL = process.env.PW_VERIFIED_EMAIL;
+const VERIFIED_PASSWORD = process.env.PW_VERIFIED_PASSWORD;
 
 async function loginAndGoToShop(page: Page): Promise<ShopPage> {
   const loginPage = new LoginPage(page);
@@ -34,6 +40,29 @@ test.describe("Points shop: access control", () => {
       data: { packageId: "basic" },
     });
     expect(res.status()).toBe(401);
+  });
+});
+
+test.describe("Points shop: header navigation", () => {
+  test("header shop link is hidden when logged out and navigates to /shop when logged in", async ({
+    page,
+  }) => {
+    const headerPage = new HeaderPage(page);
+    const shopPage = new ShopPage(page);
+
+    await page.goto("/");
+    await page.waitForLoadState("networkidle");
+    await expect(headerPage.navShopLink).toBeHidden();
+
+    const loginPage = new LoginPage(page);
+    await loginPage.navigate();
+    await loginPage.login(VERIFIED_EMAIL, VERIFIED_PASSWORD);
+    await expect(page).toHaveURL(/\/$/);
+
+    await expect(headerPage.navShopLink).toBeVisible();
+    await headerPage.navShopLink.click();
+    await expect(page).toHaveURL(/\/shop$/);
+    await expect(shopPage.balance).toBeVisible();
   });
 });
 

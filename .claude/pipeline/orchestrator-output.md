@@ -1,51 +1,44 @@
-# Orchestrator Output — 會員點數系統與商店頁 / Task 2
+# Orchestrator Output — 會員點數系統與商店頁 / Task 3(最後 task)
 
 > Story: stories/points-system.md
-> Task 2 of 3: [BACKEND] 點數 API
-> Task type: **BACKEND**
-> 性質: **補件驗證** — 實作已存在 (commit 5c6c7d7)。驗證既有 API 符合驗收標準,發現缺口才修改。
-
-## 任務描述
-三支 API:`GET /api/points/balance`、`POST /api/points/checkout`(PaymentProvider adapter,phase 1 mock)、`POST /api/points/webhook/mock`(HMAC 驗簽 + ref_id 冪等,public 路由)。
+> Task 3 of 3: [FRONTEND] 商店頁 + mock 結帳頁 + Header 連結 + Playwright
+> Task type: **FRONTEND**
+> 性質: **補件驗證** — 實作與 Playwright 測試已存在(commit 5c6c7d7:points-shop.spec.ts 9 測試、ShopPage.ts)。驗證為主,缺口才修。
+> 澄清修正:story 原寫「Header 顯示點數餘額」與實作不符 — 實作為 Header「點數商店」連結(登入時顯示),餘額顯示在商店頁。story 檔已修正對齊。
 
 ## Clarified Acceptance Criteria
 
-### AC1 — GET /api/points/balance
-- 未登入 401 `請先登入`(route 自身 getUser 檢查 + proxy 守門雙層)。
-- 登入回 200:`{ balance, transactions }` — balance = 全部 delta 加總(user-context client,RLS 保證只算自己的);transactions 最近 20 筆(id/delta/reason/created_at,created_at 降冪)。
+### AC1 — 路由保護
+- 未登入訪 `/shop` → redirect `/login`(proxy.ts:PROTECTED_PAGES + matcher 皆已含 `/shop`、`/shop/:path*`)。
+- balance/checkout API 未登入 401(proxy + route 雙層)。
 
-### AC2 — POST /api/points/checkout
-- 未登入 401。
-- body 非 JSON → 400 `請求格式錯誤`;packageId 缺/非字串/查無方案 → 400 `無效的點數方案`。
-- 合法方案:以 admin client 建 point_orders(pending,server 端定價快照 — 金額/點數不信任 client),回 200 `{ orderId, redirectUrl }`,redirectUrl 由 provider.createCheckout 產生。
+### AC2 — 商店頁(登入)
+- 顯示點數餘額(`shop-balance`,載入中骨架 `shop-balance-loading`,錯誤顯示 `-` + `shop-load-error` role=alert)。
+- 三方案卡(`shop-package-{basic|plus|mega}`)含點數/贈點/價格與購買鈕(`shop-buy-{id}`)。
+- 交易記錄列表(`shop-transactions`):reason 中文標籤(註冊禮/購買點數)、時間、±delta 上色。
+- API 401 時頁面轉 `shop-unauthenticated` 狀態(含登入連結)。
 
-### AC3 — POST /api/points/webhook/mock(public,簽章唯一守門)
-- 在 proxy.ts PUBLIC_API_PATHS(已確認 src/proxy.ts:15)。
-- 非 JSON / 驗簽失敗 → 400 `invalid webhook`。
-- 簽章有效但查無訂單 → 400 同訊息(不洩漏訂單存在性)。
-- 訂單已 paid → 200(冪等,不重複發點)。
-- 正常路徑:ledger insert(ref_id=`order:{orderId}`)→ 訂單標 paid + provider_txn_id + paid_at。
-- webhook 重送:ledger 撞 unique(23505)視為已處理,補標 paid,200 — 兩步中斷可自我修復。
-- 簽章驗證用 HMAC-SHA256 + timingSafeEqual(constant-time)。
+### AC3 — 購買流程(端到端,走真 webhook 路徑)
+- 點購買 → POST checkout → router.push mock 結帳頁(`/shop/mock-checkout?orderId&txnId&sig&…`)。
+- 購買中:全部購買鈕 disabled、當前鈕文案「前往付款…」;失敗顯示 `shop-buy-error` role=alert。
+- mock 結帳頁:顯示方案名/點數/金額(`mock-checkout-*` testids);「模擬付款」按鈕打真 webhook(簽章驗證路徑)成功後導回 `/shop?paid=1`;「取消」返回 `/shop` 不扣款。
+- `/shop?paid=1` 顯示 `shop-paid-success` role=status,餘額 +100(basic)。
 
-### AC4 — production 守門
-- `getPaymentProvider()`:NODE_ENV=production 且無 MOCK_PAYMENT_SECRET → throw(mock 簽章密鑰預設值不得上線)。
+### AC4 — webhook 行為(spec 內 API-level 測試)
+- 同 payload 重送兩次:200 + 只入帳一次。
+- 竄改簽章:400 + 餘額不變。
 
-### AC5 — 架構規範符合
-- Supabase client 一律走 factories(server.ts/admin.ts),無 inline 建立。
-- 錯誤訊息繁中、`{ error }` shape;不 log 秘密。
-- checkout 建單走 admin client(orders 無 authenticated insert 權,fail-closed)。
+### AC5 — Playwright 驗收(本 task 的 acceptance gate)
+- `points-shop.spec.ts` 9 測試全綠(access control 3 + balance/packages 1 + purchase flow 5),page-object 模式(ShopPage.ts),對 live dev server + 真雲端 Supabase。
+- 全套既有 spec 檔不因本 story 迴歸(story 完成時全套跑)。
 
-## 驗證方式(BACKEND)
-- 對 local dev server(`npm run dev` + 真雲端 Supabase)以 fetch 腳本實測:401/400/200 各分支、webhook 正常/重送/壞簽章/查無單、balance 數字正確性。
-- 測試訂單與發點事後以 service_role 清理。
-- production 守門:單元式 node 探測(設 NODE_ENV=production 匯入 getPaymentProvider 應 throw)或程式碼靜態核對。
-- 更新 `supabase/tests/` checklist(新增 points_api_manual.md)。
+## 驗證方式
+- playwright 階段:乾淨 dev server 跑 points-shop.spec.ts,story 收尾跑全套 8 支 spec。
+- review:UI 程式碼規範(shadcn 元件、@/* alias、frontend 不直呼 Supabase、testid 覆蓋)。
 
 ## Out of Scope
-- 商店頁 UI 與 Playwright(task 3)。
+- 真金流(ECPay)接入、pending 訂單清理(review 💡 已記錄)。
 
 ## Assumptions
-1. 三方案定價(100/500/1000 TWD)沿用 packages.ts,不議價。
-2. webhook「先發點後標單」順序與自我修復設計視為既定架構決策,驗證行為即可。
-3. 發現缺口:小缺口直接修;API contract 變更需暫停回報。
+1. 既有 9 測試視為 spec 起點;QA 若發現 AC 未覆蓋項,補測試而非改功能。
+2. 本 task 完成 = story 完成:story 檔 3 checkbox 全勾 + Notion story 列標已完成。

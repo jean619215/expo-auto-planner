@@ -1,86 +1,73 @@
-# QA Report — 會員點數系統與商店頁 / Task 2 [BACKEND] 點數 API
-> Generated: 2026-07-17T04:33:29Z | QA iteration: 1
-> 性質:補件驗證獨立重測(不採信 implement/review 報告文字,自行對 local dev server + 真雲端 Supabase 重跑)。
+# QA Report — 會員點數系統與商店頁 / Task 3(最後 task):[FRONTEND] 商店頁 + mock 結帳頁 + Header 連結 + Playwright
+> Generated: 2026-07-17T10:10:00+08:00 | QA iteration: 1
+> 性質:補件驗證(commit 5c6c7d7 既有實作;review 兩項🟡已由 implement 修畢,工作樹未 commit)。
 
 ## Summary
-- Tests executed: 35 (18 既有 checklist 項 + 13 額外 edge case + 4 production 守門探測)
-- Passed: 35
+- Tests executed: 10 (`points-shop.spec.ts`,實跑兩輪確認穩定,非採信 review 報告文字)
+- Passed: 10
 - Failed: 0
 - Blocked: 0
 
 ## Recommendation
-APPROVED — 所有 AC1-AC5 通過,無 Critical/High/Medium/Low bug。
+**APPROVED** — AC1-AC5 全覆蓋,review 兩項🟡確認已修復,architect Step 2 的 2 個缺口候選判定為「可接受、不阻擋」(理由見下)。
 
 ## Acceptance Criteria Results
-
 | Criterion | Result | Notes |
 |---|---|---|
-| AC1 — 未登入 balance → 401 `請先登入` | ✅ PASS | status=401, error="請先登入" |
-| AC1 — 登入 balance = ledger delta 總和 | ✅ PASS | api=850, service_role 平行加總=850,一致 |
-| AC1 — transactions ≤20 筆、created_at 降冪 | ✅ PASS | n=9(帳號現有交易數 <20),降冪排序驗證通過 |
-| AC2 — 未登入 checkout → 401 | ✅ PASS | status=401 |
-| AC2 — body 非 JSON → 400 `請求格式錯誤` | ✅ PASS | status=400 |
-| AC2 — packageId 非字串/查無方案 → 400 `無效的點數方案` | ✅ PASS | 兩分支皆 400,error 訊息正確 |
-| AC2 — 合法方案 → 200 { orderId, redirectUrl },server 端定價快照 | ✅ PASS | body 夾帶偽造 amountTwd=1/points=99999 被忽略;DB 訂單 amount_twd=100, points=100, provider=mock, user_id 正確 |
-| AC3 — 壞簽章 → 400 `invalid webhook`,訂單不變、不發點 | ✅ PASS | 訂單仍 pending |
-| AC3 — 簽章有效但查無單 → 400 同訊息(不洩漏存在性) | ✅ PASS | status 與 message 皆與壞簽章情境一致 |
-| AC3 — 正確簽章 → 200,ledger +points、訂單 paid+provider_txn_id+paid_at | ✅ PASS | ledger 1 筆 delta=100;訂單三欄位皆正確寫入 |
-| AC3 — webhook 重送(冪等)→ 200,ledger 不重複 | ✅ PASS | 重送後 ledger 仍 1 筆 |
-| AC3 — public allowlist 生效(無 cookie 可打通)vs 對照組非 allowlist 路由 401 | ✅ PASS | webhook 全程無 cookie 成功;/api/points/balance 無 cookie → 401 |
-| AC4 — production 且無 MOCK_PAYMENT_SECRET → getPaymentProvider() throw | ✅ PASS | 訊息:"PAYMENT_PROVIDER=mock 在 production 需明確設定 MOCK_PAYMENT_SECRET" |
-| AC5 — 架構規範(factory 使用/錯誤 shape/繁中訊息/admin client 使用點) | ✅ PASS | 靜態核對三支 route + provider.ts + proxy.ts 原始碼(非僅引用 review 結論),確認無 inline Supabase client、無秘密 log、checkout 走 admin insert、balance 走 user-context client 依賴 RLS |
+| AC1 路由保護:未登入 `/shop` → `/login`;balance/checkout API 401 | ✅ PASS | spec 3 測試(access control describe),實跑綠。靜態核對 `src/proxy.ts` `/shop`、`/shop/:path*` 同時在 `PROTECTED_PAGES` 與 `config.matcher` 字面陣列。 |
+| AC2 商店頁(登入):餘額/骨架/錯誤態、三方案卡、交易記錄、401→unauthenticated 態 | ✅ PASS | balance/packages 測試涵蓋餘額數字≥50、三卡 visible+enabled、交易列表含「註冊禮」。骨架/錯誤/unauthenticated 態無自動測試 — 見下方缺口判定,靜態核對程式碼邏輯正確。 |
+| AC3 購買流程端到端(真 webhook 路徑) | ✅ PASS | end-to-end 測試:checkout→mock-checkout URL→模擬付款→`/shop?paid=1`→`shop-paid-success`→餘額+100→交易列表含「購買點數」。取消流程另有測試(不扣款)。購買中 disabled/文案無自動測試 — 見下方缺口判定。 |
+| AC4 webhook 行為(重送冪等、竄改簽章) | ✅ PASS | 重送兩次皆 200、僅入帳一次(餘額 before+100,非 +200);竄改簽章 400 + 餘額不變。 |
+| AC5 Playwright 驗收(本 task acceptance gate) | ✅ PASS | `npx playwright test points-shop` 10/10 passed,兩輪實跑(~32s/~37s),dev server 已就緒,單 worker 循序執行無競態。 |
 
-## Edge Case Results
-
-| Edge Case | Result | Notes |
+## Edge Case / Header 連結新增測試 Results
+| Case | Result | Notes |
 |---|---|---|
-| checkout body = `null`(合法 JSON,非 object) | ✅ PASS | 400 無效的點數方案 |
-| checkout body = `[]`(array) | ✅ PASS | 400 |
-| checkout body = `{}`(缺 packageId) | ✅ PASS | 400 |
-| checkout packageId = `""`(空字串) | ✅ PASS | 400 |
-| webhook payload 缺 sig 欄位 | ✅ PASS | 400 |
-| webhook sig = `""`(空字串) | ✅ PASS | 400,`safeEqualHex` 對長度 0 直接 fail-closed |
-| webhook sig 非 hex 字元 | ✅ PASS | 400,Buffer.from hex 解碼長度不符 |
-| webhook sig 長度不符(短於 HMAC-SHA256 輸出) | ✅ PASS | 400 |
-| webhook payload = array | ✅ PASS | 400 |
-| webhook payload = `null`(合法 JSON) | ✅ PASS | 400 |
-| checkout 三方案(basic/plus/mega)定價快照皆正確 | ✅ PASS | amount_twd/points 逐一核對:100/100、500/550、1000/1200 |
-| production 守門控制組:production + 有設 secret → 不 throw | ✅ PASS | 排除「production 恆 throw」假陽性,證明門檻確實綁在「無 secret」而非環境本身 |
-| production 守門控制組:dev + 無 secret → 不 throw | ✅ PASS | 排除「恆 throw」假陽性,確認僅 production 環境觸發 |
-| production + 不支援的 PAYMENT_PROVIDER → throw | ✅ PASS | 訊息:"未支援的 PAYMENT_PROVIDER: ecpay" |
+| Header 未登入時 `header-nav-shop-link` 隱藏 | ✅ PASS | review 🟡-2 修復項,已納入 `points-shop.spec.ts` header navigation describe |
+| Header 登入後連結可見且點擊導向 `/shop` | ✅ PASS | 同上,含 URL 斷言與 balance 可見斷言 |
+| checkout 未知 packageId → 400 | ✅ PASS | |
 
-> 併發雙 webhook(review 💡 已論證無資損)本輪未重測,依 architect-plan 假設 2 視為既定架構決策,僅驗證行為分支(壞簽章/查無單/正常/重送/production 守門),不追加額外併發測試。
+## 缺口候選判定(architect-plan Step 2 / review 🟡 交付項)
 
-## Error State Results
+### 1. Header 點數商店連結測試覆蓋(review 🟡-2)
+**判定:已修復,非缺口。** 新增測試對「登出隱藏」「登入可見」「點擊導頁」三斷言點皆覆蓋,已納入 10 測試中並實測綠燈。
 
-| Error State | Result | Notes |
-|---|---|---|
-| balance 未登入 401 | ✅ PASS | 同上 AC1 |
-| checkout 未登入 401 / 400 系列 | ✅ PASS | 同上 AC2 |
-| webhook 400 系列(壞簽章/查無單/非 JSON/缺欄位/空 sig/非 hex/array/null payload) | ✅ PASS | 同上 AC3 + edge case |
-| DB 查詢失敗 → 500(balance/checkout/webhook 皆有 error.code/message 分支) | 未觸發實測 | 靜態核對程式碼路徑存在且訊息不洩漏秘密(console.error 僅記 code/message);無安全手段可在真雲端 Supabase 上人為製造 DB 層失敗,依 review 靜態結論採信 |
+### 2. spec 憑證 fast-fail guard(review 🟡-1)
+**判定:已修復,非缺口。** `points-shop.spec.ts:8-12` 在 import 後立即檢查 `PW_VERIFIED_EMAIL`/`PW_VERIFIED_PASSWORD`,缺失時 `throw new Error(...)` 帶明確中文訊息指向 `.env.playwright.local`。程式碼邏輯核對正確(if 未設 → throw,訊息可讀);未實跑「憑證缺失」情境本身(因不擬清空使用者真實的 `.env.playwright.local` 或以危險方式操作開發環境變數來驗證框架層級的同步 throw 分支),此為單純同步邏輯,程式碼審閱已足以確認正確性。
+
+### 3. 載入骨架 / 錯誤狀態 / unauthenticated 頁面狀態無自動測試(architect Step 2 缺口候選)
+**判定:可接受,不阻擋 sign-off(Low)。**
+- 靜態核對 `src/app/shop/page.tsx`:`pageState` 為簡單 4 態有限狀態機(loading/ready/unauthenticated/error),loading 態渲染 `shop-balance-loading` 骨架、error 態渲染 `-` + `shop-load-error`(role=alert)、unauthenticated 態渲染 `shop-unauthenticated` + 登入連結,三態互斥且皆有 testid,邏輯直觀無分支耦合風險。
+- unauthenticated 態部分已間接被覆蓋:access control 測試斷言未登入訪問 `/shop` 直接被 proxy redirect 到 `/login`,不會進入頁面組件的 unauthenticated 分支(該分支僅在極端情境如 session 於頁面停留期間過期時觸發,屬邊角)。
+- loading/error 態屬純 UI 呈現(無業務邏輯、無資料寫入風險),與已測試的 ready 態共用同一段 fetch 邏輯,fetch 失敗與成功路徑用 try/catch + status check 明確分支,程式碼審閱信心高。
+- 建議(非阻擋):未來若要補測試,可用 route mock/intercept 加一個 error 態案例即可涵蓋主要風險。記為技術債,不影響本次 sign-off。
+
+### 4. 購買中(buyingId 非 null)按鈕全部 disabled + 當前鈕文案「前往付款…」無自動測試
+**判定:可接受,不阻擋 sign-off(Low)。**
+- 靜態核對 `src/app/shop/page.tsx`:`buyingId` 為單一 state,三顆按鈕 `disabled={buyingId !== null}` 共用同一條件,文案 `buyingId === pkg.id ? "前往付款…" : "購買"` 邏輯簡單、無 race window(`handleBuy` 開頭 `if (buyingId) return` guard 雙擊)。
+- 此 UI 態存續時間極短(checkout API 呼叫到 `router.push` 之間,實測約 <1s),對「短暫中間態」做 Playwright 斷言易 flaky(需精準卡在時間窗口內斷言),與 review 💡-3(`balanceNumber()` 空字串邊角)風險等級相當,手動驗證比自動化划算。
+- 已用程式碼審閱代替自動化:邏輯無缺陷。
 
 ## Regression Check
-
-| Feature | Result |
-|---|---|
-| /api/auth/login(balance/checkout 測試流程依賴的登入)| ✅ PASS(測試前置步驟成功取得 session cookie) |
-| proxy.ts 既有受保護頁面/路由守門(/profile 等未變更範圍)| ✅ PASS(靜態核對 PROTECTED_PAGES/matcher 僅新增 /shop 相關項,未動既有項目) |
-| point_transactions RLS select_own(balance API 依賴)| ✅ PASS(登入帳號僅取回自己交易,加總與 service_role 平行查核一致) |
+| Feature | Result | Notes |
+|---|---|---|
+| Header 既有連結(home/venue/profile/logout) | ✅ PASS(不受影響) | `HeaderPage.ts` 僅新增 `navShopLink` locator,未修改既有 locator 定義,不影響既有 spec 檔對 Header 的使用 |
+| 既有其他 spec 檔(auth/venue-planner 等) | 未於本次 QA 範圍內執行 | 依 orchestrator-output.md AC5 與 architect-plan Step 5 分工:本次 QA 僅驗 `points-shop.spec.ts`,全套 8 支 spec 迴歸驗證屬 main thread playwright 關卡職責(story 收尾階段執行),非本輪 QA 重複項目 |
 
 ## Security Test
-- Sensitive data exposure: PASS — 回應 body 僅含 balance/transactions/orderId/redirectUrl/error;無 token/cookie/秘密外洩;console.error 僅記 error.code/message
-- Input validation: PASS — checkout body 型別逐項驗證(null/array/缺欄位/空字串皆擋);webhook payload 型別驗證 + HMAC-SHA256 timingSafeEqual(空 sig/非 hex/短長度皆 fail-closed)
-- Auth boundary: PASS — balance/checkout 雙層守門(route getUser + proxy 頁面/API 保護);webhook 為 public allowlist 路由,簽章驗證先於任何 DB 操作,壞簽章與查無單回相同 status+message(anti-enumeration 符合 status code 顯式相等要求)
+- Sensitive data exposure: **PASS** — 未見 token/session/密碼於畫面或回應內容中;spec 憑證讀自 `.env.playwright.local`(gitignored),未硬編碼於檔案內。
+- Input validation: **PASS** — checkout 對未知 `packageId` 回 400(spec 覆蓋);webhook 對竄改簽章回 400 + 餘額不變(spec 覆蓋)。
+- Auth boundary: **PASS** — 未登入 `/shop` 頁面/`balance`/`checkout` API 三處皆正確擋下(3 測試全綠),與 `src/proxy.ts` 靜態核對一致。
 
 ## Bugs Found
 無。
 
 ## Test Coverage
-- New code coverage: 手動驗證涵蓋三支 route 全部分支(balance 2 分支、checkout 5 分支、webhook 7 分支)+ production 守門 4 案例,共 35 項獨立重測全數 PASS
-- Minimum required: 依 AGENTS.md,BACKEND 任務無強制數字覆蓋率門檻,僅要求「新邏輯需有測試覆蓋(manual checklist 或 Playwright 皆可)」— 本任務以 `supabase/tests/points_api_manual.md` + 本報告的獨立重測滿足
-- Status: PASS
+- New code coverage: AC1-AC5 共 10/10 Playwright 測試綠燈(含本輪新增 header 連結測試),覆蓋 access control、balance/packages 顯示、端到端購買、取消不扣款、webhook 冪等/竄改拒絕、checkout 未知方案拒絕、Header 連結顯隱與導頁。
+- Minimum required(AGENTS.md):FRONTEND 任務以 Playwright 為 acceptance gate,無強制覆蓋率百分比門檻。
+- Status: **PASS**
 
-## 補充說明
-- lint(`npm run lint`)乾淨,無新增警告/錯誤。
-- 測試訂單與發點均以 service_role 於腳本內清理(checkout/webhook 主流程訂單、三方案定價驗證訂單皆已 delete)。資料庫中殘留的 2026-07-16 pending/paid 訂單為先前 implement/review 階段遺留,非本輪 QA 產生,不在本任務清理責任範圍內(供人工留意,未列為 bug — 對應 review 💡 建議 2「pending 訂單無清理機制」已知風險)。
+## 附註:本輪 QA 執行方式
+- Dev server 於背景執行,`curl localhost:3000/` 回 200 確認就緒後才起跑。
+- `npx playwright test points-shop --reporter=list` 實跑兩輪(worker=1、fullyParallel=false,無並行競態),均 10/10 passed。
+- 未採信 review-report.md 的文字結論,對兩項🟡的修復內容直接讀原始碼(`git diff` + `Read`)逐行核對後才判定「已修復」。
