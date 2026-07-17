@@ -1,8 +1,8 @@
 {
   "story_file": "stories/ai-planner-assistant.md",
   "story_title": "場地規劃 AI 助理",
-  "task_index": 0,
-  "current_task": "[BACKEND] 點數 ledger 支援 AI 扣點:migration 放寬 reason check constraint 加 ai_usage;扣點邏輯抽成可重用 helper",
+  "task_index": 1,
+  "current_task": "[BACKEND] POST /api/ai/chat:接收前端對話歷史+可選圖片,後端注入系統提示與tool定義,先扣點後呼叫Claude,回傳回應與usage",
   "task_type": "BACKEND",
   "stage": "complete",
   "iteration": {
@@ -12,7 +12,7 @@
   "checkpoints": {
     "scan": "pending",
     "orchestrate": "completed",
-    "architect": "completed",
+    "architect": "awaiting_approval",
     "implement": "completed",
     "review": "completed",
     "qa": "completed",
@@ -23,6 +23,6 @@
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "notes": "新story 3 tasks。branch feat/ai-planner(基於feat/points-pipeline)。背景決策見story檔尾註解(模型Sonnet 5/對話不落DB/cache策略)。Task1(BACKEND)QA APPROVED,無需playwright,stage=complete。",
-  "last_updated": "2026-07-17T17:20:00+08:00"
+  "notes": "Task 2/3。Task 1完成(894f62e)。模型claude-sonnet-5(env var AI_MODEL)、@anthropic-ai/sdk、系統提示cache斷點、扣點用task1的deductPoints。QA 24/24通過(含4次真模型付費呼叫,cache驗證PASS cacheReadTokens=2993),BACKEND task無playwright關卡,stage=complete。",
+  "last_updated": "2026-07-17T19:40:00+08:00"
 }
