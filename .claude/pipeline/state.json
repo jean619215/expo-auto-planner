@@ -1,9 +1,9 @@
 {
-  "story_file": "stories/points-system.md",
-  "story_title": "會員點數系統與商店頁",
-  "task_index": 2,
-  "current_task": "[FRONTEND] 商店頁 /shop(三種點數方案+結帳流程)+ mock 金流結帳頁 /shop/mock-checkout + Header 點數餘額,Playwright 驗收(points-shop.spec.ts, ShopPage.ts)",
-  "task_type": "FRONTEND",
+  "story_file": "stories/ai-planner-assistant.md",
+  "story_title": "場地規劃 AI 助理",
+  "task_index": 0,
+  "current_task": "[BACKEND] 點數 ledger 支援 AI 扣點:migration 放寬 reason check constraint 加 ai_usage;扣點邏輯抽成可重用 helper",
+  "task_type": "BACKEND",
   "stage": "complete",
   "iteration": {
     "review": 1,
@@ -16,13 +16,13 @@
     "implement": "completed",
     "review": "completed",
     "qa": "completed",
-    "playwright": "completed"
+    "playwright": "pending"
   },
   "flags": {
     "review_critical_pending": false,
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "notes": "Story補件完成:3/3 tasks(資料層/API/商店頁前端)皆通過pipeline。Task1修正:revoke migration(20260717010000)。Task3修正:spec env guard+header導航測試(spec 9→10)。全套Playwright 80/80。branch feat/points-pipeline。",
-  "last_updated": "2026-07-17T09:50:00+08:00"
+  "notes": "新story 3 tasks。branch feat/ai-planner(基於feat/points-pipeline)。背景決策見story檔尾註解(模型Sonnet 5/對話不落DB/cache策略)。Task1(BACKEND)QA APPROVED,無需playwright,stage=complete。",
+  "last_updated": "2026-07-17T17:20:00+08:00"
 }

@@ -26,6 +26,16 @@
 ## 冪等(DB 層)
 - [x] 對既有 user 重插 `ref_id='signup:{uid}'` → `duplicate key value violates unique constraint "point_transactions_ref_id_key"`
 
+## AI 扣點(2026-07-17 新增,migration `20260717070000_allow_ai_usage_reason.sql`)
+- [x] `reason='ai_usage'` 可插入(constraint 放寬生效)
+- [x] 非法 reason 仍被 `point_transactions_reason_check` 擋
+- [x] `getBalance(userId)`(`src/lib/points/ledger.ts`)與直查 SUM(delta) 一致
+- [x] `deductPoints` 成功 → ledger 出現 -amount 列、餘額遞減
+- [x] 同 refId 重扣 → `duplicate`,不重複扣點(unique 冪等)
+- [x] 餘額不足 → `insufficient_balance`,無寫入
+- [x] amount 非正整數 → throw
+- 已知取捨:餘額檢查與寫入非同 transaction,極端併發可能短暫透支(見 ledger.ts 檔頭註解)
+
 ## 重跑指引
 腳本範本:建 admin client(service_role)+ user client(anon key 登入測試帳號),依上列項目逐項探測。
 注意:

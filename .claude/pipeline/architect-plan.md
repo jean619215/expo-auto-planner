@@ -1,36 +1,42 @@
-# Architect Plan — 會員點數系統與商店頁 / Task 3(補件驗證,最後 task)
+# Architect Plan — 場地規劃 AI 助理 / Task 1
 
-> Task: [FRONTEND] 商店頁 /shop + mock 結帳頁 + Header 連結 + Playwright
-> 性質:驗證既有實作與測試(commit 5c6c7d7)。缺口才修。
+> Task: [BACKEND] 點數 ledger 支援 AI 扣點 — reason constraint migration + 扣點 helper
+> 性質:新實作(小型資料層任務)
 
-## 驗證步驟
+## Step 1 — Migration `2026xxxx_allow_ai_usage_reason.sql`
+```sql
+alter table public.point_transactions
+  drop constraint point_transactions_reason_check;
+alter table public.point_transactions
+  add constraint point_transactions_reason_check
+  check (reason in ('signup_bonus', 'purchase', 'ai_usage'));
+```
+- 先查雲端實際 constraint 名稱(可能是自動命名)再寫,避免 drop 不存在的名稱。
+- 推雲端:session pooler(ap-southeast-1:5432,經驗:transaction pooler 6543 撞 prepared statement 錯誤;直連 IPv6 不通)。push 需使用者執行或授權。
 
-### Step 1 — 靜態核對(AC1/AC2/AC3 對照原始碼)
-- `src/app/shop/page.tsx`、`src/app/shop/mock-checkout/page.tsx`、`src/components/Header.tsx`、`src/proxy.ts`(已於 orchestrate 讀過:/shop 在 PROTECTED_PAGES + matcher 雙處,Header 登入時顯示點數商店連結)。
-- 規範:shadcn 元件、`@/*` alias、frontend 只打 `/api/*`(無直呼 Supabase)、testid 覆蓋 AC 所需斷言點。
+## Step 2 — Helper `src/lib/points/ledger.ts`(server-only)
+- `getBalance(userId)`:admin client select delta sum(與 balance route 同語意;balance route 是 user-context + RLS,helper 是 admin + 明確 userId — 註解說明差異)。
+- `deductPoints({userId, amount, reason, refId})`:
+  1. 驗 amount 為正整數(否則 throw — 程式錯誤,非業務錯誤)。
+  2. getBalance < amount → `{ok:false, error:'insufficient_balance'}`。
+  3. insert `{user_id, delta: -amount, reason, ref_id: refId}`;錯誤碼 23505 → `{ok:false, error:'duplicate'}`;其他錯誤 throw。
+  4. 成功 `{ok:true}`。
+- 檔頭註解:server-only 警告(service_role)+ 併發透支取捨說明。
+- **不改** balance route 去共用 getBalance — 該 route 走 RLS 防線,語意不同,不硬抽象(AC3 不破壞既有)。
 
-### Step 2 — spec 覆蓋度核對(AC5 對 AC1-AC4)
-逐條映射 points-shop.spec.ts 9 測試 → AC:
-- AC1:access control 3 測試(/shop redirect、balance 401、checkout 401)✓
-- AC2:balance+packages 測試(餘額數字、三卡、註冊禮出現在交易記錄)✓;**缺口候選**:載入骨架/錯誤狀態/unauthenticated 頁面狀態無測試(骨架與 error 屬 UI 細節,可接受 — QA 判定)
-- AC3:end-to-end 購買、取消不扣款 ✓;**缺口候選**:購買中按鈕 disabled 文案無測試(可接受 — 手動)
-- AC4:重送冪等、竄改簽章 ✓
-- checkout 未知方案 400 ✓
-
-### Step 3 — review(獨立)
-UI 程式碼 + spec 品質(等待邏輯、flaky 風險、憑證不硬編)。
-
-### Step 4 — QA(獨立)
-AC 逐條 + edge case 判定(Step 2 缺口候選是否需補測試)。
-
-### Step 5 — playwright 驗收關卡(最後把關)
-- 乾淨 dev server(重啟背景 npm run dev)跑 `points-shop.spec.ts` 全 9 測試。
-- Story 收尾:跑全套 spec(8 支檔案,含既有 70 測試 + points-shop 9)確認無迴歸。
-- 全綠 → task [x]、story 3/3 完成、Notion task 卡 + story 列標已完成。
-
-## 產出物
-- 驗收結果記入 qa-report / task-log
-- (若 QA 判定需補測試)points-shop.spec.ts 增測 — 屬缺口修補,非重新實作
+## Step 3 — 驗證
+1. Migration 探測(node 腳本,service_role):插 `ai_usage` 成功(隨即清理)、插 `bogus` reason 被 check 擋。
+2. Helper 實測腳本(strip-types 直跑 .ts,同 task 2 守門探測做法):
+   - getBalance 與 balance API 數字一致
+   - 扣點成功 → 餘額遞減,ledger 出現負 delta 列
+   - 餘額不足 → 拒絕且無寫入
+   - 同 refId 重扣 → `duplicate`,ledger 仍一筆
+   - 全部測試列清理
+3. `tsc --noEmit` + `npm run lint` + 全套 Playwright 迴歸(AC3)。
+4. checklist:`supabase/tests/points_data_layer_manual.md` 追加 ai_usage 段落。
 
 ## Escalation 檢查
-- 無 API contract / schema / auth 變更。無 escalation。
+- schema 變更 = 一條 check constraint 放寬,無資料遷移。無 API contract 變更。非 auth-adjacent(不碰 trigger/RLS/grant)。無 escalation。
+
+## 產出物
+- migration 檔、`src/lib/points/ledger.ts`、checklist 更新、scratchpad 驗證腳本(不進 repo)

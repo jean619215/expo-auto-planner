@@ -1,56 +1,52 @@
-# Code Review Report — 會員點數系統與商店頁 / Task 3 [FRONTEND] 商店頁 + mock 結帳頁 + Header 連結 + Playwright
-> Generated: 2026-07-17T09:40:00+08:00 | Review iteration: 1
-> 性質:補件驗證(實作已在 commit 5c6c7d7),review 對象為既有前端程式碼 + Playwright spec。
+# Code Review Report — 場地規劃 AI 助理 / Task 1 [BACKEND] 點數 ledger 支援 AI 扣點
+> Generated: 2026-07-17T16:05:00+08:00 | Review iteration: 1
 
 ## Overall Assessment
 APPROVED WITH MINOR FIXES
 
 ## Summary
-前端實作品質良好:UI 狀態機完整(loading/ready/error/unauthenticated)、race 防護到位(useEffect cleanup flag、雙重點擊 guard)、全走 `/api/*`、shadcn 元件、`@/*` alias、無硬編碼秘密。mock 結帳頁的安全性論證成立(見 Security Assessment)。發現 2 個 🟡(spec 憑證缺 fast-fail、Header 連結無測試覆蓋)與 4 個 💡,無 🔴。
+實作乾淨、範圍克制,完全對齊 architect plan 三步驟:migration 只放寬一條 check constraint(實名已探測確認)、helper 是薄資料層(admin factory + 明確錯誤分支)、checklist 補齊。錯誤處理三分支(insufficient_balance / 23505 duplicate / 其他 throw)與 AC2 逐條吻合;併發透支取捨在檔頭註解與 checklist 誠實記錄,符合 AC 明訂的 phase 1 接受範圍。無 🔴;1 個 🟡(server-only 邊界只靠註解,而 `src/lib/points/` 已是 client/server 混用目錄)、3 個 💡。
 
 ## 🔴 Critical Issues (Must Fix — Pipeline Paused)
 無。
 
 ## 🟡 Should Fix (Auto-resolved by Developer)
 
-### Issue 1 — spec 憑證缺 fast-fail 防護
-- **File**: `playwright-tests/points-shop.spec.ts:7-8`
-- **Issue**: `process.env.PW_VERIFIED_EMAIL!` / `PW_VERIFIED_PASSWORD!` 用 non-null assertion 但無執行期檢查。`.env.playwright.local` 不存在時(新機器/CI),`undefined` 會被當字串填進登入表單,9 個測試以難以診斷的登入失敗炸掉,而非清楚的設定錯誤。
-- **Suggested fix**: 檔案頂部加 guard:任一變數缺失時 `throw new Error("缺少 PW_VERIFIED_EMAIL/PW_VERIFIED_PASSWORD — 請設定 .env.playwright.local")`(或 `test.skip` 帶訊息)。若其他既有 spec 有相同模式,一併統一。
-
-### Issue 2 — Header 點數商店連結無測試覆蓋
-- **File**: `playwright-tests/points-shop.spec.ts`(缺測);實作在 `src/components/Header.tsx`(`header-nav-shop-link`)
-- **Issue**: orchestrator 澄清後「Header 登入時顯示點數商店連結」是本 task 交付項之一,但 9 個測試全部直接 `goto("/shop")`,使用者實際的入口路徑(Header 連結)完全未驗證。連結壞掉(href 打錯、條件渲染錯)測試仍全綠。
-- **Suggested fix**: 加一測試:登入後斷言 `header-nav-shop-link` 可見、點擊後 URL 為 `/shop`;未登入斷言不可見。交 QA 階段一併判定(與 architect-plan Step 2 缺口候選同機制)。
+### Issue 1 — ledger.ts 的 server-only 邊界只有註解,無機械防線
+- **File**: `src/lib/points/ledger.ts:1`
+- **Issue**: 檔頭註解警告「絕不可被 client component import」,但 `src/lib/points/` 目錄已有 client 端消費者(`src/app/shop/page.tsx` import `@/lib/points/packages`)。同目錄混放 client-safe 與 service_role 模組,靠註解防呆的失效機率比 `src/lib/supabase/admin.ts`(整目錄皆 server 語意)高。誤 import 不會洩漏 key(`SUPABASE_SERVICE_ROLE_KEY` 非 `NEXT_PUBLIC_` 前綴,不會被 inline 進 client bundle),但會變成執行期才爆的 undefined-key client,錯誤訊息離根因很遠。
+- **Suggested fix**: 加機械防線,擇一:(a) `npm i server-only` 後在 `ledger.ts`(理想上 `admin.ts` 也一併)檔頭 `import "server-only"` — Next 官方模式,client bundle 引用直接 build fail;此為 breaking-changes 版 Next,實作前先確認 `node_modules/next/dist/docs/` 中 server-only 慣例仍相同。(b) 不加依賴,module top-level `if (typeof window !== "undefined") throw new Error("ledger.ts is server-only")`。任一種都把「註解約定」升級成「編譯/載入期失敗」。
 
 ## 💡 Suggestions (Consider — No Action Required)
 
-1. **`/shop?paid=1` banner 在重新整理後仍顯示** (`src/app/shop/page.tsx:48,133`) — query param 不會消失,使用者 reload 會再看到「付款成功」。可用 `router.replace("/shop")` 在顯示後清掉 param。純 UX,不影響正確性(banner 不代表再次入帳)。
-2. **mock-checkout 顯示欄位取自未簽章的 URL params** (`src/app/shop/mock-checkout/page.tsx:30-32`) — `amount/points/name` 可被使用者改 URL 竄改,但僅影響「顯示」;實際入帳點數由 webhook 端以 orderId 查 server 端定價快照決定(checkout route 註解已明示不信任 client)。React 自動 escape,無 XSS。真金流換裝時此頁整個被取代 — 僅記錄。
-3. **`ShopPage.balanceNumber()` 對空字串回傳 0** (`playwright-tests/pages/ShopPage.ts:39-42`) — `Number("") === 0`,理論上可能把「尚未渲染」誤讀為餘額 0。實務上所有呼叫點前都先 `expect(balance).toBeVisible()`,且 error 態顯示 `-` 得 NaN 會明確失敗,風險極低。可改為 text 為空時 throw。
-4. **error 態下購買鈕仍可點** (`src/app/shop/page.tsx:164,197-204`) — balance 載入失敗不阻擋 checkout(兩者是獨立 API),行為合理;僅提醒此為有意設計而非遺漏。
+### Suggestion 1 — migration drop constraint 可加 `if exists`
+- **File**: `supabase/migrations/20260717070000_allow_ai_usage_reason.sql:6`
+- 實名已對雲端探測確認,且 Postgres 對 inline column check 的自動命名(`point_transactions_reason_check`)在全新環境依序重放 migrations 時也是決定性的,目前寫法可接受。`drop constraint if exists` 只是讓任何曾手動改過 constraint 的環境重放時不硬炸。migration 已推雲端,不值得為此重寫;記錄供未來 migration 參考。
+
+### Suggestion 2 — `refId` 未驗非空字串
+- **File**: `src/lib/points/ledger.ts:48`
+- `ref_id text unique` 允許 NULL(TS 型別已擋 undefined),但空字串 `""` 會佔用 unique 鍵位。呼叫端(task 2)照 `ai:{request_id}` 慣例不會發生;若想與 amount 同等防呆,可加 `if (!refId) throw`。
+
+### Suggestion 3 — getBalance 全取 rows 在 JS 加總
+- **File**: `src/lib/points/ledger.ts:34`
+- 與 balance route 同語意(刻意一致,plan 明訂不硬抽象),目前規模無虞。未來量大時兩處一起改 DB 端聚合(rpc/view);balance route 已有相同的未來改進註記。
 
 ## Security Assessment
-- Secrets scan: **PASS** — 無硬編碼憑證。spec 憑證走 `.env.playwright.local`(gitignored,符合 AGENTS.md)。`MOCK_SECRET` 的 dev 預設值不是真實系統憑證,且 `getPaymentProvider()` 有 production 守門(NODE_ENV=production 且未設 `MOCK_PAYMENT_SECRET` 直接 throw)。
-- Input validation: **PASS** — checkout route 對 body/packageId 逐層驗證;mock-checkout 頁對缺參數顯示錯誤而非壞掉;webhook 端 `verifyWebhook` 型別 + HMAC(timingSafeEqual)驗證。
-- Auth/authz: **PASS** — `/shop` 在 `PROTECTED_PAGES` + `config.matcher`(`/shop`、`/shop/:path*` 靜態字面值)雙處,mock-checkout 子路徑也受保護。API 側 proxy fail-closed + route 內 `getUser()` 雙層 401。
-- **mock 結帳頁安全性論證(重點審項):成立。** 簽章素材(orderId/txnId/sig)經 URL 繞回 webhook 看似把簽好的東西暴露給瀏覽器,但:(a) 這是刻意模擬「金流商付款頁 → server-to-server 通知」的路徑,簽章由扮演金流商後台的本端先簽好,前端只是搬運,不是前端直接加點捷徑(provider.ts:47-48、mock-checkout 頁頂註解均有交代);(b) 重放已由 ref_id idempotency 擋住(spec 有測,兩次 200 只入帳一次);(c) 竄改由 HMAC 擋住(spec 有測,400 + 餘額不變);(d) production 未明確設 secret 無法啟用 mock;(e) 真金流換裝時此頁整個被取代,不留攻擊面。無 🔴。
-- Test coverage: 9/9 測試對應 AC1-AC4(access control 3 + balance/packages 1 + purchase flow 5);缺口見 🟡-2 及 architect-plan Step 2 已標的 2 個可接受候選(載入骨架/購買中 disabled 文案)。
-- 無 CORS/CSP 修改、無新相依、無 log 洩漏。
-
-## Spec 品質(flaky 風險)
-- `playwright.config.ts` `workers: 1` + `fullyParallel: false` → 同帳號的 balance 斷言無 test 間競態(before + 100 這類相對斷言因序列執行而安全)。
-- 等待邏輯全用 auto-retry assertion(`toBeVisible`/`toHaveText`/`toHaveURL`),無 sleep/waitForTimeout;`balanceNumber()` 呼叫前均先斷言 balance 可見(loading 骨架用不同 testid,不會誤讀)。
-- webhook 重送/竄改測試用 `page.request`(共享登入 context)直打 API,再 navigate 後以 auto-retry 斷言餘額 — 無隱式競態。
-- Page object 模式與既有 `pages/` 一致(testid locator + 動作方法),mock-checkout 元素併入 ShopPage 合理(檔頭有註明涵蓋範圍)。
+- Secrets scan: PASS(無硬編 key/token;admin client 走 `src/lib/supabase/admin.ts` factory,env 取值)
+- Input validation: PASS(amount 正整數驗證失敗即 throw;reason 由 TS union `"ai_usage"` 收斂,DB check constraint 為第二道防線)
+- Auth/authz: N/A(helper 明文聲明身分驗證屬呼叫端 route 責任;`src/proxy.ts` fail-closed 預設保護新 API route,task 2 落地時再驗)
+- Sensitive logging: PASS(error 訊息只含 Postgres error code/message,無 token/cookie/密碼)
+- 點數 guardrails: PASS — append-only 尊重(helper 只 insert,無 update/delete);寫入走 service_role(authenticated 本就無 insert grant);冪等由 ref_id unique 承擔,與 signup trigger / purchase webhook 同一機制。職責劃分清楚:webhook 發點自管 insert、helper 只管扣點,`DeductReason` 收斂為 `"ai_usage"` 防止誤用於發放路徑
+- CORS/CSP: 未觸碰
+- 敏感度判定:觸及點數 ledger 但非 auth-adjacent(無 trigger/RLS/grant/session 變更),依 AGENTS.md 不觸發自動 🔴
+- Test coverage: 手動驗證 10/10 PASS + checklist 8 項;tsc/lint 乾淨(review 階段重跑確認);Playwright 80/80 無迴歸(本專案無 JS unit test framework,手動 checklist 即 BACKEND 驗收形式,覆蓋充分)
 
 ## Plan Compliance
-- [x] All architect plan steps implemented(Step 1 靜態核對、Step 2 覆蓋度映射均獨立複核,結論一致)
-- [x] Implementation matches plan intent(補件驗證,無程式碼修改)
-- [x] No unauthorised scope additions
+- [x] All architect plan steps implemented(migration / helper / 驗證+checklist)
+- [x] Implementation matches plan intent(含「不硬抽象 balance route」的明確不作為)
+- [x] No unauthorised scope additions(無 AI route、無前端、無退點機制)
 
 ## Conversation Log
 | Issue | Developer Response | Resolution |
 |---|---|---|
-| 🟡-1 spec 憑證 fast-fail | 待 developer 處理 | 交回 pipeline auto-resolve(不阻擋 review 通過) |
-| 🟡-2 Header 連結測試 | 待 QA 判定是否補測 | 交 QA 階段(與 architect 缺口候選同機制) |
+| 🟡 Issue 1(server-only 機械防線) | 待 developer 處理(不阻擋進 QA;可併入 task 2 developer 觸點) | pending |

@@ -1,44 +1,48 @@
-# Orchestrator Output — 會員點數系統與商店頁 / Task 3(最後 task)
+# Orchestrator Output — 場地規劃 AI 助理 / Task 1
 
-> Story: stories/points-system.md
-> Task 3 of 3: [FRONTEND] 商店頁 + mock 結帳頁 + Header 連結 + Playwright
-> Task type: **FRONTEND**
-> 性質: **補件驗證** — 實作與 Playwright 測試已存在(commit 5c6c7d7:points-shop.spec.ts 9 測試、ShopPage.ts)。驗證為主,缺口才修。
-> 澄清修正:story 原寫「Header 顯示點數餘額」與實作不符 — 實作為 Header「點數商店」連結(登入時顯示),餘額顯示在商店頁。story 檔已修正對齊。
+> Story: stories/ai-planner-assistant.md
+> Task 1 of 3: [BACKEND] 點數 ledger 支援 AI 扣點
+> Task type: **BACKEND**
+> 性質:新實作。為 task 2 的 AI API 鋪路 — 本 task 只做資料層 + helper,不碰 AI 呼叫。
+
+## 任務描述
+1. Migration:放寬 `point_transactions.reason` check constraint,允許值加入 `ai_usage`(現為 `signup_bonus`/`purchase`)。
+2. 扣點 helper:餘額檢查 + 扣點寫入,抽成 `src/lib/points/` 內可重用函式,供 task 2(及未來任何扣點功能)使用。
 
 ## Clarified Acceptance Criteria
 
-### AC1 — 路由保護
-- 未登入訪 `/shop` → redirect `/login`(proxy.ts:PROTECTED_PAGES + matcher 皆已含 `/shop`、`/shop/:path*`)。
-- balance/checkout API 未登入 401(proxy + route 雙層)。
+### AC1 — reason constraint migration
+- 新 migration(不改舊檔):drop 舊 check、加新 check `reason in ('signup_bonus','purchase','ai_usage')`。
+- 既有資料不受影響(舊值仍合法)。
+- 推上雲端 Supabase。
 
-### AC2 — 商店頁(登入)
-- 顯示點數餘額(`shop-balance`,載入中骨架 `shop-balance-loading`,錯誤顯示 `-` + `shop-load-error` role=alert)。
-- 三方案卡(`shop-package-{basic|plus|mega}`)含點數/贈點/價格與購買鈕(`shop-buy-{id}`)。
-- 交易記錄列表(`shop-transactions`):reason 中文標籤(註冊禮/購買點數)、時間、±delta 上色。
-- API 401 時頁面轉 `shop-unauthenticated` 狀態(含登入連結)。
+### AC2 — 扣點 helper(`src/lib/points/ledger.ts` 或同等)
+- 介面(server-only,內部用 admin client;絕不可被 client component import):
+  - `getBalance(userId): Promise<number>` — SUM(delta),與 `/api/points/balance` 算法一致。
+  - `deductPoints({userId, amount, reason, refId}): Promise<{ok: true} | {ok: false, error: 'insufficient_balance' | 'duplicate'}>`
+- 行為:
+  - `amount` 正整數;寫入 ledger 為 `delta = -amount`。
+  - 餘額不足 → 不寫入,回 `insufficient_balance`。
+  - `refId` 撞 unique(23505)→ 回 `duplicate`(冪等,不重扣)。
+  - 其他 DB 錯誤 → throw(呼叫端回 500)。
+- 已知取捨(記錄,不解):餘額檢查與寫入非同一 transaction — 併發下可能短暫透支。phase 1 接受(單人使用情境),註解註明;真要嚴格需 DB function/RPC,留待未來。
 
-### AC3 — 購買流程(端到端,走真 webhook 路徑)
-- 點購買 → POST checkout → router.push mock 結帳頁(`/shop/mock-checkout?orderId&txnId&sig&…`)。
-- 購買中:全部購買鈕 disabled、當前鈕文案「前往付款…」;失敗顯示 `shop-buy-error` role=alert。
-- mock 結帳頁:顯示方案名/點數/金額(`mock-checkout-*` testids);「模擬付款」按鈕打真 webhook(簽章驗證路徑)成功後導回 `/shop?paid=1`;「取消」返回 `/shop` 不扣款。
-- `/shop?paid=1` 顯示 `shop-paid-success` role=status,餘額 +100(basic)。
+### AC3 — 不破壞既有行為
+- signup_bonus trigger、購買 webhook 發點、balance API 全部不受影響。
+- 全套 Playwright(points-shop 10 測試含在內)不迴歸。
 
-### AC4 — webhook 行為(spec 內 API-level 測試)
-- 同 payload 重送兩次:200 + 只入帳一次。
-- 竄改簽章:400 + 餘額不變。
+### AC4 — 規範符合
+- Supabase 走 factory(admin.ts);不 log 秘密;helper 不含 API route 邏輯(薄薄資料層)。
 
-### AC5 — Playwright 驗收(本 task 的 acceptance gate)
-- `points-shop.spec.ts` 9 測試全綠(access control 3 + balance/packages 1 + purchase flow 5),page-object 模式(ShopPage.ts),對 live dev server + 真雲端 Supabase。
-- 全套既有 spec 檔不因本 story 迴歸(story 完成時全套跑)。
-
-## 驗證方式
-- playwright 階段:乾淨 dev server 跑 points-shop.spec.ts,story 收尾跑全套 8 支 spec。
-- review:UI 程式碼規範(shadcn 元件、@/* alias、frontend 不直呼 Supabase、testid 覆蓋)。
+## 驗證方式(BACKEND)
+- Migration:推雲端後 service_role 探測 — 插 `reason='ai_usage'` 成功、插非法 reason 被 check 擋。
+- Helper:node 腳本實測 getBalance 正確、扣點成功遞減、餘額不足拒絕、重複 refId 冪等、測試資料清理。
+- 手動 checklist 更新(`supabase/tests/` 新增或併入 points checklist)。
+- `npx tsc --noEmit` + lint + 全套 Playwright 迴歸。
 
 ## Out of Scope
-- 真金流(ECPay)接入、pending 訂單清理(review 💡 已記錄)。
+- AI API route(task 2)、前端(task 3)、退點機制、DB transaction 級嚴格扣點。
 
 ## Assumptions
-1. 既有 9 測試視為 spec 起點;QA 若發現 AC 未覆蓋項,補測試而非改功能。
-2. 本 task 完成 = story 完成:story 檔 3 checkbox 全勾 + Notion story 列標已完成。
+1. helper 放 `src/lib/points/ledger.ts`;architect 可調整檔名。
+2. 扣點量由呼叫端決定(task 2 再定每次呼叫扣多少),helper 不寫死。
