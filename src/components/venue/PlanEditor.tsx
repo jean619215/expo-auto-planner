@@ -8,11 +8,14 @@ import {
   DEFAULT_FLOOR,
   GRID_MAJOR_M,
   GRID_MINOR_M,
+  MIN_FLOOR_VERTICES,
   VENUE_SIZE_M,
   WALL_THICKNESS_M,
+  clampColumnCenter,
   computePxPerMeter,
   createColumn,
   createDefaultFloor,
+  createObjectId,
   createWall,
   findClosestEdge,
   formatMeters,
@@ -32,7 +35,13 @@ import {
   type PlanPoint,
   type WallSegment,
 } from "@/lib/venue/plan";
-import { FURNITURE_DEFAULTS, type FurnitureItem } from "@/lib/venue/furniture";
+import {
+  FURNITURE_DEFAULTS,
+  translateFurniture,
+  type FurnitureItem,
+} from "@/lib/venue/furniture";
+import type { AiAction, AiActionResult, AiItemType } from "@/lib/ai-panel/actions";
+import AiPanel from "./AiPanel";
 import PlanToolbar, { type EditorMode } from "./PlanToolbar";
 import VenueSceneLoader from "./VenueSceneLoader";
 import { Button } from "@/components/ui/button";
@@ -154,6 +163,22 @@ export default function PlanEditor() {
     y: -1 | 1;
   } | null>(null);
   const suppressObjectClickRef = useRef(false);
+  // AiPanel 的 handleSend 跨一次 await(等待 /api/ai/chat 回應)才呼叫
+  // applyActions;等待期間使用者仍可繼續手動編輯 2D 畫布。若 applyActions
+  // 直接讀取 render 當下 closure 住的 polygon/walls/columns/furniture,
+  // 套用時會用「送出當下」的舊快照整批覆蓋,吃掉等待中的手動編輯。改用
+  // 每次 render 後同步更新的 ref,讓 applyActions 呼叫當下永遠讀到最新
+  // committed state。
+  const polygonRef = useRef(polygon);
+  const wallsRef = useRef(walls);
+  const columnsRef = useRef(columns);
+  const furnitureRef = useRef(furniture);
+  useEffect(() => {
+    polygonRef.current = polygon;
+    wallsRef.current = walls;
+    columnsRef.current = columns;
+    furnitureRef.current = furniture;
+  });
   const [sceneSnapshot, setSceneSnapshot] = useState<{
     polygon: FloorPolygon;
     walls: WallSegment[];
@@ -480,6 +505,264 @@ export default function PlanEditor() {
     node.position(snappedPx);
   }
 
+  function itemTypeLabel(type: AiItemType): string {
+    if (type === "wall") return "牆壁";
+    if (type === "column") return "柱子";
+    return "家具";
+  }
+
+  function normalizeRotationDeg(deg: number): number {
+    const wrapped = deg % 360;
+    return wrapped < 0 ? wrapped + 360 : wrapped;
+  }
+
+  // AI 面板 tool call 執行層(AC3)。逐一套用到本地變數,最後一次性
+  // setState,避免同一批 actions 內多個操作互相踩到彼此的 stale 狀態
+  // (React state 更新非同步,不能在迴圈內連續讀舊的 walls/columns/furniture)。
+  //
+  // 種子值一律從 ref 讀(見上方 polygonRef 等宣告),不是直接讀
+  // polygon/walls/columns/furniture 這幾個 state 變數 — applyActions 是
+  // AiPanel 送出 /api/ai/chat 後、跨一次 await 才在回應到達時被呼叫,
+  // 若讀 render-time closure 住的 state,套用的會是「使用者點送出當下」
+  // 的舊快照,吃掉等待期間任何手動編輯。ref 由 useEffect 每次 render 後
+  // 同步更新,呼叫當下永遠是最新 committed state。
+  function applyActions(actions: AiAction[]): AiActionResult[] {
+    const results: AiActionResult[] = [];
+    let nextPolygon = polygonRef.current;
+    let nextWalls = wallsRef.current;
+    let nextColumns = columnsRef.current;
+    let nextFurniture = furnitureRef.current;
+
+    for (const action of actions) {
+      switch (action.type) {
+        case "generate_plan": {
+          const floorPoints = action.input.floor.map((p) => snapPoint(p, venueSizeM));
+          if (floorPoints.length < MIN_FLOOR_VERTICES) {
+            results.push({
+              toolUseId: action.toolUseId,
+              ok: false,
+              message: `地板頂點不足 ${MIN_FLOOR_VERTICES} 點,已跳過產生配置`,
+            });
+            break;
+          }
+          const generatedWalls = action.input.walls
+            .map((w) => createWall(w.start, w.end, venueSizeM))
+            .filter((w): w is WallSegment => w !== null);
+          const generatedColumns: Column[] = action.input.columns.map((c) => ({
+            id: createObjectId(),
+            center: clampColumnCenter(
+              snapPoint(c.center, venueSizeM),
+              c.w,
+              c.h,
+              venueSizeM,
+            ),
+            w: c.w,
+            h: c.h,
+          }));
+          const generatedFurniture: FurnitureItem[] = action.input.furniture.map((f) => {
+            const defaults = FURNITURE_DEFAULTS[f.kind];
+            return {
+              id: createObjectId(),
+              kind: f.kind,
+              center: clampColumnCenter(
+                snapPoint(f.center, venueSizeM),
+                defaults.w,
+                defaults.h,
+                venueSizeM,
+              ),
+              w: defaults.w,
+              h: defaults.h,
+              rotationDeg: normalizeRotationDeg(f.rotationDeg),
+            };
+          });
+          nextPolygon = floorPoints;
+          nextWalls = generatedWalls;
+          nextColumns = generatedColumns;
+          nextFurniture = generatedFurniture;
+          setSelectedObject(null);
+          setSelectedVertex(null);
+
+          const parts = [`${floorPoints.length} 頂點地板`];
+          if (generatedWalls.length > 0) parts.push(`${generatedWalls.length} 面牆`);
+          if (generatedColumns.length > 0) parts.push(`${generatedColumns.length} 根柱子`);
+          if (generatedFurniture.length > 0) parts.push(`${generatedFurniture.length} 件家具`);
+          results.push({
+            toolUseId: action.toolUseId,
+            ok: true,
+            message: `已產生配置:${parts.join("、")}`,
+          });
+          break;
+        }
+        case "add_furniture": {
+          const defaults = FURNITURE_DEFAULTS[action.input.kind];
+          const item: FurnitureItem = {
+            id: createObjectId(),
+            kind: action.input.kind,
+            center: clampColumnCenter(
+              snapPoint(action.input.center, venueSizeM),
+              defaults.w,
+              defaults.h,
+              venueSizeM,
+            ),
+            w: defaults.w,
+            h: defaults.h,
+            rotationDeg: normalizeRotationDeg(action.input.rotationDeg),
+          };
+          nextFurniture = [...nextFurniture, item];
+          results.push({
+            toolUseId: action.toolUseId,
+            ok: true,
+            message: `已新增${defaults.label}`,
+          });
+          break;
+        }
+        case "move_item": {
+          const { itemType, index, center } = action.input;
+          if (itemType === "wall") {
+            if (index < 0 || index >= nextWalls.length) {
+              results.push({
+                toolUseId: action.toolUseId,
+                ok: false,
+                message: `第 ${index} 個牆壁不存在,已跳過移動`,
+              });
+              break;
+            }
+            const wall = nextWalls[index];
+            const mid = {
+              x: (wall.start.x + wall.end.x) / 2,
+              y: (wall.start.y + wall.end.y) / 2,
+            };
+            const updated = translateWall(
+              wall,
+              { x: center.x - mid.x, y: center.y - mid.y },
+              venueSizeM,
+            );
+            nextWalls = nextWalls.map((w, i) => (i === index ? updated : w));
+          } else if (itemType === "column") {
+            if (index < 0 || index >= nextColumns.length) {
+              results.push({
+                toolUseId: action.toolUseId,
+                ok: false,
+                message: `第 ${index} 個柱子不存在,已跳過移動`,
+              });
+              break;
+            }
+            const col = nextColumns[index];
+            const updated = translateColumn(
+              col,
+              { x: center.x - col.center.x, y: center.y - col.center.y },
+              venueSizeM,
+            );
+            nextColumns = nextColumns.map((c, i) => (i === index ? updated : c));
+          } else {
+            if (index < 0 || index >= nextFurniture.length) {
+              results.push({
+                toolUseId: action.toolUseId,
+                ok: false,
+                message: `第 ${index} 件家具不存在,已跳過移動`,
+              });
+              break;
+            }
+            const item = nextFurniture[index];
+            const updated = translateFurniture(
+              item,
+              { x: center.x - item.center.x, y: center.y - item.center.y },
+              venueSizeM,
+            );
+            nextFurniture = nextFurniture.map((f, i) => (i === index ? updated : f));
+          }
+          results.push({
+            toolUseId: action.toolUseId,
+            ok: true,
+            message: `已移動${itemTypeLabel(itemType)}`,
+          });
+          break;
+        }
+        case "remove_item": {
+          const { itemType, index } = action.input;
+          if (itemType === "wall") {
+            if (index < 0 || index >= nextWalls.length) {
+              results.push({
+                toolUseId: action.toolUseId,
+                ok: false,
+                message: `第 ${index} 個牆壁不存在,已跳過刪除`,
+              });
+              break;
+            }
+            nextWalls = nextWalls.filter((_, i) => i !== index);
+          } else if (itemType === "column") {
+            if (index < 0 || index >= nextColumns.length) {
+              results.push({
+                toolUseId: action.toolUseId,
+                ok: false,
+                message: `第 ${index} 個柱子不存在,已跳過刪除`,
+              });
+              break;
+            }
+            nextColumns = nextColumns.filter((_, i) => i !== index);
+          } else {
+            if (index < 0 || index >= nextFurniture.length) {
+              results.push({
+                toolUseId: action.toolUseId,
+                ok: false,
+                message: `第 ${index} 件家具不存在,已跳過刪除`,
+              });
+              break;
+            }
+            nextFurniture = nextFurniture.filter((_, i) => i !== index);
+          }
+          results.push({
+            toolUseId: action.toolUseId,
+            ok: true,
+            message: `已刪除${itemTypeLabel(itemType)}`,
+          });
+          break;
+        }
+        case "resize_floor": {
+          const points = action.input.points.map((p) => snapPoint(p, venueSizeM));
+          if (points.length < MIN_FLOOR_VERTICES) {
+            results.push({
+              toolUseId: action.toolUseId,
+              ok: false,
+              message: `地板頂點不足 ${MIN_FLOOR_VERTICES} 點,已跳過調整地板`,
+            });
+            break;
+          }
+          nextPolygon = points;
+          results.push({
+            toolUseId: action.toolUseId,
+            ok: true,
+            message: `已調整地板形狀(${points.length} 頂點)`,
+          });
+          break;
+        }
+      }
+    }
+
+    // 比對/寫回都用 ref(不是 state 變數)— 同一個 applyActions 呼叫可能
+    // 早於下一次 render 的 useEffect 就再被呼叫一次(例如同一輪回應內
+    // 連續兩個 tool_use),eager 更新 ref 確保這種情況下第二次呼叫仍看得到
+    // 第一次呼叫剛寫入的結果,而不是等到 effect 才同步的舊值。
+    if (nextPolygon !== polygonRef.current) {
+      setPolygon(nextPolygon);
+      polygonRef.current = nextPolygon;
+    }
+    if (nextWalls !== wallsRef.current) {
+      setWalls(nextWalls);
+      wallsRef.current = nextWalls;
+    }
+    if (nextColumns !== columnsRef.current) {
+      setColumns(nextColumns);
+      columnsRef.current = nextColumns;
+    }
+    if (nextFurniture !== furnitureRef.current) {
+      setFurniture(nextFurniture);
+      furnitureRef.current = nextFurniture;
+    }
+
+    return results;
+  }
+
   const polygonPx = polygon.flatMap((p) => {
     const px = metersToPx(p, pxPerMeter);
     return [px.x, px.y];
@@ -615,6 +898,12 @@ export default function PlanEditor() {
             >
               下一步
             </Button>
+          </div>
+          <div className="mb-2 flex justify-end">
+            <AiPanel
+              plan={{ polygon, walls, columns, furniture }}
+              applyActions={applyActions}
+            />
           </div>
           <Stage
             width={stagePx}

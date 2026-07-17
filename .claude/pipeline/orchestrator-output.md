@@ -1,44 +1,54 @@
-# Orchestrator Output — 會員點數系統與商店頁 / Task 3(最後 task)
+# Orchestrator Output — 場地規劃 AI 助理 / Task 3(最後 task)
 
-> Story: stories/points-system.md
-> Task 3 of 3: [FRONTEND] 商店頁 + mock 結帳頁 + Header 連結 + Playwright
+> Story: stories/ai-planner-assistant.md
+> Task 3 of 3: [FRONTEND] 場地規劃頁 AI 助理面板
 > Task type: **FRONTEND**
-> 性質: **補件驗證** — 實作與 Playwright 測試已存在(commit 5c6c7d7:points-shop.spec.ts 9 測試、ShopPage.ts)。驗證為主,缺口才修。
-> 澄清修正:story 原寫「Header 顯示點數餘額」與實作不符 — 實作為 Header「點數商店」連結(登入時顯示),餘額顯示在商店頁。story 檔已修正對齊。
+> 性質:新實作。API 已就緒(`POST /api/ai/chat`,contract 見 route.ts / task 2 紀錄)。
+
+## 任務描述
+場地規劃頁加 AI 助理面板:對話 UI、前端 state 持有歷史、圖片上傳、tool call 執行層(套用到 PlanEditor 的 plan state 並同步 2D/3D)、點數/錯誤狀態,Playwright 驗收。
 
 ## Clarified Acceptance Criteria
 
-### AC1 — 路由保護
-- 未登入訪 `/shop` → redirect `/login`(proxy.ts:PROTECTED_PAGES + matcher 皆已含 `/shop`、`/shop/:path*`)。
-- balance/checkout API 未登入 401(proxy + route 雙層)。
+### AC1 — 面板 UI
+- 場地規劃頁(/venue)有 AI 助理開關(`ai-panel-toggle`),開啟顯示側欄面板(`ai-panel`):訊息列表(`ai-messages`)、輸入框(`ai-input`)、送出鈕(`ai-send`)、圖片上傳(`ai-image-input`)。
+- 送出中:輸入與按鈕 disabled、loading 指示(`ai-loading`)。
+- 面板顯示目前點數餘額(取自回應 `balance`,`ai-balance`)與每次呼叫成本提示。
 
-### AC2 — 商店頁(登入)
-- 顯示點數餘額(`shop-balance`,載入中骨架 `shop-balance-loading`,錯誤顯示 `-` + `shop-load-error` role=alert)。
-- 三方案卡(`shop-package-{basic|plus|mega}`)含點數/贈點/價格與購買鈕(`shop-buy-{id}`)。
-- 交易記錄列表(`shop-transactions`):reason 中文標籤(註冊禮/購買點數)、時間、±delta 上色。
-- API 401 時頁面轉 `shop-unauthenticated` 狀態(含登入連結)。
+### AC2 — 對話流程
+- 歷史存前端 state,格式 = Anthropic 原生 content blocks(升級落 DB 不需改邏輯)。
+- 送出:歷史 + 新訊息 POST `/api/ai/chat`;回應 append 助理訊息;text blocks 渲染文字。
+- 圖片:選圖後預覽,送出時轉 base64 image block 併入該則 user 訊息;限制單張 ≤3MB,超過顯示錯誤不送出。
+- 重新整理歷史消失 = 預期行為(phase 1)。
 
-### AC3 — 購買流程(端到端,走真 webhook 路徑)
-- 點購買 → POST checkout → router.push mock 結帳頁(`/shop/mock-checkout?orderId&txnId&sig&…`)。
-- 購買中:全部購買鈕 disabled、當前鈕文案「前往付款…」;失敗顯示 `shop-buy-error` role=alert。
-- mock 結帳頁:顯示方案名/點數/金額(`mock-checkout-*` testids);「模擬付款」按鈕打真 webhook(簽章驗證路徑)成功後導回 `/shop?paid=1`;「取消」返回 `/shop` 不扣款。
-- `/shop?paid=1` 顯示 `shop-paid-success` role=status,餘額 +100(basic)。
+### AC3 — tool call 執行
+- 回應含 `tool_use` blocks 時逐一執行,套用到 PlanEditor state 並同步 2D/3D:
+  - `generate_plan` → 覆蓋 floor/walls/columns/furniture(id 由前端 `createObjectId()` 生成;數值過 snap/clamp 既有邏輯)
+  - `add_furniture` → append(預設尺寸查 FURNITURE_DEFAULTS)
+  - `move_item` / `remove_item` → 依 itemType+index 操作;index 越界 → 該操作跳過並在對話顯示警告
+  - `resize_floor` → setPolygon(≥3 點,否則跳過+警告)
+- 執行後對話中顯示動作摘要(`ai-action-summary`,如「已產生配置:4 頂點地板、2 件家具」)。
+- 執行完把 `tool_result` block(成功/跳過訊息)加入歷史 — 下輪模型看得到結果。
+- 每輪 user 訊息自動附帶目前配置 JSON(供模型 index 參照;附在訊息文字後,格式後端 prompt 已約定)。
 
-### AC4 — webhook 行為(spec 內 API-level 測試)
-- 同 payload 重送兩次:200 + 只入帳一次。
-- 竄改簽章:400 + 餘額不變。
+### AC4 — 錯誤與點數狀態
+- 402 → 顯示「點數不足」+ 目前餘額 + 商店連結(/shop),輸入的訊息保留可重送。
+- 400/500/502 → 對話顯示錯誤(`ai-error`,role=alert),歷史不留失敗輪。
+- 未登入(401)→ 引導登入(場地頁本身受 proxy 保護,理論上不會發生;防禦性處理)。
 
-### AC5 — Playwright 驗收(本 task 的 acceptance gate)
-- `points-shop.spec.ts` 9 測試全綠(access control 3 + balance/packages 1 + purchase flow 5),page-object 模式(ShopPage.ts),對 live dev server + 真雲端 Supabase。
-- 全套既有 spec 檔不因本 story 迴歸(story 完成時全套跑)。
+### AC5 — Playwright 驗收(acceptance gate)
+- 新 spec `ai-panel.spec.ts` + page object `AiPanelPage.ts`。
+- **模型呼叫 mock**:Playwright `page.route()` 攔截 `/api/ai/chat` 回固定 fixture(文字回應/tool_use 回應/402)— 驗收不花真錢、不 flaky。真模型煙霧測試一條(`@paid` tag,預設 skip,手動跑)。
+- 覆蓋:面板開關、送訊息顯示回應、generate_plan fixture 套用後 2D 出現對應物件、402 顯示、輸入驗證。
+- 全套既有 spec 無迴歸。
 
-## 驗證方式
-- playwright 階段:乾淨 dev server 跑 points-shop.spec.ts,story 收尾跑全套 8 支 spec。
-- review:UI 程式碼規範(shadcn 元件、@/* alias、frontend 不直呼 Supabase、testid 覆蓋)。
+### AC6 — 規範
+- 走 `/api/ai/chat`,不直呼 Supabase/Anthropic;shadcn 元件;testid 覆蓋斷言點;無秘密進前端。
 
 ## Out of Scope
-- 真金流(ECPay)接入、pending 訂單清理(review 💡 已記錄)。
+- 對話落 DB、streaming、多 tab 同步、行動版排版優化。
 
 ## Assumptions
-1. 既有 9 測試視為 spec 起點;QA 若發現 AC 未覆蓋項,補測試而非改功能。
-2. 本 task 完成 = story 完成:story 檔 3 checkbox 全勾 + Notion story 列標已完成。
+1. 面板整合方式(PlanEditor 子元件 vs 兄弟元件+state 提升)由 architect 定,以最小侵入為準。
+2. 目前配置 JSON 附帶格式:user 訊息文字後附 `\n\n[目前配置]\n{json}`;token 成本可接受(配置小)。
+3. 真模型煙霧測試不進 CI 門檻。

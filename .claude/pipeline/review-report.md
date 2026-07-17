@@ -1,56 +1,75 @@
-# Code Review Report — 會員點數系統與商店頁 / Task 3 [FRONTEND] 商店頁 + mock 結帳頁 + Header 連結 + Playwright
-> Generated: 2026-07-17T09:40:00+08:00 | Review iteration: 1
-> 性質:補件驗證(實作已在 commit 5c6c7d7),review 對象為既有前端程式碼 + Playwright spec。
+# Code Review Report — 場地規劃 AI 助理 / Task 3 [FRONTEND] AI 助理面板
+
+> Generated: 2026-07-17T20:05:00+08:00 | Review iteration: 1
 
 ## Overall Assessment
 APPROVED WITH MINOR FIXES
 
 ## Summary
-前端實作品質良好:UI 狀態機完整(loading/ready/error/unauthenticated)、race 防護到位(useEffect cleanup flag、雙重點擊 guard)、全走 `/api/*`、shadcn 元件、`@/*` alias、無硬編碼秘密。mock 結帳頁的安全性論證成立(見 Security Assessment)。發現 2 個 🟡(spec 憑證缺 fast-fail、Header 連結無測試覆蓋)與 4 個 💡,無 🔴。
+實作品質良好:server/client 邊界乾淨(client 端 `src/lib/ai-panel/` 與 server-only `src/lib/ai/` 確實分離,無任何 client 路徑觸及 server-only 模組或 env)、對話 state 為 Anthropic 原生 MessageParam 格式(升級落 DB 免改)、tool_result carry-over 符合 Anthropic 慣例(置於下一則 user 訊息開頭、對應 tool_use_id、失敗以 is_error 標記)、PlanEditor diff 限於 applyActions + 掛面板(未碰既有編輯邏輯)。Playwright mock fixtures 與真實 route 回應 shape(content/stopReason/usage/balance;402 body)逐欄一致。實測:tsc exit 0、lint exit 0、ai-panel spec 7/7 綠(reviewer 複核 tsc/lint 均通過)。無 Critical;2 項 Should Fix、4 項 Consider。
+
+## 裁決事項
+
+### 1. `import type Anthropic from "@anthropic-ai/sdk"`(AiPanel.tsx:4)— **可接受**
+- `import type` 為 type-only 語法,TypeScript 編譯期保證抹除,SDK 不會進 client bundle,無 runtime 依賴、無 env/秘密洩漏路徑(API key 只在 server-only 的 `src/lib/ai/client.ts` 讀取,未受影響)。
+- SDK 套件本身無 `server-only` 標記,type-only import 不觸發邊界違規。tsc/lint 實測通過。
+- 相較自定義型別,直接共用 wire-format 型別與 route 回傳(route 原樣回傳 `response.content`)可防型別漂移 — 反而是較安全的選擇。
+- 附帶條件:必須維持 type-only(見 💡 C-4)。
+
+### 2. `/venue` 不在 PROTECTED_PAGES(membership task 7 遺留缺口)— **本 task 不修,維持記錄**
+- 對本 task 的實際影響有限:`/api/ai/chat` 由 proxy fail-closed 保護(未登入 401),AiPanel 已實作防禦性 401 處理(顯示「請先登入」)。未登入者只能看到面板 UI,無法消耗點數或觸及資料。
+- 不在本 task 修的理由:(a) 屬 auth 頁面保護變更,per AGENTS.md 為自動 Critical 級改動,超出本 task「AI 面板」核准範圍;(b) 既有全部 venue 系列 Playwright spec(venue-plan-editor / venue-objects / venue-dimensions / venue-3d-scene)與本次 ai-panel spec 均以未登入狀態跑 /venue,加保護會全面破壞測試策略,需同步引入登入 setup(storageState)— 應為獨立 task。
+- 處置:記錄為 known gap,建議開後續 task「/venue 加入 PROTECTED_PAGES + config.matcher + Playwright 登入 setup 遷移」。
 
 ## 🔴 Critical Issues (Must Fix — Pipeline Paused)
 無。
 
 ## 🟡 Should Fix (Auto-resolved by Developer)
 
-### Issue 1 — spec 憑證缺 fast-fail 防護
-- **File**: `playwright-tests/points-shop.spec.ts:7-8`
-- **Issue**: `process.env.PW_VERIFIED_EMAIL!` / `PW_VERIFIED_PASSWORD!` 用 non-null assertion 但無執行期檢查。`.env.playwright.local` 不存在時(新機器/CI),`undefined` 會被當字串填進登入表單,9 個測試以難以診斷的登入失敗炸掉,而非清楚的設定錯誤。
-- **Suggested fix**: 檔案頂部加 guard:任一變數缺失時 `throw new Error("缺少 PW_VERIFIED_EMAIL/PW_VERIFIED_PASSWORD — 請設定 .env.playwright.local")`(或 `test.skip` 帶訊息)。若其他既有 spec 有相同模式,一併統一。
+### Issue 1 — API 等待期間的跨 render stale closure,會覆蓋使用者手動編輯
+- **File**: src/components/venue/AiPanel.tsx:156(呼叫端)/ src/components/venue/PlanEditor.tsx applyActions
+- **Issue**: `handleSend` 在點擊當下 capture `applyActions` prop;`applyActions` 本身 close over 該次 render 的 polygon/walls/columns/furniture。AI 呼叫需時數秒,期間輸入框雖 disabled 但 2D 畫布仍可操作 — 使用者若在等待中拖動/新增/刪除物件,回應到達後 applyActions 從「送出前快照」起算並整批 setState,使用者等待期間的編輯被靜默覆蓋。批次局部變數只解了同批 actions 內的 stale 問題,未解跨 await 的 render staleness。
+- **Suggested fix**: PlanEditor 內 applyActions 改為 functional updater(`setFurniture(prev => ...)` 等,起點取 prev 而非 closure 變數);move/remove 的 index 檢查一併在 updater 內做。或以 ref 持有最新 state(latest-ref pattern)供 applyActions 讀取。
 
-### Issue 2 — Header 點數商店連結無測試覆蓋
-- **File**: `playwright-tests/points-shop.spec.ts`(缺測);實作在 `src/components/Header.tsx`(`header-nav-shop-link`)
-- **Issue**: orchestrator 澄清後「Header 登入時顯示點數商店連結」是本 task 交付項之一,但 9 個測試全部直接 `goto("/shop")`,使用者實際的入口路徑(Header 連結)完全未驗證。連結壞掉(href 打錯、條件渲染錯)測試仍全綠。
-- **Suggested fix**: 加一測試:登入後斷言 `header-nav-shop-link` 可見、點擊後 URL 為 `/shop`;未登入斷言不可見。交 QA 階段一併判定(與 architect-plan Step 2 缺口候選同機制)。
+### Issue 2 — @paid 真模型煙霧測試無登入步驟,實跑必失敗
+- **File**: playwright-tests/ai-panel.spec.ts:230-244
+- **Issue**: 煙霧測試直接 navigate /venue 後送真請求,但 `/api/ai/chat` 受 proxy 保護 — 未登入必回 401 → 面板顯示 ai-error → `expect(ai.error).toBeHidden()` 必失敗。此測試在其唯一設計用途(手動設 PW_PAID_AI=1 執行)下 dead-on-arrival。預設 skip 故不影響 CI 門檻,但交付一條註定失敗的測試不符驗收品質。
+- **Suggested fix**: 測試開頭加登入流程(重用既有 spec 的登入 helper / `.env.playwright.local` 測試帳號),或在無憑證時同時 skip(`test.skip(!process.env.PW_PAID_AI || !process.env.PW_TEST_EMAIL)`)並補登入。
 
 ## 💡 Suggestions (Consider — No Action Required)
 
-1. **`/shop?paid=1` banner 在重新整理後仍顯示** (`src/app/shop/page.tsx:48,133`) — query param 不會消失,使用者 reload 會再看到「付款成功」。可用 `router.replace("/shop")` 在顯示後清掉 param。純 UX,不影響正確性(banner 不代表再次入帳)。
-2. **mock-checkout 顯示欄位取自未簽章的 URL params** (`src/app/shop/mock-checkout/page.tsx:30-32`) — `amount/points/name` 可被使用者改 URL 竄改,但僅影響「顯示」;實際入帳點數由 webhook 端以 orderId 查 server 端定價快照決定(checkout route 註解已明示不信任 client)。React 自動 escape,無 XSS。真金流換裝時此頁整個被取代 — 僅記錄。
-3. **`ShopPage.balanceNumber()` 對空字串回傳 0** (`playwright-tests/pages/ShopPage.ts:39-42`) — `Number("") === 0`,理論上可能把「尚未渲染」誤讀為餘額 0。實務上所有呼叫點前都先 `expect(balance).toBeVisible()`,且 error 態顯示 `-` 得 NaN 會明確失敗,風險極低。可改為 text 為空時 throw。
-4. **error 態下購買鈕仍可點** (`src/app/shop/page.tsx:164,197-204`) — balance 載入失敗不阻擋 checkout(兩者是獨立 API),行為合理;僅提醒此為有意設計而非遺漏。
+### C-1 — parseToolUse 靜默忽略未知 tool 名稱,潛在不可恢復對話 + 重複扣點
+- **File**: src/lib/ai-panel/actions.ts:118-120
+- 未知 tool_use 被丟棄 → 該 tool_use_id 無對應 tool_result → 下一輪送出時上游必回 400,且 400 發生在扣點之後(route 取捨:不退點)— 使用者每次重試都燒點數,對話永久卡死。以現狀(前後端 tool 集同版共同部署)不可能觸發,故列 Consider;若日後後端加 tool,建議 default 分支改為產生 `is_error: true` 的 tool_result(「不支援的操作」)而非忽略。
+
+### C-2 — plan prop 未含 venueSizeM(偏離 architect plan)
+- **File**: src/components/venue/AiPanel.tsx:17-22 / PlanEditor.tsx 掛載處
+- Architect plan 規格為 `plan: {polygon, walls, columns, furniture, venueSizeM}`;實作省略 venueSizeM,附帶配置 JSON 無場地邊界資訊。模型可從 floor polygon 推斷,實害小,但屬未聲明的 plan 偏差,記錄之。
+
+### C-3 — 跳過警告訊息以 0-based index 顯示給使用者
+- **File**: src/components/venue/PlanEditor.tsx(move_item/remove_item 分支)
+- 「第 0 個牆壁不存在」對使用者不直觀(對模型無妨,tool_result 本就約定 0-based)。可考慮顯示層 +1 或改寫措辭。
+
+### C-4 — 為 type-only SDK import 加防護
+- **File**: src/components/venue/AiPanel.tsx:4
+- SDK 無 server-only 標記,未來若改成 value import,SDK 會被靜默打包進 client(bundle 膨脹,雖無秘密洩漏)。建議加註解說明「必須維持 type-only」,或啟用 `@typescript-eslint/consistent-type-imports`。
 
 ## Security Assessment
-- Secrets scan: **PASS** — 無硬編碼憑證。spec 憑證走 `.env.playwright.local`(gitignored,符合 AGENTS.md)。`MOCK_SECRET` 的 dev 預設值不是真實系統憑證,且 `getPaymentProvider()` 有 production 守門(NODE_ENV=production 且未設 `MOCK_PAYMENT_SECRET` 直接 throw)。
-- Input validation: **PASS** — checkout route 對 body/packageId 逐層驗證;mock-checkout 頁對缺參數顯示錯誤而非壞掉;webhook 端 `verifyWebhook` 型別 + HMAC(timingSafeEqual)驗證。
-- Auth/authz: **PASS** — `/shop` 在 `PROTECTED_PAGES` + `config.matcher`(`/shop`、`/shop/:path*` 靜態字面值)雙處,mock-checkout 子路徑也受保護。API 側 proxy fail-closed + route 內 `getUser()` 雙層 401。
-- **mock 結帳頁安全性論證(重點審項):成立。** 簽章素材(orderId/txnId/sig)經 URL 繞回 webhook 看似把簽好的東西暴露給瀏覽器,但:(a) 這是刻意模擬「金流商付款頁 → server-to-server 通知」的路徑,簽章由扮演金流商後台的本端先簽好,前端只是搬運,不是前端直接加點捷徑(provider.ts:47-48、mock-checkout 頁頂註解均有交代);(b) 重放已由 ref_id idempotency 擋住(spec 有測,兩次 200 只入帳一次);(c) 竄改由 HMAC 擋住(spec 有測,400 + 餘額不變);(d) production 未明確設 secret 無法啟用 mock;(e) 真金流換裝時此頁整個被取代,不留攻擊面。無 🔴。
-- Test coverage: 9/9 測試對應 AC1-AC4(access control 3 + balance/packages 1 + purchase flow 5);缺口見 🟡-2 及 architect-plan Step 2 已標的 2 個可接受候選(載入骨架/購買中 disabled 文案)。
-- 無 CORS/CSP 修改、無新相依、無 log 洩漏。
-
-## Spec 品質(flaky 風險)
-- `playwright.config.ts` `workers: 1` + `fullyParallel: false` → 同帳號的 balance 斷言無 test 間競態(before + 100 這類相對斷言因序列執行而安全)。
-- 等待邏輯全用 auto-retry assertion(`toBeVisible`/`toHaveText`/`toHaveURL`),無 sleep/waitForTimeout;`balanceNumber()` 呼叫前均先斷言 balance 可見(loading 骨架用不同 testid,不會誤讀)。
-- webhook 重送/竄改測試用 `page.request`(共享登入 context)直打 API,再 navigate 後以 auto-retry 斷言餘額 — 無隱式競態。
-- Page object 模式與既有 `pages/` 一致(testid locator + 動作方法),mock-checkout 元素併入 ShopPage 合理(檔頭有註明涵蓋範圍)。
+- Secrets scan: PASS(無硬編碼秘密;API key 僅存在 server-only client.ts,本次未觸碰)
+- Input validation: PASS(client 端 3MB 圖片上限;server 端既有 5MB body 上限 + roles 驗證,未變更)
+- Auth/authz: PASS(/api/ai/chat 受 proxy fail-closed 保護;面板 401 防禦處理到位;/venue 頁面缺口為既有已知問題,裁決見上)
+- CORS/CSP: 未變更 — PASS
+- XSS: PASS(全部經 React text rendering,無 dangerouslySetInnerHTML;server error 字串以純文字渲染)
+- 依賴: 無新增(SDK 為 task 2 既有依賴,本次僅 type-only 引用)
+- Test coverage: ai-panel spec 7 條覆蓋 AC1-AC4(mock)+ 1 條 @paid 煙霧(預設 skip);fixtures 與真 route shape 一致
 
 ## Plan Compliance
-- [x] All architect plan steps implemented(Step 1 靜態核對、Step 2 覆蓋度映射均獨立複核,結論一致)
-- [x] Implementation matches plan intent(補件驗證,無程式碼修改)
-- [x] No unauthorised scope additions
+- [x] All architect plan steps implemented(檔案配置、AiPanel 子元件整合、applyActions、mock 策略均照 plan)
+- [x] Implementation matches plan intent(唯一偏差:venueSizeM 省略,見 C-2)
+- [x] No unauthorised scope additions(PlanEditor diff 僅 applyActions + 掛面板 + 必要 imports)
 
 ## Conversation Log
 | Issue | Developer Response | Resolution |
 |---|---|---|
-| 🟡-1 spec 憑證 fast-fail | 待 developer 處理 | 交回 pipeline auto-resolve(不阻擋 review 通過) |
-| 🟡-2 Header 連結測試 | 待 QA 判定是否補測 | 交 QA 階段(與 architect 缺口候選同機制) |
+| type-only SDK import 裁決 | Developer 主動 flag | Reviewer 裁決可接受(理由見上),附帶 C-4 防護建議 |
+| /venue 未受保護 | Developer 主動 flag(task 7 遺留) | Reviewer 裁決本 task 不修,記錄為 known gap,建議開後續 task |

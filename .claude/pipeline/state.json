@@ -1,8 +1,8 @@
 {
-  "story_file": "stories/points-system.md",
-  "story_title": "會員點數系統與商店頁",
+  "story_file": "stories/ai-planner-assistant.md",
+  "story_title": "場地規劃 AI 助理",
   "task_index": 2,
-  "current_task": "[FRONTEND] 商店頁 /shop(三種點數方案+結帳流程)+ mock 金流結帳頁 /shop/mock-checkout + Header 點數餘額,Playwright 驗收(points-shop.spec.ts, ShopPage.ts)",
+  "current_task": "[FRONTEND] 場地規劃頁 AI 助理面板:對話UI/前端state存歷史/tool call套用到PlanEditor/點數與錯誤狀態,Playwright驗收",
   "task_type": "FRONTEND",
   "stage": "complete",
   "iteration": {
@@ -10,7 +10,7 @@
     "qa": 1
   },
   "checkpoints": {
-    "scan": "pending",
+    "scan": "completed",
     "orchestrate": "completed",
     "architect": "completed",
     "implement": "completed",
@@ -23,6 +23,6 @@
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "notes": "Story補件完成:3/3 tasks(資料層/API/商店頁前端)皆通過pipeline。Task1修正:revoke migration(20260717010000)。Task3修正:spec env guard+header導航測試(spec 9→10)。全套Playwright 80/80。branch feat/points-pipeline。",
-  "last_updated": "2026-07-17T09:50:00+08:00"
+  "notes": "Story「場地規劃AI助理」完成:3/3 tasks(扣點資料層/AI chat API/助理面板)。全套Playwright 87+1skip。branch feat/ai-planner。",
+  "last_updated": "2026-07-17T20:30:00+08:00"
 }
