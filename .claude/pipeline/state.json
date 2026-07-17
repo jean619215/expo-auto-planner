@@ -1,15 +1,16 @@
 {
-  "story_file": "stories/site-navigation-and-profile-edit.md",
-  "story_title": "全站導覽 Header 與個人資料編輯模式",
-  "task_index": 1,
-  "current_task": "[FRONTEND] 個人資料頁改為檢視/編輯模式切換:預設唯讀 + 「編輯」按鈕,點擊後進入可編輯狀態顯示「儲存」,成功儲存後返回唯讀狀態",
+  "story_file": "stories/points-system.md",
+  "story_title": "會員點數系統與商店頁",
+  "task_index": 2,
+  "current_task": "[FRONTEND] 商店頁 /shop(三種點數方案+結帳流程)+ mock 金流結帳頁 /shop/mock-checkout + Header 點數餘額,Playwright 驗收(points-shop.spec.ts, ShopPage.ts)",
   "task_type": "FRONTEND",
+  "stage": "complete",
   "iteration": {
     "review": 1,
     "qa": 1
   },
   "checkpoints": {
-    "scan": "completed",
+    "scan": "pending",
     "orchestrate": "completed",
     "architect": "completed",
     "implement": "completed",
@@ -22,7 +23,6 @@
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "stage": "complete",
-  "last_updated": "2026-07-15T23:59:00+08:00",
-  "notes": "New story: 全站導覽 Header 與個人資料編輯模式. Task 1 of 2 committed (cab566a): global Header + useAuthStatus hook, AuthNav.tsx deleted. Known non-blocking finding from Task 1 QA (out of scope, not acted on): /venue is not in proxy.ts's PROTECTED_PAGES (pre-existing gap since membership task 7). Task 2 (LAST task of this story): implementation complete, independently reviewed (APPROVED), independently QA'd (APPROVED), and now the final playwright gate has run: fresh `npm run dev` against a real local dev server, full suite of all 7 spec files (profile-edit-mode, site-header, membership-task7-task9, venue-plan-editor, venue-objects, venue-dimensions, venue-3d-scene) executed clean — 70/70 passed, 0 failures. All 10 Clarified Acceptance Criteria from orchestrator-output.md cross-checked against test coverage: 9 verified live in-browser by profile-edit-mode.spec.ts (default view state, placeholder, edit entry, cancel/no-API-call/message-clear, save success+role=status, client validation failure+role=alert+no-API-call, API failure stays in edit+retains value, saving-state button disabling, data-testids throughout); AC8 (401 -> unauthenticated page state) verified via documented code-trace (byte-for-byte unchanged pre-existing branch, per reviewer's diff analysis and QA's independent confirmation) rather than a new live-browser probe, since the task didn't touch that code path — accepted as sufficient, consistent with both prior stages' rationale. No gaps found; nothing routed back to implement. checkpoints.playwright=completed, stage=complete. This was the LAST task of the story: story file stories/site-navigation-and-profile-edit.md task 2 checkbox flipped to [x] (both tasks now checked, 驗收條件 section sanity-checked as satisfied by Task 1 (Header) + Task 2 (profile view/edit)). Changes committed alongside pipeline state files, per project convention. Notion: task card set to 已完成, and the parent story's own row in the Stories database also flipped to 已完成 (last task of story rule)."
+  "notes": "Story補件完成:3/3 tasks(資料層/API/商店頁前端)皆通過pipeline。Task1修正:revoke migration(20260717010000)。Task3修正:spec env guard+header導航測試(spec 9→10)。全套Playwright 80/80。branch feat/points-pipeline。",
+  "last_updated": "2026-07-17T09:50:00+08:00"
 }

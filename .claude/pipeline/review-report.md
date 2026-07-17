@@ -1,70 +1,56 @@
-# Code Review Report — 個人資料頁改為檢視/編輯模式切換
-> Generated: 2026-07-15T22:45:00+08:00 | Review iteration: 1
+# Code Review Report — 會員點數系統與商店頁 / Task 3 [FRONTEND] 商店頁 + mock 結帳頁 + Header 連結 + Playwright
+> Generated: 2026-07-17T09:40:00+08:00 | Review iteration: 1
+> 性質:補件驗證(實作已在 commit 5c6c7d7),review 對象為既有前端程式碼 + Playwright spec。
 
 ## Overall Assessment
-APPROVED
+APPROVED WITH MINOR FIXES
 
 ## Summary
-The implementation matches the architect plan almost verbatim: `mode`/`lastSavedNickname` state, `handleEdit`/`handleCancel`/`handleSubmit` semantics, all 7 `data-testid`s, and JSX structure are all present and correct. Independent code tracing and a live re-run of the full Playwright suite (70/70, not just trusting the implementer's reported number) confirm every acceptance criterion and edge case in `orchestrator-output.md` is satisfied with no critical or should-fix issues.
-
-## AGENTS.md Auth-Critical Rule — Explicit Applicability Determination
-AGENTS.md's PR Reviewer instruction states: "Any change touching auth, session, or `DATABASE_URL` handling is automatically 🔴 Critical."
-
-**Determination: does NOT apply to this diff.** Reasoning:
-- `git diff` for `src/app/profile/page.tsx` shows the 401-handling line (`if (result.status === 401) { setPageState("unauthenticated"); }`) is byte-for-byte unchanged from the pre-existing code — it sits inside `handleSubmit`'s failure branch, untouched by this task's edits (confirmed by reading the diff hunk: it appears only as unmodified context, not an added/removed line).
-- `getProfileRequest`/`updateNicknameRequest` (the actual network calls, defined in `src/lib/profile-client.ts`) are imported and called exactly as before — zero changes to that file, confirmed via `git diff --stat` (not listed among changed files).
-- No changes to `src/proxy.ts`, `src/lib/supabase/*`, cookies, session tokens, or `DATABASE_URL` anywhere in this diff.
-- The entire diff is a client-side state-machine restructure (`mode: "view" | "edit"`, `lastSavedNickname`) around a UI that already called these same auth-adjacent endpoints before this task. No new auth decision logic, no new auth-adjacent code path, no behavioral change to what triggers unauthenticated state or how it's handled.
-- Conclusion: this is UI restructuring that happens to *sit near* a pre-existing, unmodified 401 branch — not a change that "touches" auth/session handling in the sense the rule is guarding against (altering how auth state is determined, stored, or enforced). No 🔴 Critical finding triggered by this rule.
+前端實作品質良好:UI 狀態機完整(loading/ready/error/unauthenticated)、race 防護到位(useEffect cleanup flag、雙重點擊 guard)、全走 `/api/*`、shadcn 元件、`@/*` alias、無硬編碼秘密。mock 結帳頁的安全性論證成立(見 Security Assessment)。發現 2 個 🟡(spec 憑證缺 fast-fail、Header 連結無測試覆蓋)與 4 個 💡,無 🔴。
 
 ## 🔴 Critical Issues (Must Fix — Pipeline Paused)
-None.
+無。
 
 ## 🟡 Should Fix (Auto-resolved by Developer)
-None.
+
+### Issue 1 — spec 憑證缺 fast-fail 防護
+- **File**: `playwright-tests/points-shop.spec.ts:7-8`
+- **Issue**: `process.env.PW_VERIFIED_EMAIL!` / `PW_VERIFIED_PASSWORD!` 用 non-null assertion 但無執行期檢查。`.env.playwright.local` 不存在時(新機器/CI),`undefined` 會被當字串填進登入表單,9 個測試以難以診斷的登入失敗炸掉,而非清楚的設定錯誤。
+- **Suggested fix**: 檔案頂部加 guard:任一變數缺失時 `throw new Error("缺少 PW_VERIFIED_EMAIL/PW_VERIFIED_PASSWORD — 請設定 .env.playwright.local")`(或 `test.skip` 帶訊息)。若其他既有 spec 有相同模式,一併統一。
+
+### Issue 2 — Header 點數商店連結無測試覆蓋
+- **File**: `playwright-tests/points-shop.spec.ts`(缺測);實作在 `src/components/Header.tsx`(`header-nav-shop-link`)
+- **Issue**: orchestrator 澄清後「Header 登入時顯示點數商店連結」是本 task 交付項之一,但 9 個測試全部直接 `goto("/shop")`,使用者實際的入口路徑(Header 連結)完全未驗證。連結壞掉(href 打錯、條件渲染錯)測試仍全綠。
+- **Suggested fix**: 加一測試:登入後斷言 `header-nav-shop-link` 可見、點擊後 URL 為 `/shop`;未登入斷言不可見。交 QA 階段一併判定(與 architect-plan Step 2 缺口候選同機制)。
 
 ## 💡 Suggestions (Consider — No Action Required)
-### Suggestion 1
-- **File**: `src/app/profile/page.tsx:142-171` and `210-220`
-- **Issue**: The 身分/建立時間 read-only blocks are duplicated verbatim across the view and edit branches.
-- **Note**: Not actioned — this is a pre-approved, documented tradeoff in `architect-plan.md`'s Architecture Notes (avoids an awkward shared `<form>`/non-form sibling structure), not an oversight. Logged only.
+
+1. **`/shop?paid=1` banner 在重新整理後仍顯示** (`src/app/shop/page.tsx:48,133`) — query param 不會消失,使用者 reload 會再看到「付款成功」。可用 `router.replace("/shop")` 在顯示後清掉 param。純 UX,不影響正確性(banner 不代表再次入帳)。
+2. **mock-checkout 顯示欄位取自未簽章的 URL params** (`src/app/shop/mock-checkout/page.tsx:30-32`) — `amount/points/name` 可被使用者改 URL 竄改,但僅影響「顯示」;實際入帳點數由 webhook 端以 orderId 查 server 端定價快照決定(checkout route 註解已明示不信任 client)。React 自動 escape,無 XSS。真金流換裝時此頁整個被取代 — 僅記錄。
+3. **`ShopPage.balanceNumber()` 對空字串回傳 0** (`playwright-tests/pages/ShopPage.ts:39-42`) — `Number("") === 0`,理論上可能把「尚未渲染」誤讀為餘額 0。實務上所有呼叫點前都先 `expect(balance).toBeVisible()`,且 error 態顯示 `-` 得 NaN 會明確失敗,風險極低。可改為 text 為空時 throw。
+4. **error 態下購買鈕仍可點** (`src/app/shop/page.tsx:164,197-204`) — balance 載入失敗不阻擋 checkout(兩者是獨立 API),行為合理;僅提醒此為有意設計而非遺漏。
 
 ## Security Assessment
-- Secrets scan: PASS (no hardcoded secrets/tokens; Playwright spec reuses existing `.env.playwright.local` vars via `process.env.PW_VERIFIED_EMAIL`/`PW_VERIFIED_PASSWORD`, no new credentials introduced)
-- Input validation: PASS (client-side `isValidNickname`/`NICKNAME_MAX_LENGTH` reused unchanged; server-side validation in `/api/profile` untouched, confirmed out of scope and not modified)
-- Auth/authz: PASS / N/A — see explicit determination above; 401 branch preserved byte-for-byte
-- XSS: PASS — nickname rendered only as JSX text interpolation (`{lastSavedNickname}` / `{nickname}` via controlled `value=`), no `dangerouslySetInnerHTML` anywhere in the diff (confirmed via full-file read)
-- CORS/CSP: not touched
-- SQL injection: N/A, no query code in this diff
-- Test coverage: new logic fully covered by `playwright-tests/profile-edit-mode.spec.ts` (details below)
+- Secrets scan: **PASS** — 無硬編碼憑證。spec 憑證走 `.env.playwright.local`(gitignored,符合 AGENTS.md)。`MOCK_SECRET` 的 dev 預設值不是真實系統憑證,且 `getPaymentProvider()` 有 production 守門(NODE_ENV=production 且未設 `MOCK_PAYMENT_SECRET` 直接 throw)。
+- Input validation: **PASS** — checkout route 對 body/packageId 逐層驗證;mock-checkout 頁對缺參數顯示錯誤而非壞掉;webhook 端 `verifyWebhook` 型別 + HMAC(timingSafeEqual)驗證。
+- Auth/authz: **PASS** — `/shop` 在 `PROTECTED_PAGES` + `config.matcher`(`/shop`、`/shop/:path*` 靜態字面值)雙處,mock-checkout 子路徑也受保護。API 側 proxy fail-closed + route 內 `getUser()` 雙層 401。
+- **mock 結帳頁安全性論證(重點審項):成立。** 簽章素材(orderId/txnId/sig)經 URL 繞回 webhook 看似把簽好的東西暴露給瀏覽器,但:(a) 這是刻意模擬「金流商付款頁 → server-to-server 通知」的路徑,簽章由扮演金流商後台的本端先簽好,前端只是搬運,不是前端直接加點捷徑(provider.ts:47-48、mock-checkout 頁頂註解均有交代);(b) 重放已由 ref_id idempotency 擋住(spec 有測,兩次 200 只入帳一次);(c) 竄改由 HMAC 擋住(spec 有測,400 + 餘額不變);(d) production 未明確設 secret 無法啟用 mock;(e) 真金流換裝時此頁整個被取代,不留攻擊面。無 🔴。
+- Test coverage: 9/9 測試對應 AC1-AC4(access control 3 + balance/packages 1 + purchase flow 5);缺口見 🟡-2 及 architect-plan Step 2 已標的 2 個可接受候選(載入骨架/購買中 disabled 文案)。
+- 無 CORS/CSP 修改、無新相依、無 log 洩漏。
 
-## Independent Verification Performed
-- Traced `handleEdit`/`handleCancel`/`handleSubmit` line-by-line against the plan:
-  - `handleEdit`: resets `nickname` to `lastSavedNickname`, clears `saveError`/`saveSuccess`, sets `mode="edit"` — matches plan exactly.
-  - `handleCancel`: `if (saving) return;` guard, resets `nickname`, clears messages, sets `mode="view"` — **confirmed literally zero fetch/request/await calls in this function's body** (read full function, 6 lines, no async, no network primitives).
-  - `handleSubmit` success path: `setProfile`, `setNickname`, `setLastSavedNickname`, `setMode("view")`, `setSaveSuccess("暱稱已更新")` — matches plan.
-  - `handleSubmit` client-validation-failure path (`!isValidNickname(nickname)`): sets `saveError` and `return`s before `setSaving(true)` is ever called — `mode` is never referenced in this branch, so it necessarily stays `"edit"` (traced: no `setMode` call reachable from this branch).
-  - `handleSubmit` API-error path (non-OK result): `setSaveError(...)`, conditionally `setPageState("unauthenticated")` on 401 — again no `setMode` call in this branch, confirmed `mode` stays `"edit"`.
-- All 7 `data-testid`s present and correctly placed: `profile-nickname-display` (both view sub-branches — populated and placeholder), `profile-nickname-input`, `profile-edit-button`, `profile-save-button`, `profile-cancel-button`, `profile-save-success` (`role="status"`), `profile-save-error` (`role="alert"`) — confirmed via full file read.
-- Empty-nickname placeholder: `{lastSavedNickname ? <p data-testid="profile-nickname-display">{lastSavedNickname}</p> : <p data-testid="profile-nickname-display">(未設定暱稱)</p>}` — correct falsy-check (`lastSavedNickname` is `""` when unset per `?? ""` in both fetch and save-success handlers).
-- `pageState` loading/unauthenticated/error branches (lines 113-136): diff shows **zero changes** to these blocks — confirmed both by reading the diff hunk (no `+`/`-` lines touch them) and by reading the full current file.
-- `membership-task7-task9.spec.ts`: `grep -n "nickname\|getByLabel"` returned **zero matches**; `git diff --stat` confirms the file is absent from the changed-files list. Implementer's claim verified independently, not trusted.
-- `playwright-tests/profile-edit-mode.spec.ts` `page.route` usage reviewed line-by-line (first use of `page.route` in this codebase, per architect's own flag):
-  - API-failure test (lines 117-135): routes `**/api/profile`, checks `route.request().method() === "PATCH"` before fulfilling a 500 (falls through to `route.continue()` for GET), correctly targets only the PATCH call; asserts error message + input retains typed value; `page.unroute` cleans up afterward. Correct.
-  - Saving-state test (lines 139-152): same method-gated route pattern, injects a 1s delay before `route.continue()` on PATCH only, asserts `儲存中…` text + both buttons disabled during the window, then asserts eventual success. Correct — does not starve GET requests; delay is scoped to the save-triggering PATCH only.
-  - Cancel/validation no-PATCH assertions use `page.on("request")` listeners gated on `req.url().includes("/api/profile") && req.method() === "PATCH"` — correctly targets the specific endpoint+method, not just any `/api/profile` traffic (which would also fire on the initial GET), avoiding a false-positive "PATCH sent" flag. Listeners are added/removed (`page.off`) around each assertion window, not left dangling.
-- `ProfilePage.ts`: old `nicknameInput = page.getByLabel("暱稱")` locator confirmed fully removed (not superseded-but-left-behind) — diff shows a clean `-` removal, no orphaned reference remains in the file.
-- `npx eslint` on all three changed/new files: clean, no output/errors.
-- Full Playwright suite re-run personally (not trusting the implementer's "70/70" figure): started a clean `npm run dev`, ran `npx playwright test` against the real cloud Supabase project. **Result: 70/70 passed in 3.1 minutes**, spanning `profile-edit-mode.spec.ts` (2 tests), `membership-task7-task9.spec.ts` (9), `site-header.spec.ts` (4), and all four `venue-*.spec.ts` files (55 combined). Zero regressions.
-- No `TODO`/`FIXME`/`console.log`/`: any` found via grep across all three changed files.
-- Nickname rendered as JSX text-only interpolation throughout — no `dangerouslySetInnerHTML` anywhere in the file.
+## Spec 品質(flaky 風險)
+- `playwright.config.ts` `workers: 1` + `fullyParallel: false` → 同帳號的 balance 斷言無 test 間競態(before + 100 這類相對斷言因序列執行而安全)。
+- 等待邏輯全用 auto-retry assertion(`toBeVisible`/`toHaveText`/`toHaveURL`),無 sleep/waitForTimeout;`balanceNumber()` 呼叫前均先斷言 balance 可見(loading 骨架用不同 testid,不會誤讀)。
+- webhook 重送/竄改測試用 `page.request`(共享登入 context)直打 API,再 navigate 後以 auto-retry 斷言餘額 — 無隱式競態。
+- Page object 模式與既有 `pages/` 一致(testid locator + 動作方法),mock-checkout 元素併入 ShopPage 合理(檔頭有註明涵蓋範圍)。
 
 ## Plan Compliance
-- [x] All architect plan steps implemented
-- [x] Implementation matches plan intent
+- [x] All architect plan steps implemented(Step 1 靜態核對、Step 2 覆蓋度映射均獨立複核,結論一致)
+- [x] Implementation matches plan intent(補件驗證,無程式碼修改)
 - [x] No unauthorised scope additions
 
 ## Conversation Log
 | Issue | Developer Response | Resolution |
 |---|---|---|
-| (none — no critical or should-fix findings required developer follow-up) | — | — |
+| 🟡-1 spec 憑證 fast-fail | 待 developer 處理 | 交回 pipeline auto-resolve(不阻擋 review 通過) |
+| 🟡-2 Header 連結測試 | 待 QA 判定是否補測 | 交 QA 階段(與 architect 缺口候選同機制) |
