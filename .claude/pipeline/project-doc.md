@@ -1,5 +1,6 @@
 # Project Documentation
-> Generated: 2026-07-08 | Mode: FULL | Last delta: 2026-07-11 (membership tasks 5-9, story complete)
+> Generated: 2026-07-08 | Mode: FULL | Last delta: 2026-07-17 (points system 補件 scan)
+> ⚠️ 已知落差:2026-07-11 至今另有 site-navigation story(全站 Header + profile 編輯模式)、venue-whitebox-generator story(場地規劃器 + 3D)、shadcn/ui 導入等變更,尚未完整回寫本文件;本次 delta 僅涵蓋點數系統 commit(5c6c7d7)。
 
 ## Tech Stack
 - Runtime: Node.js 22.21.1 (pinned in `.nvmrc`)
@@ -23,6 +24,7 @@ src/app/api/       — API route handlers (auth/register|login|logout|confirm|re
 src/components/    — shared client components (AuthNav.tsx: infers logged-in state via GET /api/profile)
 src/lib/supabase/  — Supabase client factories (server.ts, admin.ts) + proxy helper (middleware.ts)
 src/lib/           — auth-client.ts (fetch wrapper), validation.ts, profile-client.ts, resend-cooldown.ts (localStorage helper)
+src/lib/points/    — packages.ts (點數方案定價), provider.ts (PaymentProvider adapter 介面 + MockProvider + HMAC 簽章)
 src/proxy.ts       — Next.js 16 root proxy (formerly middleware.ts): API auth gate + page route protection + session refresh
 supabase/          — CLI project: migrations, config.toml, tests (manual checklists, insomnia collection)
 playwright-tests/  — Playwright E2E suite (page-object pattern in playwright-tests/pages/), used as the FRONTEND acceptance gate
@@ -51,6 +53,10 @@ stories/           — ship-mate pipeline story files
 - `profiles` table: id → auth.users.id, nickname, role (default `user`), created_at, updated_at.
 - RLS policies restrict each user to their own row; `updated_at` maintained by DB trigger.
 - Profile auto-created on signup via `on_auth_user_created` trigger (SECURITY DEFINER, search_path locked, idempotent).
+- 點數系統(migration `20260716080000_create_points.sql`):
+  - `point_transactions` — append-only ledger,餘額 = SUM(delta),無可變 balance 欄位。`ref_id` unique 承擔冪等(`signup:{user_id}` / `order:{order_id}`)。RLS select-own;不 grant 寫入 — 寫入僅 service_role。
+  - `point_orders` — 購買訂單,定價於建單時快照(amount_twd/points),status pending/paid/failed,provider mock/ecpay。RLS select-own。
+  - `handle_new_user` trigger 擴充:註冊時發 50 點 signup_bonus(on conflict do nothing 冪等);migration 內含既有帳號一次性 backfill。
 - Connection via env vars only — never hardcode. Pooled connection string for serverless.
 
 ## Cross-Cutting Concerns
@@ -62,7 +68,12 @@ stories/           — ship-mate pipeline story files
 - Logging: never log tokens/session/cookies/passwords.
 
 ## Service Communication
-Next.js API routes (backend logic co-located with frontend). Implemented: `/api/auth/register`, `/api/auth/login`, `/api/auth/logout`, `/api/auth/confirm`, `/api/auth/resend`, `/api/profile` (GET/PATCH). Protected by `src/proxy.ts`.
+Next.js API routes (backend logic co-located with frontend). Implemented: `/api/auth/register`, `/api/auth/login`, `/api/auth/logout`, `/api/auth/confirm`, `/api/auth/resend`, `/api/profile` (GET/PATCH), `/api/points/balance` (GET), `/api/points/checkout` (POST), `/api/points/webhook/mock` (POST, public — HMAC 簽章為唯一守門). Protected by `src/proxy.ts`.
+
+### 金流 (Payments)
+- `PaymentProvider` adapter (`src/lib/points/provider.ts`):`createCheckout` 回 redirectUrl、`verifyWebhook` 驗簽。Phase 1 僅 MockProvider(HMAC-SHA256 + timingSafeEqual);之後換綠界只需新增 EcpayProvider,購買/發點流程不動。
+- Webhook `/api/points/webhook/mock` 在 proxy.ts PUBLIC_API_PATHS 上;冪等由 `ref_id = order:{order_id}` unique constraint 承擔。
+- 安全守門:`getPaymentProvider()` 在 production 且未明確設定 `MOCK_PAYMENT_SECRET` 時直接 throw,防止預設密鑰上線被偽造 webhook 加點。
 
 ## Test Coverage
 - Overall coverage: manual + Playwright E2E only (no unit/integration test framework or Docker installed).
@@ -82,14 +93,14 @@ Next.js API routes (backend logic co-located with frontend). Implemented: `/api/
 - `.env.local` — local env (gitignored) / `.env.example` — env var template
 - Vercel deployment: env vars must be set per-environment in the Vercel dashboard (Production/Preview/Development are separate scopes — Development has no deployed domain, it's only for `vercel dev`); changing them requires a manual Redeploy.
 
-## Changed Files (last delta — membership tasks 5-9, story complete)
-- src/app/login/page.tsx, src/app/register/page.tsx, src/app/profile/page.tsx, src/app/page.tsx, src/app/layout.tsx
-- src/components/AuthNav.tsx
-- src/lib/auth-client.ts, src/lib/profile-client.ts, src/lib/validation.ts, src/lib/resend-cooldown.ts
-- src/app/api/auth/resend/route.ts
-- src/proxy.ts (page route protection + resend whitelist)
-- playwright-tests/*, playwright.config.ts (new)
-- supabase/config.toml, supabase/tests/auth_routes_manual.md, supabase/tests/insomnia_auth.json
+## Changed Files (last delta — points system, commit 5c6c7d7)
+- supabase/migrations/20260716080000_create_points.sql (new — ledger + orders + trigger + backfill)
+- src/lib/points/packages.ts, src/lib/points/provider.ts (new)
+- src/app/api/points/balance/route.ts, src/app/api/points/checkout/route.ts, src/app/api/points/webhook/mock/route.ts (new)
+- src/app/shop/page.tsx, src/app/shop/mock-checkout/page.tsx (new)
+- src/components/Header.tsx (點數餘額顯示)
+- src/proxy.ts (webhook 加入 PUBLIC_API_PATHS)
+- playwright-tests/points-shop.spec.ts, playwright-tests/pages/ShopPage.ts (new)
 
 ## Last Scanned
-2026-07-11T22:05:00+08:00
+2026-07-17T00:10:00+08:00
