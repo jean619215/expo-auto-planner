@@ -1,47 +1,47 @@
-# Architect Plan — 會員點數系統與商店頁 / Task 1(補件驗證)
+# Architect Plan — 會員點數系統與商店頁 / Task 2(補件驗證)
 
-> Task: [BACKEND] 點數資料層 — points ledger + orders migration + RLS + trigger 贈點 + backfill
-> 性質:驗證既有實作(migration `20260716080000_create_points.sql`,已推雲端)。發現缺口才修改。
+> Task: [BACKEND] 點數 API — balance / checkout / webhook(mock)
+> 性質:驗證既有實作(commit 5c6c7d7)。發現缺口才修改。
 
 ## 前提
-- 不重跑 migration;對雲端專案現況驗證。
-- 憑證:`.env.local`(anon key、service_role key、專案 URL);Playwright 測試帳號在 `.env.playwright.local`,可借用作 authenticated 情境。
-- 專案無 psql 直連慣例 — 驗證優先用 @supabase/supabase-js 腳本(scratchpad 內,不進 repo);schema 層查詢若 PostgREST 不可及,退而用 supabase CLI(`supabase db …`)或標記為「以 migration 原始碼靜態核對」。
+- dev server:`npm run dev`(接真雲端 Supabase)。
+- 登入態:fetch 腳本先打 `POST /api/auth/login`(Playwright 測試帳號),帶回 Set-Cookie 後續請求附上。
+- webhook 簽章:`signMockPayload`(scratchpad 腳本直接 import `src/lib/points/provider.ts` 的等價 HMAC 邏輯 — 用相同 secret 預設值 `mock-payment-dev-secret` 重算即可,不改動原始碼)。
+- 所有測試訂單/發點事後 service_role 清理(delete orders + ledger 測試列)。
 
-## 驗證步驟(對應 orchestrator AC)
+## 驗證步驟
 
-### Step 1 — 靜態核對 migration 原始碼(AC1/AC2/AC4/AC5/AC6)
-逐條比對 `supabase/migrations/20260716080000_create_points.sql` 與 AC:欄位、check constraints、ref_id unique、index、RLS enable、policy 定義、grant 範圍、trigger function(SECURITY DEFINER + search_path='' + on conflict do nothing)、backfill 語句。
-已知風險點(review 階段須確認):
-- `handle_new_user` 為 `create or replace` — 需確認替換後仍保留 profiles 建立行為(migration 內有,OK),且 trigger `on_auth_user_created` 本身在早前 migration 已綁定、未被 drop。
-- `point_orders.ref_id` 不存在 — 冪等鍵在 point_transactions;orders 冪等由 task 2 webhook 邏輯處理(order status 檢查),本 task 不管。
+### Step 1 — 靜態核對(AC5)
+三支 route + provider.ts + proxy.ts 對照 AGENTS.md 規範:factory 使用、錯誤 shape、無秘密 log、admin client 使用點、webhook 註解與 allowlist 一致。已於 orchestrate 階段初步讀過,無明顯違規;review 階段獨立複核。
 
-### Step 2 — 雲端 schema 存在性驗證(AC1/AC2)
-service_role client 對兩表各做一次 `select ... limit 1` 與 `head:true count` — 確認表存在且可讀。欄位存在性:以 select 指名全部欄位驗證。
+### Step 2 — balance API(AC1)
+1. 未登入 GET → 401 `請先登入`。
+2. 登入 GET → 200,balance = 該帳號 ledger delta 總和(以 service_role 平行查核對),transactions ≤ 20 筆、降冪。
 
-### Step 3 — RLS 行為驗證(AC3)
-node 腳本(scratchpad):
-1. anon client + 測試帳號登入(`.env.playwright.local` 帳密)。
-2. `select` point_transactions — 應只回自己的列(該帳號應有 signup:{uid} 一筆)。
-3. `insert` point_transactions(delta=999)— 應被拒(RLS/權限錯誤)。
-4. `insert` point_orders — 應被拒。
-5. 未登入 anon client `select` — 應回空(anon 無 policy)。
-6. service_role client insert 一筆測試列後 **delete 清除**(驗證寫入權;delete 用 service_role,不留殘料)。註:ledger append-only 是應用層守則,service_role 技術上可 delete,清理測試資料屬合法用途。
+### Step 3 — checkout API(AC2)
+1. 未登入 POST → 401。
+2. 登入 + 非 JSON body → 400 `請求格式錯誤`。
+3. 登入 + `{"packageId":123}` / `{"packageId":"nope"}` → 400 `無效的點數方案`。
+4. 登入 + `{"packageId":"basic"}` → 200 `{ orderId, redirectUrl }`;service_role 查單:pending、amount_twd=100、points=100、provider=mock、user_id 正確(server 端快照,未信任 client)。
 
-### Step 4 — trigger 與 backfill 驗證(AC4/AC5)
-service_role 查詢:
-1. 每個 auth.users 都恰有一筆 reason='signup_bonus'、ref_id='signup:{id}'、delta=50(以 service_role 查 point_transactions 核對 auth.admin listUsers 名單)。
-2. 冪等探測:service_role 對既有 user 重插 ref_id='signup:{id}' — 一般 insert 應撞 unique constraint 失敗(即 DB 層冪等成立;`on conflict do nothing` 行為屬 migration 語句內部,已由 Step 1 靜態核對)。
-3. (若 Playwright 測試帳號註冊時間晚於 migration:該帳號的 signup_bonus 由 trigger 而非 backfill 產生 — 兩者殊途同歸,不需區分。)
+### Step 4 — webhook(AC3)
+以 Step 3 的訂單走完整流程:
+1. 壞簽章 POST → 400 `invalid webhook`,訂單仍 pending、無發點。
+2. 正確簽章 POST → 200;查:ledger 有 `order:{id}` +100 點、訂單 paid + provider_txn_id + paid_at。
+3. 重送同 payload → 200;ledger 仍只一筆(冪等)。
+4. 簽章正確但 orderId 不存在(隨機 uuid,自簽)→ 400 同訊息。
+5. 非 JSON body → 400。
+6. 未帶 cookie 直打(模擬 server-to-server)成功 — 證明 public allowlist 生效;另打一支非 allowlist 的 `/api/points/balance` 無 cookie 應 401(對照組)。
 
-### Step 5 — 手動測試文件
-`supabase/tests/` 新增 `points_data_layer_manual.md` checklist:記錄上述查詢與預期結果,供日後回歸。(專案慣例:BACKEND 驗證留 checklist。)
+### Step 5 — production 守門(AC4)
+node 一次性探測:`NODE_ENV=production` 且無 `MOCK_PAYMENT_SECRET` 下呼叫 `getPaymentProvider()` 應 throw(以 tsx/ts-node 或抽出等價邏輯驗證;若工具鏈不便,退回程式碼靜態核對並註明)。
+
+### Step 6 — checklist
+新增 `supabase/tests/points_api_manual.md`:上述全部探測項與預期結果。
 
 ## 產出物
-- scratchpad 驗證腳本(不進 repo)
-- `supabase/tests/points_data_layer_manual.md`(進 repo)
-- 驗證結果記入 task-log 與後續 qa-report
+- scratchpad fetch 驗證腳本(不進 repo)
+- `supabase/tests/points_api_manual.md`(進 repo)
 
 ## Escalation 檢查
-- 無 API contract 變更、無新 schema 變更(除非驗證發現缺口)、無 auth 流程變更。auth trigger 屬 auth-adjacent — review 階段依規自動 🔴 Critical 檢視,但本 task 只驗證不改動。
-- 規模在 story 範圍內。無 escalation。
+- 無 API contract 變更(驗證既有 contract)。webhook 為 auth-adjacent(public 路由 + 簽章守門)→ review 自動 🔴 等級檢視。無 escalation 觸發。

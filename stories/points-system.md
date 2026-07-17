@@ -13,7 +13,7 @@
 
 ## 任務清單
 - [x] [BACKEND] 點數資料層:points ledger(append-only)+ orders 資料表 migration,RLS read-own、寫入僅 service_role,auth trigger 發 50 點註冊禮 + 既有帳號 backfill
-- [ ] [BACKEND] 點數 API:GET /api/points/balance、POST /api/points/checkout(PaymentProvider adapter,phase 1 mock provider)、POST /api/points/webhook/mock(HMAC 簽章驗證 + ref_id 冪等,加入 proxy.ts PUBLIC_API_PATHS,mock provider 在 production 無明確 secret 時拒絕啟動)
+- [x] [BACKEND] 點數 API:GET /api/points/balance、POST /api/points/checkout(PaymentProvider adapter,phase 1 mock provider)、POST /api/points/webhook/mock(HMAC 簽章驗證 + ref_id 冪等,加入 proxy.ts PUBLIC_API_PATHS,mock provider 在 production 無明確 secret 時拒絕啟動)
 - [ ] [FRONTEND] 商店頁 /shop(三種點數方案 + 結帳流程)+ mock 金流結帳頁 /shop/mock-checkout + Header 顯示點數餘額,Playwright 驗收(points-shop.spec.ts,page object ShopPage.ts)
 
 <!--

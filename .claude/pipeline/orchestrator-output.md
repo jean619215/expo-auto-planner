@@ -1,51 +1,51 @@
-# Orchestrator Output — 會員點數系統與商店頁 / Task 1
+# Orchestrator Output — 會員點數系統與商店頁 / Task 2
 
 > Story: stories/points-system.md
-> Task 1 of 3: [BACKEND] 點數資料層
+> Task 2 of 3: [BACKEND] 點數 API
 > Task type: **BACKEND**
-> 性質: **補件驗證** — 實作已存在 (commit 5c6c7d7, migration 已推雲端 Supabase)。目標是驗證既有實作符合驗收標準,發現缺口才修改,不重新實作。
+> 性質: **補件驗證** — 實作已存在 (commit 5c6c7d7)。驗證既有 API 符合驗收標準,發現缺口才修改。
 
 ## 任務描述
-points ledger(append-only)+ orders 資料表 migration(`supabase/migrations/20260716080000_create_points.sql`),RLS read-own、寫入僅 service_role,auth trigger 發 50 點註冊禮 + 既有帳號 backfill。
+三支 API:`GET /api/points/balance`、`POST /api/points/checkout`(PaymentProvider adapter,phase 1 mock)、`POST /api/points/webhook/mock`(HMAC 驗簽 + ref_id 冪等,public 路由)。
 
 ## Clarified Acceptance Criteria
 
-### AC1 — point_transactions 資料表(append-only ledger)
-- 欄位:id (uuid PK)、user_id (FK auth.users, on delete cascade)、delta (integer, `<> 0` check)、reason (`signup_bonus` | `purchase` check)、ref_id (text, **unique**)、created_at。
-- 無可變 balance 欄位;餘額由 `SUM(delta)` 導出。
-- user_id 有 index。
+### AC1 — GET /api/points/balance
+- 未登入 401 `請先登入`(route 自身 getUser 檢查 + proxy 守門雙層)。
+- 登入回 200:`{ balance, transactions }` — balance = 全部 delta 加總(user-context client,RLS 保證只算自己的);transactions 最近 20 筆(id/delta/reason/created_at,created_at 降冪)。
 
-### AC2 — point_orders 資料表
-- 欄位:id、user_id (FK)、package_id、amount_twd (>0 check)、points (>0 check)、status (`pending`/`paid`/`failed` check, default pending)、provider (`mock`/`ecpay` check)、provider_txn_id、created_at、paid_at。
-- 定價於建單時快照(amount_twd/points 存在 order 列上)。
+### AC2 — POST /api/points/checkout
+- 未登入 401。
+- body 非 JSON → 400 `請求格式錯誤`;packageId 缺/非字串/查無方案 → 400 `無效的點數方案`。
+- 合法方案:以 admin client 建 point_orders(pending,server 端定價快照 — 金額/點數不信任 client),回 200 `{ orderId, redirectUrl }`,redirectUrl 由 provider.createCheckout 產生。
 
-### AC3 — RLS:讀自己的、寫僅 service_role
-- 兩表皆 enable RLS。
-- `authenticated` 僅 grant SELECT + select-own policy(`auth.uid() = user_id`)。
-- **不 grant** insert/update/delete 給 authenticated/anon — 以 anon key + 使用者 session 嘗試 INSERT 必須失敗。
-- service_role(admin client)可寫入。
+### AC3 — POST /api/points/webhook/mock(public,簽章唯一守門)
+- 在 proxy.ts PUBLIC_API_PATHS(已確認 src/proxy.ts:15)。
+- 非 JSON / 驗簽失敗 → 400 `invalid webhook`。
+- 簽章有效但查無訂單 → 400 同訊息(不洩漏訂單存在性)。
+- 訂單已 paid → 200(冪等,不重複發點)。
+- 正常路徑:ledger insert(ref_id=`order:{orderId}`)→ 訂單標 paid + provider_txn_id + paid_at。
+- webhook 重送:ledger 撞 unique(23505)視為已處理,補標 paid,200 — 兩步中斷可自我修復。
+- 簽章驗證用 HMAC-SHA256 + timingSafeEqual(constant-time)。
 
-### AC4 — 註冊贈 50 點(trigger)
-- `handle_new_user()` 擴充:profiles 建立之外,插入 delta=50、reason=signup_bonus、ref_id=`signup:{user_id}` 的 ledger 列。
-- SECURITY DEFINER + `set search_path = ''`。
-- 冪等:`on conflict (ref_id) do nothing` — trigger 重放不重複發點。
+### AC4 — production 守門
+- `getPaymentProvider()`:NODE_ENV=production 且無 MOCK_PAYMENT_SECRET → throw(mock 簽章密鑰預設值不得上線)。
 
-### AC5 — 既有帳號 backfill
-- migration 內一次性 INSERT ... SELECT 對所有 auth.users 補發,`on conflict do nothing` 保證重跑安全。
-- 雲端專案上所有既有帳號各有恰好一筆 signup_bonus。
+### AC5 — 架構規範符合
+- Supabase client 一律走 factories(server.ts/admin.ts),無 inline 建立。
+- 錯誤訊息繁中、`{ error }` shape;不 log 秘密。
+- checkout 建單走 admin client(orders 無 authenticated insert 權,fail-closed)。
 
-### AC6 — 冪等由 DB 承擔
-- ref_id unique constraint 是唯一去重機制;應用層不做 dedup。重複 ref_id 插入被 DB 擋下。
+## 驗證方式(BACKEND)
+- 對 local dev server(`npm run dev` + 真雲端 Supabase)以 fetch 腳本實測:401/400/200 各分支、webhook 正常/重送/壞簽章/查無單、balance 數字正確性。
+- 測試訂單與發點事後以 service_role 清理。
+- production 守門:單元式 node 探測(設 NODE_ENV=production 匯入 getPaymentProvider 應 throw)或程式碼靜態核對。
+- 更新 `supabase/tests/` checklist(新增 points_api_manual.md)。
 
-## 驗證方式(BACKEND — 無 JS 測試框架)
-- SQL 驗證:對雲端 Supabase 跑查詢確認 schema/RLS/policy/grant/trigger 存在且行為正確(可用 supabase CLI 或 SQL editor;唯讀查詢 + 可回滾的行為探測)。
-- RLS 行為驗證:以 authenticated 情境嘗試讀他人列(應空)與寫入(應拒絕)。
-- 依專案慣例補/更新 `supabase/tests/` 下的手動驗證資料(若既有 checklist 模式適用)。
+## Out of Scope
+- 商店頁 UI 與 Playwright(task 3)。
 
-## Out of Scope(後續 task)
-- API routes(task 2)、商店頁/Playwright(task 3)。
-
-## Assumptions(未逐題澄清,補件模式)
-1. Migration 已套用到雲端專案 — 驗證時不重跑 migration,只驗證現況。
-2. 50 點數字、三方案定價沿用既有實作,不再議價。
-3. 發現缺口時:小缺口直接以新 migration 修補;schema 級重大缺口暫停回報人工。
+## Assumptions
+1. 三方案定價(100/500/1000 TWD)沿用 packages.ts,不議價。
+2. webhook「先發點後標單」順序與自我修復設計視為既定架構決策,驗證行為即可。
+3. 發現缺口:小缺口直接修;API contract 變更需暫停回報。

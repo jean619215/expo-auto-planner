@@ -1,8 +1,8 @@
 {
   "story_file": "stories/points-system.md",
   "story_title": "會員點數系統與商店頁",
-  "task_index": 0,
-  "current_task": "[BACKEND] 點數資料層:points ledger(append-only)+ orders 資料表 migration,RLS read-own、寫入僅 service_role,auth trigger 發 50 點註冊禮 + 既有帳號 backfill",
+  "task_index": 1,
+  "current_task": "[BACKEND] 點數 API:GET /api/points/balance、POST /api/points/checkout(PaymentProvider adapter,phase 1 mock provider)、POST /api/points/webhook/mock(HMAC 簽章驗證 + ref_id 冪等,proxy.ts PUBLIC_API_PATHS,production 無 secret 拒啟動)",
   "task_type": "BACKEND",
   "stage": "complete",
   "iteration": {
@@ -23,6 +23,6 @@
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "notes": "補件 story:實作已存在(commit 5c6c7d7, branch feat/points-system),pipeline 目標為驗證既有實作,發現缺口才修改,不重新實作。QA 獨立重測 19/19 PASS,APPROVED,BACKEND task 無 playwright 階段。",
-  "last_updated": "2026-07-17T04:15:33Z"
+  "notes": "補件story task 2/3。Task 1已完成(commit d6c3502, branch feat/points-pipeline;master因PR#1已merge,pipeline commit已搬離master)。Task 2 QA獨立重測35/35 PASS,APPROVED,BACKEND無playwright階段,stage=complete。",
+  "last_updated": "2026-07-17T04:33:29Z"
 }

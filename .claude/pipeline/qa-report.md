@@ -1,67 +1,86 @@
-# QA Report — 會員點數系統與商店頁 / Task 1 [BACKEND] 點數資料層
-> Generated: 2026-07-17T04:15:33Z | QA iteration: 1
-> 性質:補件驗證 — 獨立重測(不採信 implement/review 階段報告),對雲端 Supabase 實測。
+# QA Report — 會員點數系統與商店頁 / Task 2 [BACKEND] 點數 API
+> Generated: 2026-07-17T04:33:29Z | QA iteration: 1
+> 性質:補件驗證獨立重測(不採信 implement/review 報告文字,自行對 local dev server + 真雲端 Supabase 重跑)。
 
 ## Summary
-- Tests executed: 19 (12 主腳本 + 6 UPDATE/DELETE 拒絕探測 + 1 trigger 即時探測)
-- Passed: 19
+- Tests executed: 35 (18 既有 checklist 項 + 13 額外 edge case + 4 production 守門探測)
+- Passed: 35
 - Failed: 0
 - Blocked: 0
 
 ## Recommendation
-**APPROVED**
+APPROVED — 所有 AC1-AC5 通過,無 Critical/High/Medium/Low bug。
 
 ## Acceptance Criteria Results
+
 | Criterion | Result | Notes |
 |---|---|---|
-| AC1 — point_transactions 表結構(欄位/check/unique ref_id/index) | ✅ PASS | service_role select 全欄位成功;migration 原始碼核對 `delta <> 0`、`reason in (...)`、`ref_id unique`、`user_id` index 皆存在 |
-| AC2 — point_orders 表結構 | ✅ PASS | service_role select 全欄位成功;migration 核對 `amount_twd > 0`、`points > 0`、`status`/`provider` check、default pending 皆存在 |
-| AC3 — RLS 讀自己的、寫僅 service_role | ✅ PASS | 未登入 select 回空(0 rows);登入者 select 只回自己的列(9 rows,全為本人 user_id);登入者 insert/update/delete 兩表皆 `permission denied for table ...`(**privilege 層**拒絕,非僅 RLS 訊息 — 確認 20260717010000 revoke migration 已生效);service_role insert 成功且事後清除 |
-| AC4 — 註冊贈 50 點 trigger(SECURITY DEFINER + search_path='' + 冪等) | ✅ PASS | 即時探測:`pipeline-trigger-probe-*@example.com` 臨時帳號建立後,ledger 立即出現恰一筆 `delta=50, reason=signup_bonus, ref_id=signup:{uid}` + profiles 列同時存在;deleteUser 後 cascade 清除 ledger,無殘料 |
-| AC5 — 既有帳號 backfill | ✅ PASS | 全 5 個 auth.users 帳號各恰有一筆 signup_bonus(missing=0, dupes=0),delta 全為 50,ref_id 格式全符合 `signup:{uid}` |
-| AC6 — 冪等由 DB(ref_id unique)承擔 | ✅ PASS | 對既有 user 重插 `ref_id=signup:{uid}` → `duplicate key value violates unique constraint "point_transactions_ref_id_key"`,插入被擋 |
+| AC1 — 未登入 balance → 401 `請先登入` | ✅ PASS | status=401, error="請先登入" |
+| AC1 — 登入 balance = ledger delta 總和 | ✅ PASS | api=850, service_role 平行加總=850,一致 |
+| AC1 — transactions ≤20 筆、created_at 降冪 | ✅ PASS | n=9(帳號現有交易數 <20),降冪排序驗證通過 |
+| AC2 — 未登入 checkout → 401 | ✅ PASS | status=401 |
+| AC2 — body 非 JSON → 400 `請求格式錯誤` | ✅ PASS | status=400 |
+| AC2 — packageId 非字串/查無方案 → 400 `無效的點數方案` | ✅ PASS | 兩分支皆 400,error 訊息正確 |
+| AC2 — 合法方案 → 200 { orderId, redirectUrl },server 端定價快照 | ✅ PASS | body 夾帶偽造 amountTwd=1/points=99999 被忽略;DB 訂單 amount_twd=100, points=100, provider=mock, user_id 正確 |
+| AC3 — 壞簽章 → 400 `invalid webhook`,訂單不變、不發點 | ✅ PASS | 訂單仍 pending |
+| AC3 — 簽章有效但查無單 → 400 同訊息(不洩漏存在性) | ✅ PASS | status 與 message 皆與壞簽章情境一致 |
+| AC3 — 正確簽章 → 200,ledger +points、訂單 paid+provider_txn_id+paid_at | ✅ PASS | ledger 1 筆 delta=100;訂單三欄位皆正確寫入 |
+| AC3 — webhook 重送(冪等)→ 200,ledger 不重複 | ✅ PASS | 重送後 ledger 仍 1 筆 |
+| AC3 — public allowlist 生效(無 cookie 可打通)vs 對照組非 allowlist 路由 401 | ✅ PASS | webhook 全程無 cookie 成功;/api/points/balance 無 cookie → 401 |
+| AC4 — production 且無 MOCK_PAYMENT_SECRET → getPaymentProvider() throw | ✅ PASS | 訊息:"PAYMENT_PROVIDER=mock 在 production 需明確設定 MOCK_PAYMENT_SECRET" |
+| AC5 — 架構規範(factory 使用/錯誤 shape/繁中訊息/admin client 使用點) | ✅ PASS | 靜態核對三支 route + provider.ts + proxy.ts 原始碼(非僅引用 review 結論),確認無 inline Supabase client、無秘密 log、checkout 走 admin insert、balance 走 user-context client 依賴 RLS |
 
 ## Edge Case Results
+
 | Edge Case | Result | Notes |
 |---|---|---|
-| 未登入(無 session)select point_transactions | ✅ PASS | 回空陣列,非錯誤 |
-| authenticated UPDATE point_transactions(改 delta,ledger 竄改防護) | ✅ PASS | `permission denied for table point_transactions` |
-| authenticated DELETE point_transactions | ✅ PASS | `permission denied for table point_transactions` |
-| authenticated UPDATE point_orders | ✅ PASS | `permission denied for table point_orders` |
-| authenticated DELETE point_orders | ✅ PASS | `permission denied for table point_orders` |
-| authenticated 讀自己的列在 revoke 後仍正常(防禦層變動未誤傷讀權) | ✅ PASS | `read own still works: yes` |
-| trigger 重放(on conflict do nothing 語意,經冪等測試間接驗證) | ✅ PASS | 見 AC6 |
+| checkout body = `null`(合法 JSON,非 object) | ✅ PASS | 400 無效的點數方案 |
+| checkout body = `[]`(array) | ✅ PASS | 400 |
+| checkout body = `{}`(缺 packageId) | ✅ PASS | 400 |
+| checkout packageId = `""`(空字串) | ✅ PASS | 400 |
+| webhook payload 缺 sig 欄位 | ✅ PASS | 400 |
+| webhook sig = `""`(空字串) | ✅ PASS | 400,`safeEqualHex` 對長度 0 直接 fail-closed |
+| webhook sig 非 hex 字元 | ✅ PASS | 400,Buffer.from hex 解碼長度不符 |
+| webhook sig 長度不符(短於 HMAC-SHA256 輸出) | ✅ PASS | 400 |
+| webhook payload = array | ✅ PASS | 400 |
+| webhook payload = `null`(合法 JSON) | ✅ PASS | 400 |
+| checkout 三方案(basic/plus/mega)定價快照皆正確 | ✅ PASS | amount_twd/points 逐一核對:100/100、500/550、1000/1200 |
+| production 守門控制組:production + 有設 secret → 不 throw | ✅ PASS | 排除「production 恆 throw」假陽性,證明門檻確實綁在「無 secret」而非環境本身 |
+| production 守門控制組:dev + 無 secret → 不 throw | ✅ PASS | 排除「恆 throw」假陽性,確認僅 production 環境觸發 |
+| production + 不支援的 PAYMENT_PROVIDER → throw | ✅ PASS | 訊息:"未支援的 PAYMENT_PROVIDER: ecpay" |
+
+> 併發雙 webhook(review 💡 已論證無資損)本輪未重測,依 architect-plan 假設 2 視為既定架構決策,僅驗證行為分支(壞簽章/查無單/正常/重送/production 守門),不追加額外併發測試。
 
 ## Error State Results
+
 | Error State | Result | Notes |
 |---|---|---|
-| authenticated 寫入 ledger/orders(任一操作)一律回傳 permission denied,不洩漏資料存在與否 | ✅ PASS | 訊息一致為 `permission denied for table <table>`,不因目標列是否存在而不同 |
-| 重複 ref_id 插入 | ✅ PASS | 明確的 unique constraint violation 錯誤,非靜默失敗 |
+| balance 未登入 401 | ✅ PASS | 同上 AC1 |
+| checkout 未登入 401 / 400 系列 | ✅ PASS | 同上 AC2 |
+| webhook 400 系列(壞簽章/查無單/非 JSON/缺欄位/空 sig/非 hex/array/null payload) | ✅ PASS | 同上 AC3 + edge case |
+| DB 查詢失敗 → 500(balance/checkout/webhook 皆有 error.code/message 分支) | 未觸發實測 | 靜態核對程式碼路徑存在且訊息不洩漏秘密(console.error 僅記 code/message);無安全手段可在真雲端 Supabase 上人為製造 DB 層失敗,依 review 靜態結論採信 |
 
 ## Regression Check
+
 | Feature | Result |
 |---|---|
-| profiles 建立(handle_new_user 原有行為,經 create or replace 後) | ✅ PASS | 即時探測中 profile row 與 ledger 列同時產生,`on_auth_user_created` trigger 綁定未受影響 |
-| 既有帳號讀取(users=5, tx rows=13:5 signup_bonus + 8 舊有 purchase 測試資料)未被本次驗證動作污染 | ✅ PASS | 驗證前後比對 ledger 列數與內容,無殘留探測列 |
+| /api/auth/login(balance/checkout 測試流程依賴的登入)| ✅ PASS(測試前置步驟成功取得 session cookie) |
+| proxy.ts 既有受保護頁面/路由守門(/profile 等未變更範圍)| ✅ PASS(靜態核對 PROTECTED_PAGES/matcher 僅新增 /shop 相關項,未動既有項目) |
+| point_transactions RLS select_own(balance API 依賴)| ✅ PASS(登入帳號僅取回自己交易,加總與 service_role 平行查核一致) |
 
 ## Security Test
-- Sensitive data exposure: **PASS** — 憑證僅由腳本讀取 `.env.local`/`.env.playwright.local`,未印出任何 key/token/session 值;QA 報告與腳本輸出均不含憑證明文
-- Input validation: **PASS** — check constraints(delta<>0、reason/status/provider 白名單、amount_twd/points>0)存在於 migration,唯一性由 ref_id unique 承擔
-- Auth boundary: **PASS** — authenticated 對兩表的 SELECT 僅限自己列(RLS `auth.uid() = user_id`);INSERT/UPDATE/DELETE 對 anon/authenticated 一律 privilege 層拒絕(revoke migration `20260717010000` 已確認在雲端生效,錯誤訊息為 `permission denied`,非僅 RLS 訊息);service_role 不受限制,符合設計
+- Sensitive data exposure: PASS — 回應 body 僅含 balance/transactions/orderId/redirectUrl/error;無 token/cookie/秘密外洩;console.error 僅記 error.code/message
+- Input validation: PASS — checkout body 型別逐項驗證(null/array/缺欄位/空字串皆擋);webhook payload 型別驗證 + HMAC-SHA256 timingSafeEqual(空 sig/非 hex/短長度皆 fail-closed)
+- Auth boundary: PASS — balance/checkout 雙層守門(route getUser + proxy 頁面/API 保護);webhook 為 public allowlist 路由,簽章驗證先於任何 DB 操作,壞簽章與查無單回相同 status+message(anti-enumeration 符合 status code 顯式相等要求)
 
 ## Bugs Found
 無。
 
-Review 階段兩項 🟡 Should Fix 已於 QA 階段獨立重測確認皆已修復落地:
-- Issue 1(privilege 層防線)— `20260717010000_revoke_points_writes.sql` 已套用雲端,authenticated insert/update/delete 錯誤訊息由 RLS 訊息變為 `permission denied`(privilege 層),雙層防禦確認生效。
-- Issue 2(checklist 缺 UPDATE/DELETE 探測)— `supabase/tests/points_data_layer_manual.md` 已補上 6 項 UPDATE/DELETE 拒絕探測,QA 獨立重跑後全數 PASS。
-
 ## Test Coverage
-- New code coverage: 6/6 AC(100%),13 條 checklist 項目全通過,QA 獨立重測額外含 6 條 UPDATE/DELETE 探測 + 1 條即時 trigger 探測,共 19 項驗證動作
-- Minimum required: BACKEND task — 手動 checklist 覆蓋全部 AC(AGENTS.md Testing Requirements)
-- Status: **PASS**
+- New code coverage: 手動驗證涵蓋三支 route 全部分支(balance 2 分支、checkout 5 分支、webhook 7 分支)+ production 守門 4 案例,共 35 項獨立重測全數 PASS
+- Minimum required: 依 AGENTS.md,BACKEND 任務無強制數字覆蓋率門檻,僅要求「新邏輯需有測試覆蓋(manual checklist 或 Playwright 皆可)」— 本任務以 `supabase/tests/points_api_manual.md` + 本報告的獨立重測滿足
+- Status: PASS
 
-## 附註 — 驗證方式與清理紀錄
-- 驗證腳本:`verify-points-data-layer.mjs`(12 項主檢查)、`check-revoke2.mjs`(6 項 UPDATE/DELETE 拒絕探測)、`check-trigger-fire.mjs`(即時 trigger + cascade 清理探測),皆位於 scratchpad,不進 repo。
-- 執行環境:`~/.nvm/versions/node/v22.21.1/bin/node`(系統預設 node 20 缺原生 WebSocket,supabase-js realtime 依賴會報錯)。
-- 探測性寫入清理:主腳本 service_role 測試列(`verify-test:{ts}`)已由腳本自身 delete 清除;trigger 探測用臨時帳號 `pipeline-trigger-probe-*@example.com` 已 `deleteUser`,cascade 確認清除對應 ledger/profiles 列。驗證後查詢 ledger 全表(13 rows),內容為 5 筆 signup_bonus + 8 筆既有 purchase 測試資料(非本次驗證產生),無殘留探測資料。
+## 補充說明
+- lint(`npm run lint`)乾淨,無新增警告/錯誤。
+- 測試訂單與發點均以 service_role 於腳本內清理(checkout/webhook 主流程訂單、三方案定價驗證訂單皆已 delete)。資料庫中殘留的 2026-07-16 pending/paid 訂單為先前 implement/review 階段遺留,非本輪 QA 產生,不在本任務清理責任範圍內(供人工留意,未列為 bug — 對應 review 💡 建議 2「pending 訂單無清理機制」已知風險)。

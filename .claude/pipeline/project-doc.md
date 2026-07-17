@@ -54,7 +54,7 @@ stories/           — ship-mate pipeline story files
 - RLS policies restrict each user to their own row; `updated_at` maintained by DB trigger.
 - Profile auto-created on signup via `on_auth_user_created` trigger (SECURITY DEFINER, search_path locked, idempotent).
 - 點數系統(migration `20260716080000_create_points.sql`):
-  - `point_transactions` — append-only ledger,餘額 = SUM(delta),無可變 balance 欄位。`ref_id` unique 承擔冪等(`signup:{user_id}` / `order:{order_id}`)。RLS select-own;不 grant 寫入 — 寫入僅 service_role。
+  - `point_transactions` — append-only ledger,餘額 = SUM(delta),無可變 balance 欄位。`ref_id` unique 承擔冪等(`signup:{user_id}` / `order:{order_id}`)。RLS select-own;寫入僅 service_role — migration `20260717010000_revoke_points_writes.sql` 明確 revoke anon/authenticated 的 insert/update/delete(Supabase default privileges 原本有給,grant+RLS 雙層防禦)。
   - `point_orders` — 購買訂單,定價於建單時快照(amount_twd/points),status pending/paid/failed,provider mock/ecpay。RLS select-own。
   - `handle_new_user` trigger 擴充:註冊時發 50 點 signup_bonus(on conflict do nothing 冪等);migration 內含既有帳號一次性 backfill。
 - Connection via env vars only — never hardcode. Pooled connection string for serverless.

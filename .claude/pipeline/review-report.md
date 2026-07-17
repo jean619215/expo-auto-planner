@@ -1,58 +1,64 @@
-# Code Review Report — 會員點數系統與商店頁 / Task 1 [BACKEND] 點數資料層
+# Code Review Report — 會員點數系統與商店頁 / Task 2 [BACKEND] 點數 API
 > Generated: 2026-07-17 | Review iteration: 1
-> 性質:補件驗證 review — 標的為 commit 5c6c7d7 中的 `supabase/migrations/20260716080000_create_points.sql` 與工作樹新增的 `supabase/tests/points_data_layer_manual.md`。
+> 性質:補件驗證 review — 標的為 commit 5c6c7d7 中的 balance/checkout/webhook 三支 route、provider.ts、packages.ts、proxy.ts 變更,與工作樹新增的 `supabase/tests/points_api_manual.md`。
+> Auth-adjacent 範圍(webhook public 路由 + 簽章唯一守門)依 AGENTS.md 以 🔴 Critical 等級全面檢視。
 
 ## Overall Assessment
-APPROVED WITH MINOR FIXES
+APPROVED
 
 ## Summary
-Migration 設計品質高:append-only ledger + SUM(delta) 導出餘額、ref_id unique 承擔冪等、RLS select-own、trigger 贈點與 backfill 皆與 architect plan / AC 一致,且 12 項雲端探測 + trigger 即時探測全數 PASS。auth-adjacent 的 `handle_new_user` 改動以 🔴 等級檢視後無安全問題(SECURITY DEFINER + `search_path=''` + 全限定名 + 冪等 insert,trigger 綁定未被 drop、由即時探測證實仍生效)。僅有兩項 🟡:privilege 層防線與 migration 註解不符(Supabase default privileges 實際上有 grant 寫入權,目前僅靠 RLS 單層擋下)、checklist 缺 UPDATE/DELETE 拒絕探測。
-
-## AGENTS.md Auth-Critical Rule — Explicit Applicability Determination
-AGENTS.md:「Any change touching auth, session, or `DATABASE_URL` handling is automatically 🔴 Critical.」
-
-**Determination: 適用 — `handle_new_user()` 是綁在 `auth.users` 上的 trigger function,本 migration 以 `create or replace` 改寫之。** 依規以 🔴 等級逐項檢視:
-- `create or replace` 完整保留 profiles 建立行為(對照 `supabase/migrations/20260709033436_auth_users_profile_trigger.sql` 原始版本逐行核對:僅追加 ledger insert,原 insert 語句與 on conflict 行為原封不動)。
-- 原 migration 的 `create trigger on_auth_user_created` 綁定未被 drop;`create or replace function` 不影響既有 trigger 綁定,且雲端即時探測(臨時帳號 createUser → 50 點 + profiles 列立即出現)證實鏈路完整。
-- SECURITY DEFINER 搭配 `set search_path = ''`,且所有物件全 schema 限定(`public.profiles`、`public.point_transactions`)— 無 search_path 注入面。
-- 兩個 insert 皆 `on conflict do nothing`,trigger 重放安全;若 insert 意外失敗,exception 會 abort 整個 auth.users insert(fail-closed,不會產生無 bonus 的半殘帳號)。
-- 不涉及 session、cookie、`DATABASE_URL`;migration 內無任何憑證。
-- **結論:檢視 PASS,無 Critical finding。**
+三支 route + provider/packages + proxy.ts 變更均符合 AGENTS.md 架構與安全規範。webhook 安全鏈完整:JSON parse → HMAC-SHA256 驗簽(timingSafeEqual,constant-time)先於一切 DB 操作;壞簽章與「簽章有效但查無單」回相同 400 + `invalid webhook`(status 與 message 皆一致,符合 anti-enumeration 的顯式 status 等值要求);ledger unique ref_id 冪等 + 23505 分支使「發點成功但標單失敗」可經重送自我修復。無 Critical、無 Should Fix,僅三項 Consider 級註記。
 
 ## 🔴 Critical Issues (Must Fix — Pipeline Paused)
 無。
 
+### 重點審查結論(webhook,auth-adjacent 逐項核)
+- **驗簽先於 DB**:route 流程為 parse JSON → `verifyWebhook` → 才建 admin client 查單。未過驗簽零 DB 接觸。✅
+- **Timing-safe compare**:`safeEqualHex` 先比長度再 `timingSafeEqual`;空 sig / 非 hex / 奇數長度均因 Buffer 解碼長度不符而 fail-closed。長度檢查僅洩漏公開資訊(HMAC-SHA256 輸出長度)。✅
+- **錯誤訊息不洩漏內部狀態**:壞簽章與查無單同為 400 `invalid webhook`(status code 相等,非僅訊息相同 — 符合 register 舊 bug 的教訓)。DB 故障回 500 `server error`,不含訂單資訊。✅
+- **重送/部分失敗自我修復**:先寫 ledger(ref_id `order:{id}` unique,migration 已核有 constraint)再標單;標單失敗回 500 → 金流商重送 → insert 撞 23505 視為已處理 → 補標 paid。已 paid 早退 200。併發雙 webhook:一方 23505、update 帶 `.eq("status","pending")` 條件,0-row update 無害。邏輯正確。✅
+- **金額信任邊界**:簽章只綁 orderId|txnId,發點數量取自 DB 訂單列(server 端快照),payload 帶的 amount/points 完全不被使用 — 偽造金額無效。✅
+- **Production 守門**:`getPaymentProvider()` 於 NODE_ENV=production 且無 MOCK_PAYMENT_SECRET 時 throw;未知 provider 亦 throw。✅(implement 階段 node 探測 PASS)
+- **proxy.ts**:PUBLIC_API_PATHS 僅加 `/api/points/webhook/mock` 且附守門說明註解;`/shop` 同步加入 PROTECTED_PAGES 與 config.matcher 兩處(含 `/shop/:path*`),符合 AGENTS.md 雙更新規則。✅
+
+### checkout / balance 審查結論
+- **checkout race**:同 user 併發建單僅產生多筆 pending 訂單,點數只在 webhook paid 時發放,無資損路徑。✅
+- **checkout 金額信任邊界**:amount_twd/points 一律取 `findPackage` 的 server 端定價快照,client body 只取 packageId(型別驗證);admin client 建單(orders 無 authenticated insert policy,fail-closed)。✅(實測含偽造金額拒收證據)
+- **balance RLS 依賴**:user-context client 查 `point_transactions`,依賴 `point_transactions_select_own` policy(migration 已核存在)。✅
+- **AGENTS.md 規範**:三支 route 均走 `src/lib/supabase/` factories,無 inline client;`{ error }` shape、繁中訊息(webhook 對機器回英文為既定 contract);console.error 只記 error.code/message,無 token/cookie/秘密。✅
+
 ## 🟡 Should Fix (Auto-resolved by Developer)
-
-### Issue 1 — privilege 層與註解/AC 文字不符:authenticated 實際持有 INSERT 權限,防線僅剩 RLS 單層
-- **File**: `supabase/migrations/20260716080000_create_points.sql:27-28, 58`
-- **Issue**: 註解宣稱「不 grant insert/update/delete — 寫入僅 service_role」,但 Supabase 專案對 `public` schema 有預設的 `ALTER DEFAULT PRIVILEGES`(新表自動 grant ALL 給 anon/authenticated/service_role)。證據就在本次驗證結果裡:authenticated insert 被拒的錯誤是 `new row violates row-level security policy`(RLS 層),而非 `permission denied`(privilege 層)— 代表 INSERT privilege 存在,只是 RLS 無 insert policy 而擋下。兩行 `grant select` 實為冗餘;AC3 的「不 grant」在 privilege 層並未成立。
-- **Impact**: 行為面正確(寫入確實被拒,已由雲端探測證實),故非 Critical;但防禦只剩單層 — 未來任何人加了一條寬鬆的 insert/update policy,privilege 層不會兜底。且註解與現實不符會誤導 task 2/3 的開發。
-- **Suggested fix**: 新增小 migration:`revoke insert, update, delete on public.point_transactions, public.point_orders from anon, authenticated;`(defense-in-depth,並使註解成立),migration 內註明緣由。
-
-### Issue 2 — checklist 缺 UPDATE/DELETE 拒絕探測
-- **File**: `supabase/tests/points_data_layer_manual.md:11-16`
-- **Issue**: RLS/權限段只探測 SELECT 與 INSERT;authenticated 對兩表的 UPDATE/DELETE 未列入探測 — ledger 的 append-only 性質最怕的正是竄改/刪除既有列。目前靠「無 update/delete policy」擋下,但無回歸項目守著。
-- **Suggested fix**: checklist 增列:登入者 `update point_transactions`(應 0 rows / 拒絕)、`delete from point_transactions`(同上),orders 同理;Issue 1 的 revoke 落地後,預期錯誤會從 RLS 靜默 0 筆變成 permission denied,一併記入預期結果。
+無。
 
 ## 💡 Suggestions (Consider — No Action Required)
-1. **`ref_id` 允許 NULL**(`create_points.sql:16`):unique 對 NULL 不去重,未帶 ref_id 的列會繞過冪等機制。目前兩個寫入方(trigger、backfill)都帶 ref_id,無實害;若日後所有 reason 都有自然冪等鍵,可考慮改 `not null`。
-2. **`point_orders.provider_txn_id` 無 index / unique**:task 2 webhook 若以 provider_txn_id 反查訂單,屆時建議補 index(冪等已由 ledger `ref_id='order:{id}'` 承擔,unique 非必要)。
-3. **`point_orders` 的 `on delete cascade`**:刪帳號連帶刪付款訂單紀錄 — mock 階段合理且與專案 cascade 慣例一致;接真金流(ECPay)後宜重新評估留存需求(對帳/稽核)。
+
+### 1. balance 全取加總的成長上限
+- **File**: src/app/api/points/balance/route.ts:18-28
+- 全取交易列於 server 端 reduce 加總,程式內註解已明示現階段規模可接受、量大改 DB 端聚合(rpc/view)。註記合理,僅提醒:交易數破千後宜提前處理,屆時同時給 `created_at` 加索引。
+
+### 2. pending 訂單無清理/上限機制
+- **File**: src/app/api/points/checkout/route.ts:44-55
+- 已登入使用者可重複建單累積 pending 列(棄單不清理)。無資損,但長期會堆積;未來可加定期清理或同 user pending 上限。
+
+### 3. Mock 簽章隨 redirectUrl 進入瀏覽器 — ECPay 換裝時注意
+- **File**: src/lib/points/provider.ts:46-59
+- Mock 設計下有效簽章隨付款頁 URL 交付 client(mock「付款」本就是按鈕,無實質差異)。換 EcpayProvider 時,CheckMacValue 驗證素材必須來自金流商 server-to-server 通知,絕不可由本端預簽後經瀏覽器繞回 — 建議屆時在 adapter 介面註解明示。
 
 ## Security Assessment
-- Secrets scan: PASS(migration 與 checklist 皆無任何憑證;checklist 明示憑證取自 `.env.local` / `.env.playwright.local`,符合「勿硬編」規範)
-- Input validation: PASS(check constraints:`delta <> 0`、reason/status/provider 白名單、amount_twd/points > 0)
-- Auth/authz: PASS(RLS enable + select-own policy、`(select auth.uid())` initplan 寫法正確、service_role 僅存於伺服端;auth trigger 專項檢視 PASS — privilege 層備註見 🟡 Issue 1)
-- Test coverage: 手動 checklist 12 項 + trigger 即時探測,覆蓋全部 6 條 AC(缺口見 🟡 Issue 2)
+- Secrets scan: PASS(無硬編碼秘密;MOCK_SECRET 讀 env,dev 預設值有 production throw 守門)
+- Input validation: PASS(checkout body 型別逐項驗;webhook payload 型別驗 + HMAC)
+- Auth/authz: PASS(balance/checkout 雙層守門 route getUser + proxy;webhook 簽章唯一守門且驗簽先於 DB;anti-enumeration status+message 皆一致)
+- No sensitive data in logs: PASS(僅 error.code/message)
+- CORS/CSP: 未變更
+- SQL injection: N/A(supabase-js 參數化)
+- Test coverage: 18/18 dev server 實測 + production 守門探測 PASS;checklist 落檔 supabase/tests/points_api_manual.md
 
 ## Plan Compliance
-- [x] All architect plan steps implemented(Step 1 靜態核對、Step 2-4 雲端探測全 PASS、Step 5 checklist 已產出)
-- [x] Implementation matches plan intent(plan 列的兩個風險點 — profiles 行為保留、trigger 綁定未失效 — 均已由即時探測排除)
-- [x] No unauthorised scope additions(migration 內容嚴格對應 AC1-AC6;commit 5c6c7d7 其餘檔案屬 task 2/3 範圍,不在本次審查標的)
+- [x] All architect plan steps implemented(Step 1-6 全執行,含無 cookie 對照組與清理)
+- [x] Implementation matches plan intent(補件驗證,無程式碼修改、無 contract 變更)
+- [x] No unauthorised scope additions(僅新增 points_api_manual.md,為計畫產出物)
 
 ## Conversation Log
 | Issue | Developer Response | Resolution |
 |---|---|---|
-| 🟡 Issue 1(revoke 補強 migration) | 待 developer 處理 — 行為已證實正確,不阻擋 pipeline | 移交,QA 階段追蹤 |
-| 🟡 Issue 2(checklist 增 update/delete 探測) | 待 developer 處理 | 移交,QA 階段追蹤 |
+| (無 🟡 項目,無往返) | — | — |
