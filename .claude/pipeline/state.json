@@ -1,9 +1,9 @@
 {
-  "story_file": "stories/ai-chat-cost-quality.md",
-  "story_title": "AI 助理對話成本與品質優化",
-  "task_index": 1,
-  "current_task": "[FRONTEND] 送出 payload 瘦身:組請求時舊輪移除配置 JSON 附錄與圖片 block(換佔位符),本地顯示不變;Playwright 以 route 攔截驗證 payload 形狀 + 既有套件迴歸",
-  "task_type": "FRONTEND",
+  "story_file": "stories/venue-save-slots.md",
+  "story_title": "場地儲存檔與 AI 對話持久化",
+  "task_index": 0,
+  "current_task": "[BACKEND] venue_plans migration(slot 1–3 check + unique、RLS select-own、寫入 service_role + revoke)+ 儲存檔 API 五支:upsert 存檔/讀檔(含對話)/列表/改名/刪除",
+  "task_type": "BACKEND",
   "stage": "complete",
   "iteration": {
     "review": 1,
@@ -16,12 +16,12 @@
     "implement": "completed",
     "review": "completed",
     "qa": "completed",
-    "playwright": "completed"
+    "playwright": "not_applicable"
   },
   "flags": {
     "review_critical_pending": false,
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "last_updated": "2026-07-22T01:50:00+08:00"
+  "last_updated": "2026-07-22T13:30:00+08:00"
 }

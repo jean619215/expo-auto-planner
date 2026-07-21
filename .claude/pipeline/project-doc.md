@@ -76,7 +76,9 @@ Next.js API routes (backend logic co-located with frontend). Implemented: `/api/
 - `POST /api/ai/chat`(受保護):前端帶完整對話歷史,後端注入凍結系統提示(scope guard+plan schema,cache 斷點在 system block)與 5 支 strict tools,先扣 `AI_CHAT_COST` 點(`src/lib/points/ledger.ts` 的 `deductPoints`)後呼叫 Claude(`AI_MODEL` env var,預設 claude-sonnet-5)。上游失敗 502 不退點(usage log 為補償軌跡)。
 - `src/lib/ai/`(server-only:client/system/tools)vs `src/lib/ai-panel/`(client 端 action 型別+parseToolUse)— 邊界勿混。
 - 前端:`src/components/venue/AiPanel.tsx`(PlanEditor 子元件,`applyActions` props 套用 tool call,latest-ref 防 stale closure)。對話歷史前端 state(API 原生格式),不落 DB(phase 1)。
-- Playwright:`ai-panel.spec.ts` mock `/api/ai/chat`(page.route fixtures,不花錢);真模型煙霧 `@paid` 預設 skip(`PW_PAID_AI` 開啟)。
+- Payload 瘦身(`src/lib/ai-panel/messages.ts` `toApiMessages()` 純函式):送出時舊輪(最新 user 訊息以外)移除 `[目前配置]` JSON 附錄(還原 displayText)、image block 換固定佔位符「[使用者先前提供了參考圖]」;assistant 輪與 tool_result 原樣(tool_use_id 不斷鏈)。本地 turns state 不動,僅組 fetch body 時瘦身。
+- 系統提示行為規則(6a8d32e):generate_plan 前先摘要需求取得確認(增量修改不設閘門);失敗 tool_result 須說明原因+替代方案;回應去寒暄。
+- Playwright:`ai-panel.spec.ts` mock `/api/ai/chat`(page.route fixtures,不花錢),含 payload 攔截斷言(postDataJSON 驗證瘦身形狀);真模型煙霧 `@paid` 預設 skip(`PW_PAID_AI` 開啟),斷言鎖 waitForResponse 200 + ai-assistant-text。
 
 ### 金流 (Payments)
 - `PaymentProvider` adapter (`src/lib/points/provider.ts`):`createCheckout` 回 redirectUrl、`verifyWebhook` 驗簽。Phase 1 僅 MockProvider(HMAC-SHA256 + timingSafeEqual);之後換綠界只需新增 EcpayProvider,購買/發點流程不動。
@@ -111,4 +113,4 @@ Next.js API routes (backend logic co-located with frontend). Implemented: `/api/
 - playwright-tests/points-shop.spec.ts, playwright-tests/pages/ShopPage.ts (new)
 
 ## Last Scanned
-2026-07-21T22:30:00+08:00(delta:commit 3df26fb AI 面板側欄改版 + /api/ai/config)
+2026-07-22T01:42:00+08:00(delta:6a8d32e 系統提示行為規則 + 62c95fe payload 瘦身)
