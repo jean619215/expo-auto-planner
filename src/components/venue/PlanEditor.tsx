@@ -40,7 +40,11 @@ import {
   translateFurniture,
   type FurnitureItem,
 } from "@/lib/venue/furniture";
-import type { AiAction, AiActionResult, AiItemType } from "@/lib/ai-panel/actions";
+import type {
+  AiAction,
+  AiActionResult,
+  AiItemType,
+} from "@/lib/ai-panel/actions";
 import AiPanel from "./AiPanel";
 import PlanToolbar, { type EditorMode } from "./PlanToolbar";
 import VenueSceneLoader from "./VenueSceneLoader";
@@ -63,13 +67,19 @@ const MAX_STAGE_PX = 800;
 const MIN_VENUE_SIZE_M = 10;
 const MAX_VENUE_SIZE_M = 200;
 
-type SelectedObject =
-  | { type: "wall" | "column" | "furniture"; id: string }
-  | null;
+type SelectedObject = {
+  type: "wall" | "column" | "furniture";
+  id: string;
+} | null;
 type WizardStep = "edit" | "preview";
 
 function buildGridLines(pxPerMeter: number, venueSizeM: number) {
-  const lines: { key: string; points: number[]; stroke: string; strokeWidth: number }[] = [];
+  const lines: {
+    key: string;
+    points: number[];
+    stroke: string;
+    strokeWidth: number;
+  }[] = [];
   const sizePx = venueSizeM * pxPerMeter;
 
   for (let m = 0; m <= venueSizeM; m += GRID_MINOR_M) {
@@ -143,7 +153,10 @@ function targetName(
 }
 
 export default function PlanEditor() {
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  // Stage 寬度量測目標:左欄 wrapper(僅 step === "edit" 時存在),而非最
+  // 外層容器 — AiPanel 側欄改為 flex sibling 後,若仍量外層寬度,
+  // 側欄展開時 Stage 不會跟著縮,造成水平溢出。
+  const editorColumnRef = useRef<HTMLDivElement | null>(null);
   const [stagePx, setStagePx] = useState(MIN_STAGE_PX);
   const [venueSizeM, setVenueSizeM] = useState(VENUE_SIZE_M);
   const [polygon, setPolygon] = useState<FloorPolygon>(DEFAULT_FLOOR);
@@ -154,10 +167,13 @@ export default function PlanEditor() {
   const [columns, setColumns] = useState<Column[]>([]);
   const [furniture, setFurniture] = useState<FurnitureItem[]>([]);
   const [selectedObject, setSelectedObject] = useState<SelectedObject>(null);
-  const [draftWall, setDraftWall] = useState<{ start: PlanPoint; end: PlanPoint } | null>(
+  const [draftWall, setDraftWall] = useState<{
+    start: PlanPoint;
+    end: PlanPoint;
+  } | null>(null);
+  const [draggingHandle, setDraggingHandle] = useState<"start" | "end" | null>(
     null,
   );
-  const [draggingHandle, setDraggingHandle] = useState<"start" | "end" | null>(null);
   const [draggingColumnCorner, setDraggingColumnCorner] = useState<{
     x: -1 | 1;
     y: -1 | 1;
@@ -194,20 +210,20 @@ export default function PlanEditor() {
   const [sizeConfirmOpen, setSizeConfirmOpen] = useState(false);
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
+    const column = editorColumnRef.current;
+    if (!column || step !== "edit") return;
 
     const updateSize = () => {
-      const width = container.clientWidth;
+      const width = column.clientWidth;
       setStagePx(Math.max(MIN_STAGE_PX, Math.min(MAX_STAGE_PX, width)));
     };
 
     updateSize();
 
     const observer = new ResizeObserver(updateSize);
-    observer.observe(container);
+    observer.observe(column);
     return () => observer.disconnect();
-  }, []);
+  }, [step]);
 
   const pxPerMeter = computePxPerMeter(stagePx, venueSizeM);
   const gridLines = buildGridLines(pxPerMeter, venueSizeM);
@@ -230,12 +246,16 @@ export default function PlanEditor() {
   function handleSizeConfirm() {
     const next = Math.round(Number(sizeInput));
     if (!Number.isFinite(next)) return;
-    const clamped = Math.min(MAX_VENUE_SIZE_M, Math.max(MIN_VENUE_SIZE_M, next));
+    const clamped = Math.min(
+      MAX_VENUE_SIZE_M,
+      Math.max(MIN_VENUE_SIZE_M, next),
+    );
     if (clamped === venueSizeM) {
       setSizeEditorOpen(false);
       return;
     }
-    const isEmpty = walls.length === 0 && columns.length === 0 && furniture.length === 0;
+    const isEmpty =
+      walls.length === 0 && columns.length === 0 && furniture.length === 0;
     // 空場地無改動可失,直接套用,不跳警告彈窗。
     if (isEmpty) {
       applyVenueSize(clamped);
@@ -536,7 +556,9 @@ export default function PlanEditor() {
     for (const action of actions) {
       switch (action.type) {
         case "generate_plan": {
-          const floorPoints = action.input.floor.map((p) => snapPoint(p, venueSizeM));
+          const floorPoints = action.input.floor.map((p) =>
+            snapPoint(p, venueSizeM),
+          );
           if (floorPoints.length < MIN_FLOOR_VERTICES) {
             results.push({
               toolUseId: action.toolUseId,
@@ -559,22 +581,23 @@ export default function PlanEditor() {
             w: c.w,
             h: c.h,
           }));
-          const generatedFurniture: FurnitureItem[] = action.input.furniture.map((f) => {
-            const defaults = FURNITURE_DEFAULTS[f.kind];
-            return {
-              id: createObjectId(),
-              kind: f.kind,
-              center: clampColumnCenter(
-                snapPoint(f.center, venueSizeM),
-                defaults.w,
-                defaults.h,
-                venueSizeM,
-              ),
-              w: defaults.w,
-              h: defaults.h,
-              rotationDeg: normalizeRotationDeg(f.rotationDeg),
-            };
-          });
+          const generatedFurniture: FurnitureItem[] =
+            action.input.furniture.map((f) => {
+              const defaults = FURNITURE_DEFAULTS[f.kind];
+              return {
+                id: createObjectId(),
+                kind: f.kind,
+                center: clampColumnCenter(
+                  snapPoint(f.center, venueSizeM),
+                  defaults.w,
+                  defaults.h,
+                  venueSizeM,
+                ),
+                w: defaults.w,
+                h: defaults.h,
+                rotationDeg: normalizeRotationDeg(f.rotationDeg),
+              };
+            });
           nextPolygon = floorPoints;
           nextWalls = generatedWalls;
           nextColumns = generatedColumns;
@@ -583,9 +606,12 @@ export default function PlanEditor() {
           setSelectedVertex(null);
 
           const parts = [`${floorPoints.length} 頂點地板`];
-          if (generatedWalls.length > 0) parts.push(`${generatedWalls.length} 面牆`);
-          if (generatedColumns.length > 0) parts.push(`${generatedColumns.length} 根柱子`);
-          if (generatedFurniture.length > 0) parts.push(`${generatedFurniture.length} 件家具`);
+          if (generatedWalls.length > 0)
+            parts.push(`${generatedWalls.length} 面牆`);
+          if (generatedColumns.length > 0)
+            parts.push(`${generatedColumns.length} 根柱子`);
+          if (generatedFurniture.length > 0)
+            parts.push(`${generatedFurniture.length} 件家具`);
           results.push({
             toolUseId: action.toolUseId,
             ok: true,
@@ -653,7 +679,9 @@ export default function PlanEditor() {
               { x: center.x - col.center.x, y: center.y - col.center.y },
               venueSizeM,
             );
-            nextColumns = nextColumns.map((c, i) => (i === index ? updated : c));
+            nextColumns = nextColumns.map((c, i) =>
+              i === index ? updated : c,
+            );
           } else {
             if (index < 0 || index >= nextFurniture.length) {
               results.push({
@@ -669,7 +697,9 @@ export default function PlanEditor() {
               { x: center.x - item.center.x, y: center.y - item.center.y },
               venueSizeM,
             );
-            nextFurniture = nextFurniture.map((f, i) => (i === index ? updated : f));
+            nextFurniture = nextFurniture.map((f, i) =>
+              i === index ? updated : f,
+            );
           }
           results.push({
             toolUseId: action.toolUseId,
@@ -719,7 +749,9 @@ export default function PlanEditor() {
           break;
         }
         case "resize_floor": {
-          const points = action.input.points.map((p) => snapPoint(p, venueSizeM));
+          const points = action.input.points.map((p) =>
+            snapPoint(p, venueSizeM),
+          );
           if (points.length < MIN_FLOOR_VERTICES) {
             results.push({
               toolUseId: action.toolUseId,
@@ -772,19 +804,21 @@ export default function PlanEditor() {
 
   const selectedWall =
     selectedObject?.type === "wall"
-      ? walls.find((w) => w.id === selectedObject.id) ?? null
+      ? (walls.find((w) => w.id === selectedObject.id) ?? null)
       : null;
 
   const selectedColumn =
     selectedObject?.type === "column"
-      ? columns.find((c) => c.id === selectedObject.id) ?? null
+      ? (columns.find((c) => c.id === selectedObject.id) ?? null)
       : null;
 
   const columnLabelText = selectedColumn
     ? `${selectedColumn.w.toFixed(1)} x ${selectedColumn.h.toFixed(1)} m`
     : "";
 
-  const wallLabelText = selectedWall ? formatMeters(wallLengthM(selectedWall)) : "";
+  const wallLabelText = selectedWall
+    ? formatMeters(wallLengthM(selectedWall))
+    : "";
 
   const edgeLabelTexts = polygon.map((vertex, i) => {
     const next = polygon[(i + 1) % polygon.length];
@@ -801,7 +835,6 @@ export default function PlanEditor() {
 
   return (
     <div
-      ref={containerRef}
       data-testid="plan-editor"
       data-vertex-count={polygon.length}
       data-vertices={JSON.stringify(polygon)}
@@ -829,553 +862,574 @@ export default function PlanEditor() {
           data-testid="step-edit"
           tabIndex={0}
           onKeyDown={handleKeyDown}
-          className="outline-none"
+          className="flex items-start gap-4 outline-none"
         >
-          <div className="mb-2 flex items-center gap-2">
-            <PlanToolbar
-              mode={mode}
-              onModeChange={handleModeChange}
-              canDelete={selectedObject !== null}
-              onDelete={deleteSelectedObject}
-            />
-            {sizeEditorOpen ? (
-              <div
-                data-testid="venue-size-editor"
-                className="inline-flex h-[34px] items-center gap-1.5 rounded-md border-[1.5px] border-blueprint bg-card px-2"
-              >
-                <Label
-                  htmlFor="venue-size-input"
-                  className="shrink-0 text-sm text-blueprint"
+          <div ref={editorColumnRef} className="min-w-0 flex-1">
+            <div className="mb-2 flex items-center gap-2">
+              <PlanToolbar
+                mode={mode}
+                onModeChange={handleModeChange}
+                canDelete={selectedObject !== null}
+                onDelete={deleteSelectedObject}
+              />
+              {sizeEditorOpen ? (
+                <div
+                  data-testid="venue-size-editor"
+                  className="inline-flex h-[34px] items-center gap-1.5 rounded-md border-[1.5px] border-blueprint bg-card px-2"
                 >
-                  邊長(公尺)
-                </Label>
-                <Input
-                  id="venue-size-input"
-                  data-testid="venue-size-input"
-                  type="number"
-                  min={MIN_VENUE_SIZE_M}
-                  max={MAX_VENUE_SIZE_M}
-                  value={sizeInput}
-                  onChange={(e) => setSizeInput(e.target.value)}
-                  className="h-6 w-20"
-                />
+                  <Label
+                    htmlFor="venue-size-input"
+                    className="shrink-0 text-sm text-blueprint"
+                  >
+                    邊長(公尺)
+                  </Label>
+                  <Input
+                    id="venue-size-input"
+                    data-testid="venue-size-input"
+                    type="number"
+                    min={MIN_VENUE_SIZE_M}
+                    max={MAX_VENUE_SIZE_M}
+                    value={sizeInput}
+                    onChange={(e) => setSizeInput(e.target.value)}
+                    className="h-6 w-20"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    data-testid="venue-size-confirm-button"
+                    onClick={handleSizeConfirm}
+                  >
+                    確認
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    data-testid="venue-size-cancel-button"
+                    onClick={() => setSizeEditorOpen(false)}
+                  >
+                    取消
+                  </Button>
+                </div>
+              ) : (
                 <Button
                   type="button"
                   size="sm"
-                  data-testid="venue-size-confirm-button"
-                  onClick={handleSizeConfirm}
+                  variant="outline"
+                  data-testid="venue-size-button"
+                  onClick={openSizeEditor}
+                  className="h-[34px]"
                 >
-                  確認
+                  <Ruler />
+                  場地尺寸
                 </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  data-testid="venue-size-cancel-button"
-                  onClick={() => setSizeEditorOpen(false)}
-                >
-                  取消
-                </Button>
-              </div>
-            ) : (
+              )}
               <Button
                 type="button"
-                size="sm"
-                variant="outline"
-                data-testid="venue-size-button"
-                onClick={openSizeEditor}
-                className="h-[34px]"
+                data-testid="next-step-button"
+                onClick={handleNextStep}
+                className="ml-auto h-[34px]"
               >
-                <Ruler />
-                場地尺寸
+                下一步
               </Button>
-            )}
-            <Button
-              type="button"
-              data-testid="next-step-button"
-              onClick={handleNextStep}
-              className="ml-auto h-[34px]"
+            </div>
+            <Stage
+              width={stagePx}
+              height={stagePx}
+              onMouseDown={handleStageMouseDown}
+              onMouseMove={handleStageMouseMove}
+              onMouseUp={handleStageMouseUp}
+              onTouchStart={handleStageMouseDown}
+              onTouchMove={handleStageMouseMove}
+              onTouchEnd={handleStageMouseUp}
             >
-              下一步
-            </Button>
-          </div>
-          <div className="mb-2 flex justify-end">
-            <AiPanel
-              plan={{ polygon, walls, columns, furniture }}
-              applyActions={applyActions}
-            />
-          </div>
-          <Stage
-            width={stagePx}
-            height={stagePx}
-            onMouseDown={handleStageMouseDown}
-            onMouseMove={handleStageMouseMove}
-            onMouseUp={handleStageMouseUp}
-            onTouchStart={handleStageMouseDown}
-            onTouchMove={handleStageMouseMove}
-            onTouchEnd={handleStageMouseUp}
-          >
-            <Layer listening={false}>
-              <Rect
-                x={0}
-                y={0}
-                width={stagePx}
-                height={stagePx}
-                fill="#fafaf9"
-                stroke="#a8a29e"
-                strokeWidth={1}
-              />
-              {gridLines.map((line) => (
-                <Line
-                  key={line.key}
-                  points={line.points}
-                  stroke={line.stroke}
-                  strokeWidth={line.strokeWidth}
+              <Layer listening={false}>
+                <Rect
+                  x={0}
+                  y={0}
+                  width={stagePx}
+                  height={stagePx}
+                  fill="#fafaf9"
+                  stroke="#a8a29e"
+                  strokeWidth={1}
                 />
-              ))}
-            </Layer>
-            <Layer listening={false}>
-              {Array.from(
-                { length: venueSizeM / GRID_MAJOR_M + 1 },
-                (_, i) => i * GRID_MAJOR_M,
-              ).map((m) => (
-                <Text
-                  key={`label-top-${m}`}
-                  x={m * pxPerMeter + 2}
-                  y={2}
-                  text={String(m)}
-                  fontSize={12}
-                  fill="#78716c"
-                />
-              ))}
-              {Array.from(
-                { length: venueSizeM / GRID_MAJOR_M + 1 },
-                (_, i) => i * GRID_MAJOR_M,
-              ).map((m) => (
-                <Text
-                  key={`label-left-${m}`}
-                  x={2}
-                  y={m * pxPerMeter + 2}
-                  text={String(m)}
-                  fontSize={12}
-                  fill="#78716c"
-                />
-              ))}
-              <Line
-                points={[
-                  8,
-                  stagePx - 16,
-                  8 + GRID_MAJOR_M * pxPerMeter,
-                  stagePx - 16,
-                ]}
-                stroke="#44403c"
-                strokeWidth={2}
-              />
-              <Text
-                x={8}
-                y={stagePx - 14}
-                text="5 公尺"
-                fontSize={12}
-                fill="#44403c"
-              />
-            </Layer>
-            <Layer listening={mode === "select"}>
-              <Line
-                points={polygonPx}
-                closed
-                fill="rgba(191, 219, 254, 0.5)"
-                stroke="#1F4E79"
-                strokeWidth={2}
-                onDblClick={handleEdgeDblClick}
-              />
-              <Text
-                listening={false}
-                x={floorCentroidPx.x}
-                y={floorCentroidPx.y}
-                text="地板"
-                fontSize={13}
-                fontStyle="bold"
-                fill="#1F4E79"
-                offsetX={13}
-                offsetY={7}
-              />
-              {polygon.map((vertex, index) => {
-                const px = metersToPx(vertex, pxPerMeter);
-                return (
-                  <Circle
-                    key={index}
-                    x={px.x}
-                    y={px.y}
-                    radius={6}
-                    fill={selectedVertex === index ? "#1F4E79" : "#ffffff"}
-                    stroke="#1F4E79"
-                    strokeWidth={2}
-                    hitStrokeWidth={16}
-                    draggable
-                    onClick={() => {
-                      setSelectedVertex(index);
-                      setSelectedObject(null);
-                    }}
-                    onTap={() => {
-                      setSelectedVertex(index);
-                      setSelectedObject(null);
-                    }}
-                    onDragMove={(e) => handleVertexDragMove(index, e)}
-                    onDragEnd={(e) => handleVertexDragEnd(index, e)}
-                    onContextMenu={(e) => handleVertexContextMenu(index, e)}
+                {gridLines.map((line) => (
+                  <Line
+                    key={line.key}
+                    points={line.points}
+                    stroke={line.stroke}
+                    strokeWidth={line.strokeWidth}
                   />
-                );
-              })}
-              {polygon.map((vertex, index) => {
-                const next = polygon[(index + 1) % polygon.length];
-                const midpoint = {
-                  x: (vertex.x + next.x) / 2,
-                  y: (vertex.y + next.y) / 2,
-                };
-                const midpointPx = metersToPx(midpoint, pxPerMeter);
-                return (
+                ))}
+              </Layer>
+              <Layer listening={false}>
+                {Array.from(
+                  { length: venueSizeM / GRID_MAJOR_M + 1 },
+                  (_, i) => i * GRID_MAJOR_M,
+                ).map((m) => (
                   <Text
-                    key={`edge-label-${index}`}
-                    listening={false}
-                    x={midpointPx.x + 4}
-                    y={midpointPx.y + 4}
-                    text={edgeLabelTexts[index]}
-                    fontSize={11}
-                    fill="#44403c"
+                    key={`label-top-${m}`}
+                    x={m * pxPerMeter + 2}
+                    y={2}
+                    text={String(m)}
+                    fontSize={12}
+                    fill="#78716c"
                   />
-                );
-              })}
-            </Layer>
-            <Layer listening={mode === "select"}>
-              {walls.map((wall) => {
-                const isSelected =
-                  selectedObject?.type === "wall" && selectedObject.id === wall.id;
-                const startPx = metersToPx(wall.start, pxPerMeter);
-                const lengthM = Math.hypot(
-                  wall.end.x - wall.start.x,
-                  wall.end.y - wall.start.y,
-                );
-                const lengthPx = lengthM * pxPerMeter;
-                const wallColor = isSelected ? "#1F4E79" : "#78350f";
-                const wallMidPx = metersToPx(
-                  {
-                    x: (wall.start.x + wall.end.x) / 2,
-                    y: (wall.start.y + wall.end.y) / 2,
-                  },
-                  pxPerMeter,
-                );
-                return (
-                  <Fragment key={wall.id}>
-                    <Rect
-                      name="object"
-                      x={startPx.x}
-                      y={startPx.y}
-                      width={lengthPx}
-                      height={thicknessPx}
-                      offsetY={thicknessPx / 2}
-                      rotation={angleDegrees(wall.start, wall.end)}
-                      fill="#78350f"
-                      stroke={isSelected ? "#1F4E79" : undefined}
-                      strokeWidth={isSelected ? 3 : 0}
-                      draggable={isSelected && mode === "select"}
-                      onClick={() => {
-                        if (suppressObjectClickRef.current) {
-                          suppressObjectClickRef.current = false;
-                          return;
-                        }
-                        setSelectedObject({ type: "wall", id: wall.id });
-                        setSelectedVertex(null);
-                      }}
-                      onTap={() => {
-                        if (suppressObjectClickRef.current) {
-                          suppressObjectClickRef.current = false;
-                          return;
-                        }
-                        setSelectedObject({ type: "wall", id: wall.id });
-                        setSelectedVertex(null);
-                      }}
-                      onDragMove={(e) => handleWallBodyDrag(wall, e)}
-                      onDragEnd={(e) => handleWallBodyDrag(wall, e)}
-                    />
-                    {lengthPx > 24 && (
-                      <Text
-                        listening={false}
-                        x={wallMidPx.x}
-                        y={wallMidPx.y}
-                        text="牆壁"
-                        fontSize={11}
-                        fill={wallColor}
-                        rotation={angleDegrees(wall.start, wall.end)}
-                        offsetX={11}
-                        offsetY={5}
-                      />
-                    )}
-                  </Fragment>
-                );
-              })}
-              {columns.map((column) => {
-                const isSelected =
-                  selectedObject?.type === "column" &&
-                  selectedObject.id === column.id;
-                const centerPx = metersToPx(column.center, pxPerMeter);
-                const widthPx = column.w * pxPerMeter;
-                const heightPx = column.h * pxPerMeter;
-                const columnColor = isSelected ? "#1F4E79" : "#57534e";
-                return (
-                  <Fragment key={column.id}>
-                    <Rect
-                      name="object"
-                      x={centerPx.x}
-                      y={centerPx.y}
-                      width={widthPx}
-                      height={heightPx}
-                      offsetX={widthPx / 2}
-                      offsetY={heightPx / 2}
-                      fill="#78716c"
-                      stroke={columnColor}
-                      strokeWidth={isSelected ? 3 : 1.5}
-                      draggable={isSelected && mode === "select"}
-                      onClick={() => {
-                        if (suppressObjectClickRef.current) {
-                          suppressObjectClickRef.current = false;
-                          return;
-                        }
-                        setSelectedObject({ type: "column", id: column.id });
-                        setSelectedVertex(null);
-                      }}
-                      onTap={() => {
-                        if (suppressObjectClickRef.current) {
-                          suppressObjectClickRef.current = false;
-                          return;
-                        }
-                        setSelectedObject({ type: "column", id: column.id });
-                        setSelectedVertex(null);
-                      }}
-                      onDragMove={(e) => handleColumnBodyDrag(column, e)}
-                      onDragEnd={(e) => handleColumnBodyDrag(column, e)}
-                    />
-                    {widthPx > 20 && heightPx > 14 && (
-                      <Text
-                        listening={false}
-                        x={centerPx.x}
-                        y={centerPx.y}
-                        text="柱子"
-                        fontSize={11}
-                        fill={columnColor}
-                        offsetX={11}
-                        offsetY={5}
-                      />
-                    )}
-                  </Fragment>
-                );
-              })}
-              {furniture.map((item) => {
-                const isSelected =
-                  selectedObject?.type === "furniture" && selectedObject.id === item.id;
-                const centerPx = metersToPx(item.center, pxPerMeter);
-                const widthPx = item.w * pxPerMeter;
-                const heightPx = item.h * pxPerMeter;
-                const defaults = FURNITURE_DEFAULTS[item.kind];
-                const itemColor = isSelected ? "#1F4E79" : defaults.color;
-                return (
-                  <Fragment key={item.id}>
-                    <Rect
-                      name="object"
-                      x={centerPx.x}
-                      y={centerPx.y}
-                      width={widthPx}
-                      height={heightPx}
-                      offsetX={widthPx / 2}
-                      offsetY={heightPx / 2}
-                      rotation={item.rotationDeg}
-                      fill={defaults.color}
-                      opacity={0.6}
-                      stroke={itemColor}
-                      strokeWidth={isSelected ? 3 : 1.5}
-                      onClick={() => {
-                        setSelectedObject({ type: "furniture", id: item.id });
-                        setSelectedVertex(null);
-                      }}
-                      onTap={() => {
-                        setSelectedObject({ type: "furniture", id: item.id });
-                        setSelectedVertex(null);
-                      }}
-                    />
-                    {widthPx > 20 && heightPx > 14 && (
-                      <Text
-                        listening={false}
-                        x={centerPx.x}
-                        y={centerPx.y}
-                        rotation={item.rotationDeg}
-                        text={defaults.label}
-                        fontSize={11}
-                        fill={itemColor}
-                        offsetX={11}
-                        offsetY={5}
-                      />
-                    )}
-                  </Fragment>
-                );
-              })}
-              {selectedColumn &&
-                mode === "select" &&
-                (
-                  [
-                    { x: -1, y: -1 },
-                    { x: 1, y: -1 },
-                    { x: -1, y: 1 },
-                    { x: 1, y: 1 },
-                  ] as { x: -1 | 1; y: -1 | 1 }[]
-                ).map((corner) => {
-                  const cornerMeter = {
-                    x: selectedColumn.center.x + (corner.x * selectedColumn.w) / 2,
-                    y: selectedColumn.center.y + (corner.y * selectedColumn.h) / 2,
-                  };
-                  const cornerPx = metersToPx(cornerMeter, pxPerMeter);
-                  const isDragging =
-                    draggingColumnCorner !== null &&
-                    draggingColumnCorner.x === corner.x &&
-                    draggingColumnCorner.y === corner.y;
+                ))}
+                {Array.from(
+                  { length: venueSizeM / GRID_MAJOR_M + 1 },
+                  (_, i) => i * GRID_MAJOR_M,
+                ).map((m) => (
+                  <Text
+                    key={`label-left-${m}`}
+                    x={2}
+                    y={m * pxPerMeter + 2}
+                    text={String(m)}
+                    fontSize={12}
+                    fill="#78716c"
+                  />
+                ))}
+                <Line
+                  points={[
+                    8,
+                    stagePx - 16,
+                    8 + GRID_MAJOR_M * pxPerMeter,
+                    stagePx - 16,
+                  ]}
+                  stroke="#44403c"
+                  strokeWidth={2}
+                />
+                <Text
+                  x={8}
+                  y={stagePx - 14}
+                  text="5 公尺"
+                  fontSize={12}
+                  fill="#44403c"
+                />
+              </Layer>
+              <Layer listening={mode === "select"}>
+                <Line
+                  points={polygonPx}
+                  closed
+                  fill="rgba(191, 219, 254, 0.5)"
+                  stroke="#1F4E79"
+                  strokeWidth={2}
+                  onDblClick={handleEdgeDblClick}
+                />
+                <Text
+                  listening={false}
+                  x={floorCentroidPx.x}
+                  y={floorCentroidPx.y}
+                  text="地板"
+                  fontSize={13}
+                  fontStyle="bold"
+                  fill="#1F4E79"
+                  offsetX={13}
+                  offsetY={7}
+                />
+                {polygon.map((vertex, index) => {
+                  const px = metersToPx(vertex, pxPerMeter);
                   return (
                     <Circle
-                      key={`corner-${corner.x}-${corner.y}`}
-                      name="object"
-                      x={cornerPx.x}
-                      y={cornerPx.y}
+                      key={index}
+                      x={px.x}
+                      y={px.y}
                       radius={6}
-                      fill={isDragging ? "#1F4E79" : "#ffffff"}
+                      fill={selectedVertex === index ? "#1F4E79" : "#ffffff"}
                       stroke="#1F4E79"
                       strokeWidth={2}
-                      // The minimum column size (0.5m) can place corners only a
-                      // few px from the center at typical scale, so the default
-                      // fill/stroke hit region would overlap the column body's
-                      // own hit region and hijack body-drag gestures. A small
-                      // fixed hit radius (independent of the visual radius
-                      // above, which stays consistent with the other object
-                      // handles) keeps the handle precisely grabbable at its
-                      // corner without covering the body.
-                      hitFunc={(context, shape) => {
-                        context.beginPath();
-                        context.arc(0, 0, 3, 0, Math.PI * 2, false);
-                        context.closePath();
-                        context.fillStrokeShape(shape);
-                      }}
+                      hitStrokeWidth={16}
                       draggable
-                      onDragStart={() => setDraggingColumnCorner(corner)}
-                      onDragMove={(e) =>
-                        handleColumnCornerDrag(selectedColumn, corner, e)
-                      }
-                      // Deliberately does NOT call handleColumnCornerDrag again
-                      // here (unlike the analogous vertex/wall-endpoint/column-
-                      // body handlers, which re-apply on both dragmove and
-                      // dragend): the resulting corner position is generally a
-                      // quarter-grid offset (center +/- w/2), not a 0.5m-grid
-                      // value, and onDragMove already overrides the node's
-                      // position to that exact result. Re-reading e.target's
-                      // (now-overridden) position here and re-running it through
-                      // resizeColumnCorner's snapPoint would re-snap a
-                      // non-grid-aligned value a second time, which is not
-                      // idempotent and can silently drift the resize result.
-                      // The last onDragMove already applied the correct final
-                      // state, so dragend only needs to clear the drag flag.
-                      onDragEnd={() => setDraggingColumnCorner(null)}
+                      onClick={() => {
+                        setSelectedVertex(index);
+                        setSelectedObject(null);
+                      }}
+                      onTap={() => {
+                        setSelectedVertex(index);
+                        setSelectedObject(null);
+                      }}
+                      onDragMove={(e) => handleVertexDragMove(index, e)}
+                      onDragEnd={(e) => handleVertexDragEnd(index, e)}
+                      onContextMenu={(e) => handleVertexContextMenu(index, e)}
                     />
                   );
                 })}
-              {columnLabelText &&
-                selectedColumn &&
-                (() => {
-                  const columnCenterPx = metersToPx(selectedColumn.center, pxPerMeter);
+                {polygon.map((vertex, index) => {
+                  const next = polygon[(index + 1) % polygon.length];
+                  const midpoint = {
+                    x: (vertex.x + next.x) / 2,
+                    y: (vertex.y + next.y) / 2,
+                  };
+                  const midpointPx = metersToPx(midpoint, pxPerMeter);
                   return (
                     <Text
+                      key={`edge-label-${index}`}
                       listening={false}
-                      x={columnCenterPx.x + (selectedColumn.w * pxPerMeter) / 2 + 4}
-                      y={columnCenterPx.y - (selectedColumn.h * pxPerMeter) / 2 - 16}
-                      text={columnLabelText}
+                      x={midpointPx.x + 4}
+                      y={midpointPx.y + 4}
+                      text={edgeLabelTexts[index]}
                       fontSize={11}
                       fill="#44403c"
                     />
                   );
-                })()}
-              {wallLabelText &&
-                selectedWall &&
-                (() => {
+                })}
+              </Layer>
+              <Layer listening={mode === "select"}>
+                {walls.map((wall) => {
+                  const isSelected =
+                    selectedObject?.type === "wall" &&
+                    selectedObject.id === wall.id;
+                  const startPx = metersToPx(wall.start, pxPerMeter);
+                  const lengthM = Math.hypot(
+                    wall.end.x - wall.start.x,
+                    wall.end.y - wall.start.y,
+                  );
+                  const lengthPx = lengthM * pxPerMeter;
+                  const wallColor = isSelected ? "#1F4E79" : "#78350f";
                   const wallMidPx = metersToPx(
                     {
-                      x: (selectedWall.start.x + selectedWall.end.x) / 2,
-                      y: (selectedWall.start.y + selectedWall.end.y) / 2,
+                      x: (wall.start.x + wall.end.x) / 2,
+                      y: (wall.start.y + wall.end.y) / 2,
                     },
                     pxPerMeter,
                   );
                   return (
-                    <Text
-                      listening={false}
-                      x={wallMidPx.x + 6}
-                      y={wallMidPx.y - 16}
-                      text={wallLabelText}
-                      fontSize={11}
-                      fill="#44403c"
-                    />
+                    <Fragment key={wall.id}>
+                      <Rect
+                        name="object"
+                        x={startPx.x}
+                        y={startPx.y}
+                        width={lengthPx}
+                        height={thicknessPx}
+                        offsetY={thicknessPx / 2}
+                        rotation={angleDegrees(wall.start, wall.end)}
+                        fill="#78350f"
+                        stroke={isSelected ? "#1F4E79" : undefined}
+                        strokeWidth={isSelected ? 3 : 0}
+                        draggable={isSelected && mode === "select"}
+                        onClick={() => {
+                          if (suppressObjectClickRef.current) {
+                            suppressObjectClickRef.current = false;
+                            return;
+                          }
+                          setSelectedObject({ type: "wall", id: wall.id });
+                          setSelectedVertex(null);
+                        }}
+                        onTap={() => {
+                          if (suppressObjectClickRef.current) {
+                            suppressObjectClickRef.current = false;
+                            return;
+                          }
+                          setSelectedObject({ type: "wall", id: wall.id });
+                          setSelectedVertex(null);
+                        }}
+                        onDragMove={(e) => handleWallBodyDrag(wall, e)}
+                        onDragEnd={(e) => handleWallBodyDrag(wall, e)}
+                      />
+                      {lengthPx > 24 && (
+                        <Text
+                          listening={false}
+                          x={wallMidPx.x}
+                          y={wallMidPx.y}
+                          text="牆壁"
+                          fontSize={11}
+                          fill={wallColor}
+                          rotation={angleDegrees(wall.start, wall.end)}
+                          offsetX={11}
+                          offsetY={5}
+                        />
+                      )}
+                    </Fragment>
                   );
-                })()}
-              {draftWall && (
-                <Rect
-                  listening={false}
-                  x={metersToPx(draftWall.start, pxPerMeter).x}
-                  y={metersToPx(draftWall.start, pxPerMeter).y}
-                  width={
-                    Math.hypot(
-                      draftWall.end.x - draftWall.start.x,
-                      draftWall.end.y - draftWall.start.y,
-                    ) * pxPerMeter
-                  }
-                  height={thicknessPx}
-                  offsetY={thicknessPx / 2}
-                  rotation={angleDegrees(draftWall.start, draftWall.end)}
-                  fill="#78350f"
-                  opacity={0.5}
-                />
-              )}
-              {selectedWall && (
-                <>
-                  <Circle
-                    name="object"
-                    x={metersToPx(selectedWall.start, pxPerMeter).x}
-                    y={metersToPx(selectedWall.start, pxPerMeter).y}
-                    radius={6}
-                    fill={draggingHandle === "start" ? "#1F4E79" : "#ffffff"}
-                    stroke="#1F4E79"
-                    strokeWidth={2}
-                    hitStrokeWidth={16}
-                    draggable
-                    onDragStart={() => setDraggingHandle("start")}
-                    onDragMove={(e) => handleWallEndpointDrag(selectedWall, "start", e)}
-                    onDragEnd={(e) => {
-                      handleWallEndpointDrag(selectedWall, "start", e);
-                      setDraggingHandle(null);
-                    }}
+                })}
+                {columns.map((column) => {
+                  const isSelected =
+                    selectedObject?.type === "column" &&
+                    selectedObject.id === column.id;
+                  const centerPx = metersToPx(column.center, pxPerMeter);
+                  const widthPx = column.w * pxPerMeter;
+                  const heightPx = column.h * pxPerMeter;
+                  const columnColor = isSelected ? "#1F4E79" : "#57534e";
+                  return (
+                    <Fragment key={column.id}>
+                      <Rect
+                        name="object"
+                        x={centerPx.x}
+                        y={centerPx.y}
+                        width={widthPx}
+                        height={heightPx}
+                        offsetX={widthPx / 2}
+                        offsetY={heightPx / 2}
+                        fill="#78716c"
+                        stroke={columnColor}
+                        strokeWidth={isSelected ? 3 : 1.5}
+                        draggable={isSelected && mode === "select"}
+                        onClick={() => {
+                          if (suppressObjectClickRef.current) {
+                            suppressObjectClickRef.current = false;
+                            return;
+                          }
+                          setSelectedObject({ type: "column", id: column.id });
+                          setSelectedVertex(null);
+                        }}
+                        onTap={() => {
+                          if (suppressObjectClickRef.current) {
+                            suppressObjectClickRef.current = false;
+                            return;
+                          }
+                          setSelectedObject({ type: "column", id: column.id });
+                          setSelectedVertex(null);
+                        }}
+                        onDragMove={(e) => handleColumnBodyDrag(column, e)}
+                        onDragEnd={(e) => handleColumnBodyDrag(column, e)}
+                      />
+                      {widthPx > 20 && heightPx > 14 && (
+                        <Text
+                          listening={false}
+                          x={centerPx.x}
+                          y={centerPx.y}
+                          text="柱子"
+                          fontSize={11}
+                          fill={columnColor}
+                          offsetX={11}
+                          offsetY={5}
+                        />
+                      )}
+                    </Fragment>
+                  );
+                })}
+                {furniture.map((item) => {
+                  const isSelected =
+                    selectedObject?.type === "furniture" &&
+                    selectedObject.id === item.id;
+                  const centerPx = metersToPx(item.center, pxPerMeter);
+                  const widthPx = item.w * pxPerMeter;
+                  const heightPx = item.h * pxPerMeter;
+                  const defaults = FURNITURE_DEFAULTS[item.kind];
+                  const itemColor = isSelected ? "#1F4E79" : defaults.color;
+                  return (
+                    <Fragment key={item.id}>
+                      <Rect
+                        name="object"
+                        x={centerPx.x}
+                        y={centerPx.y}
+                        width={widthPx}
+                        height={heightPx}
+                        offsetX={widthPx / 2}
+                        offsetY={heightPx / 2}
+                        rotation={item.rotationDeg}
+                        fill={defaults.color}
+                        opacity={0.6}
+                        stroke={itemColor}
+                        strokeWidth={isSelected ? 3 : 1.5}
+                        onClick={() => {
+                          setSelectedObject({ type: "furniture", id: item.id });
+                          setSelectedVertex(null);
+                        }}
+                        onTap={() => {
+                          setSelectedObject({ type: "furniture", id: item.id });
+                          setSelectedVertex(null);
+                        }}
+                      />
+                      {widthPx > 20 && heightPx > 14 && (
+                        <Text
+                          listening={false}
+                          x={centerPx.x}
+                          y={centerPx.y}
+                          rotation={item.rotationDeg}
+                          text={defaults.label}
+                          fontSize={11}
+                          fill={itemColor}
+                          offsetX={11}
+                          offsetY={5}
+                        />
+                      )}
+                    </Fragment>
+                  );
+                })}
+                {selectedColumn &&
+                  mode === "select" &&
+                  (
+                    [
+                      { x: -1, y: -1 },
+                      { x: 1, y: -1 },
+                      { x: -1, y: 1 },
+                      { x: 1, y: 1 },
+                    ] as { x: -1 | 1; y: -1 | 1 }[]
+                  ).map((corner) => {
+                    const cornerMeter = {
+                      x:
+                        selectedColumn.center.x +
+                        (corner.x * selectedColumn.w) / 2,
+                      y:
+                        selectedColumn.center.y +
+                        (corner.y * selectedColumn.h) / 2,
+                    };
+                    const cornerPx = metersToPx(cornerMeter, pxPerMeter);
+                    const isDragging =
+                      draggingColumnCorner !== null &&
+                      draggingColumnCorner.x === corner.x &&
+                      draggingColumnCorner.y === corner.y;
+                    return (
+                      <Circle
+                        key={`corner-${corner.x}-${corner.y}`}
+                        name="object"
+                        x={cornerPx.x}
+                        y={cornerPx.y}
+                        radius={6}
+                        fill={isDragging ? "#1F4E79" : "#ffffff"}
+                        stroke="#1F4E79"
+                        strokeWidth={2}
+                        // The minimum column size (0.5m) can place corners only a
+                        // few px from the center at typical scale, so the default
+                        // fill/stroke hit region would overlap the column body's
+                        // own hit region and hijack body-drag gestures. A small
+                        // fixed hit radius (independent of the visual radius
+                        // above, which stays consistent with the other object
+                        // handles) keeps the handle precisely grabbable at its
+                        // corner without covering the body.
+                        hitFunc={(context, shape) => {
+                          context.beginPath();
+                          context.arc(0, 0, 3, 0, Math.PI * 2, false);
+                          context.closePath();
+                          context.fillStrokeShape(shape);
+                        }}
+                        draggable
+                        onDragStart={() => setDraggingColumnCorner(corner)}
+                        onDragMove={(e) =>
+                          handleColumnCornerDrag(selectedColumn, corner, e)
+                        }
+                        // Deliberately does NOT call handleColumnCornerDrag again
+                        // here (unlike the analogous vertex/wall-endpoint/column-
+                        // body handlers, which re-apply on both dragmove and
+                        // dragend): the resulting corner position is generally a
+                        // quarter-grid offset (center +/- w/2), not a 0.5m-grid
+                        // value, and onDragMove already overrides the node's
+                        // position to that exact result. Re-reading e.target's
+                        // (now-overridden) position here and re-running it through
+                        // resizeColumnCorner's snapPoint would re-snap a
+                        // non-grid-aligned value a second time, which is not
+                        // idempotent and can silently drift the resize result.
+                        // The last onDragMove already applied the correct final
+                        // state, so dragend only needs to clear the drag flag.
+                        onDragEnd={() => setDraggingColumnCorner(null)}
+                      />
+                    );
+                  })}
+                {columnLabelText &&
+                  selectedColumn &&
+                  (() => {
+                    const columnCenterPx = metersToPx(
+                      selectedColumn.center,
+                      pxPerMeter,
+                    );
+                    return (
+                      <Text
+                        listening={false}
+                        x={
+                          columnCenterPx.x +
+                          (selectedColumn.w * pxPerMeter) / 2 +
+                          4
+                        }
+                        y={
+                          columnCenterPx.y -
+                          (selectedColumn.h * pxPerMeter) / 2 -
+                          16
+                        }
+                        text={columnLabelText}
+                        fontSize={11}
+                        fill="#44403c"
+                      />
+                    );
+                  })()}
+                {wallLabelText &&
+                  selectedWall &&
+                  (() => {
+                    const wallMidPx = metersToPx(
+                      {
+                        x: (selectedWall.start.x + selectedWall.end.x) / 2,
+                        y: (selectedWall.start.y + selectedWall.end.y) / 2,
+                      },
+                      pxPerMeter,
+                    );
+                    return (
+                      <Text
+                        listening={false}
+                        x={wallMidPx.x + 6}
+                        y={wallMidPx.y - 16}
+                        text={wallLabelText}
+                        fontSize={11}
+                        fill="#44403c"
+                      />
+                    );
+                  })()}
+                {draftWall && (
+                  <Rect
+                    listening={false}
+                    x={metersToPx(draftWall.start, pxPerMeter).x}
+                    y={metersToPx(draftWall.start, pxPerMeter).y}
+                    width={
+                      Math.hypot(
+                        draftWall.end.x - draftWall.start.x,
+                        draftWall.end.y - draftWall.start.y,
+                      ) * pxPerMeter
+                    }
+                    height={thicknessPx}
+                    offsetY={thicknessPx / 2}
+                    rotation={angleDegrees(draftWall.start, draftWall.end)}
+                    fill="#78350f"
+                    opacity={0.5}
                   />
-                  <Circle
-                    name="object"
-                    x={metersToPx(selectedWall.end, pxPerMeter).x}
-                    y={metersToPx(selectedWall.end, pxPerMeter).y}
-                    radius={6}
-                    fill={draggingHandle === "end" ? "#1F4E79" : "#ffffff"}
-                    stroke="#1F4E79"
-                    strokeWidth={2}
-                    hitStrokeWidth={16}
-                    draggable
-                    onDragStart={() => setDraggingHandle("end")}
-                    onDragMove={(e) => handleWallEndpointDrag(selectedWall, "end", e)}
-                    onDragEnd={(e) => {
-                      handleWallEndpointDrag(selectedWall, "end", e);
-                      setDraggingHandle(null);
-                    }}
-                  />
-                </>
-              )}
-            </Layer>
-          </Stage>
+                )}
+                {selectedWall && (
+                  <>
+                    <Circle
+                      name="object"
+                      x={metersToPx(selectedWall.start, pxPerMeter).x}
+                      y={metersToPx(selectedWall.start, pxPerMeter).y}
+                      radius={6}
+                      fill={draggingHandle === "start" ? "#1F4E79" : "#ffffff"}
+                      stroke="#1F4E79"
+                      strokeWidth={2}
+                      hitStrokeWidth={16}
+                      draggable
+                      onDragStart={() => setDraggingHandle("start")}
+                      onDragMove={(e) =>
+                        handleWallEndpointDrag(selectedWall, "start", e)
+                      }
+                      onDragEnd={(e) => {
+                        handleWallEndpointDrag(selectedWall, "start", e);
+                        setDraggingHandle(null);
+                      }}
+                    />
+                    <Circle
+                      name="object"
+                      x={metersToPx(selectedWall.end, pxPerMeter).x}
+                      y={metersToPx(selectedWall.end, pxPerMeter).y}
+                      radius={6}
+                      fill={draggingHandle === "end" ? "#1F4E79" : "#ffffff"}
+                      stroke="#1F4E79"
+                      strokeWidth={2}
+                      hitStrokeWidth={16}
+                      draggable
+                      onDragStart={() => setDraggingHandle("end")}
+                      onDragMove={(e) =>
+                        handleWallEndpointDrag(selectedWall, "end", e)
+                      }
+                      onDragEnd={(e) => {
+                        handleWallEndpointDrag(selectedWall, "end", e);
+                        setDraggingHandle(null);
+                      }}
+                    />
+                  </>
+                )}
+              </Layer>
+            </Stage>
+          </div>
+          <AiPanel
+            plan={{ polygon, walls, columns, furniture }}
+            applyActions={applyActions}
+          />
         </div>
       )}
       {step === "preview" && sceneSnapshot && (

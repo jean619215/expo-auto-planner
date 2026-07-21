@@ -18,6 +18,9 @@ export class AiPanelPage {
   readonly balance: Locator;
   readonly error: Locator;
   readonly actionSummary: Locator;
+  readonly lastAssistantText: Locator;
+  readonly chatCost: Locator;
+  readonly imageButton: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -31,6 +34,9 @@ export class AiPanelPage {
     this.balance = page.getByTestId("ai-balance");
     this.error = page.getByTestId("ai-error");
     this.actionSummary = page.getByTestId("ai-action-summary");
+    this.lastAssistantText = page.getByTestId("ai-assistant-text").last();
+    this.chatCost = page.getByTestId("ai-chat-cost");
+    this.imageButton = page.getByTestId("ai-image-button");
   }
 
   async open() {
