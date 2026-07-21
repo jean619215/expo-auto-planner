@@ -1,9 +1,10 @@
 {
-  "story_file": "stories/ai-panel-bugfix.md",
-  "story_title": "AI 助理面板 bug 修復與 UI 改版",
+  "story_file": "stories/ai-chat-cost-quality.md",
+  "story_title": "AI 助理對話成本與品質優化",
   "task_index": 0,
-  "current_task": "[FRONTEND] AI 助理面板改版:右側可收合側欄、描述區去外框、輸入框改大 textarea、圖片上傳改按鈕、點數餘額+每次扣點顯示(扣點值由後端提供)、@paid 煙霧測試斷言強化;Playwright 驗收(更新 AiPanelPage page object)",
-  "task_type": "FRONTEND",
+  "current_task": "[BACKEND] 系統提示強化:src/lib/ai/system.ts 批次更新(確認摘要流程/失敗回饋/去寒暄),維持凍結字串與 cache 斷點;以 script 或 @paid 煙霧驗證 scope guard 未退化",
+  "task_type": "BACKEND",
+  "stage": "complete",
   "iteration": {
     "review": 1,
     "qa": 1
@@ -15,13 +16,12 @@
     "implement": "completed",
     "review": "completed",
     "qa": "completed",
-    "playwright": "completed"
+    "playwright": "pending"
   },
-  "stage": "complete",
   "flags": {
     "review_critical_pending": false,
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "last_updated": "2026-07-21T11:47:31+08:00"
+  "last_updated": "2026-07-22T00:30:00+08:00"
 }
