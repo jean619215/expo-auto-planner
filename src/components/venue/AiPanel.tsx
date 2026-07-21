@@ -1,13 +1,22 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type KeyboardEvent,
+} from "react";
 import type Anthropic from "@anthropic-ai/sdk";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
 import type { Column, FloorPolygon, WallSegment } from "@/lib/venue/plan";
 import type { FurnitureItem } from "@/lib/venue/furniture";
-import { parseToolUse, type AiAction, type AiActionResult } from "@/lib/ai-panel/actions";
+import {
+  parseToolUse,
+  type AiAction,
+  type AiActionResult,
+} from "@/lib/ai-panel/actions";
 
 // 單張圖片上限(AC2):超過拒絕上傳,不送出。
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
@@ -57,13 +66,39 @@ export default function AiPanel({ plan, applyActions }: AiPanelProps) {
   const [open, setOpen] = useState(false);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   // 尚未回傳給模型的 tool_result blocks(等使用者下一輪發話時併入)。
-  const [pendingToolResults, setPendingToolResults] = useState<ContentBlock[]>([]);
+  const [pendingToolResults, setPendingToolResults] = useState<ContentBlock[]>(
+    [],
+  );
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<ChatError | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
+  const [chatCost, setChatCost] = useState<number | null>(null);
   const [imageDraft, setImageDraft] = useState<ImageDraft | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // 面板展開即抓取扣點值 + 初始餘額(AC5)。獨立降級:失敗時各自維持
+  // null(顯示 "-"),不擋面板其餘功能、不設 error。
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/ai/config");
+        const data = await res.json().catch(() => null);
+        if (cancelled) return;
+        if (res.status === 200 && data) {
+          setChatCost(typeof data.chatCost === "number" ? data.chatCost : null);
+          setBalance(typeof data.balance === "number" ? data.balance : null);
+        }
+      } catch {
+        // 降級:維持既有值(通常是 null → "-"),不阻斷面板功能。
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   function handleImageChange(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -72,7 +107,10 @@ export default function AiPanel({ plan, applyActions }: AiPanelProps) {
     if (!file) return;
 
     if (file.size > MAX_IMAGE_BYTES) {
-      setError({ kind: "generic", message: "圖片超過 3MB 上限,請選擇較小的檔案" });
+      setError({
+        kind: "generic",
+        message: "圖片超過 3MB 上限,請選擇較小的檔案",
+      });
       return;
     }
 
@@ -121,7 +159,8 @@ export default function AiPanel({ plan, applyActions }: AiPanelProps) {
         type: "image",
         source: {
           type: "base64",
-          media_type: imageDraft.mediaType as Anthropic.Base64ImageSource["media_type"],
+          media_type:
+            imageDraft.mediaType as Anthropic.Base64ImageSource["media_type"],
           data: imageDraft.base64,
         },
       });
@@ -141,7 +180,10 @@ export default function AiPanel({ plan, applyActions }: AiPanelProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: nextTurns.map(({ role, content: c }) => ({ role, content: c })),
+          messages: nextTurns.map(({ role, content: c }) => ({
+            role,
+            content: c,
+          })),
         }),
       });
       const data = await res.json().catch(() => null);
@@ -176,7 +218,8 @@ export default function AiPanel({ plan, applyActions }: AiPanelProps) {
         setInput("");
         clearImageDraft();
       } else if (res.status === 402) {
-        const nextBalance = typeof data?.balance === "number" ? data.balance : null;
+        const nextBalance =
+          typeof data?.balance === "number" ? data.balance : null;
         setBalance(nextBalance);
         setError({ kind: "insufficient", balance: nextBalance });
       } else if (res.status === 401) {
@@ -184,7 +227,10 @@ export default function AiPanel({ plan, applyActions }: AiPanelProps) {
       } else {
         setError({
           kind: "generic",
-          message: typeof data?.error === "string" ? data.error : "發生錯誤,請稍後再試",
+          message:
+            typeof data?.error === "string"
+              ? data.error
+              : "發生錯誤,請稍後再試",
         });
       }
     } catch {
@@ -194,129 +240,175 @@ export default function AiPanel({ plan, applyActions }: AiPanelProps) {
     }
   }
 
-  function handleInputKeyDown(e: KeyboardEvent<HTMLInputElement>) {
-    if (e.key !== "Enter") return;
+  function handleInputKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    // Shift+Enter 換行;IME 組字中(注音/拼音選字)按 Enter 一律放行,不送出。
+    if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
     e.preventDefault();
     void handleSend();
   }
 
+  // 收合時只渲染 toggle 按鈕(不佔用/不遮擋編輯畫面);展開時渲染側欄。
+  // AiPanel 本身常駐掛載,turns/input/imageDraft 等 state 不因收合重置。
+  if (!open) {
+    return (
+      <div className="shrink-0">
+        <Button
+          type="button"
+          variant="outline"
+          data-testid="ai-panel-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen(true)}
+        >
+          AI 助理
+        </Button>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col items-end gap-2">
-      <Button
-        type="button"
-        variant="outline"
-        data-testid="ai-panel-toggle"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+    <div
+      data-testid="ai-panel"
+      className="flex w-80 shrink-0 flex-col gap-3 rounded-lg bg-card p-3 xl:w-96"
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h2 className="text-sm font-semibold">AI 場地助理</h2>
+          <p className="text-xs text-muted-foreground">
+            點數餘額:<span data-testid="ai-balance">{balance ?? "-"}</span>
+            (每次呼叫扣<span data-testid="ai-chat-cost">{chatCost ?? "-"}</span>
+            點)
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          data-testid="ai-panel-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen(false)}
+        >
+          收合
+        </Button>
+      </div>
+
+      <div
+        data-testid="ai-messages"
+        className="flex max-h-[55vh] flex-col gap-2 overflow-y-auto p-1"
       >
-        {open ? "關閉 AI 助理" : "AI 助理"}
-      </Button>
-
-      {open && (
-        <Card data-testid="ai-panel" className="w-full max-w-sm">
-          <CardHeader>
-            <CardTitle>AI 場地助理</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              點數餘額:<span data-testid="ai-balance">{balance ?? "-"}</span>
-              (每次呼叫將扣除點數)
-            </p>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3">
-            <div
-              data-testid="ai-messages"
-              className="flex max-h-80 flex-col gap-2 overflow-y-auto rounded-md border border-input p-2"
+        {turns.length === 0 && (
+          <p className="text-xs text-muted-foreground">
+            描述你想要的場地配置,或上傳參考圖,AI 會幫你產生平面圖。
+          </p>
+        )}
+        {turns.map((turn, i) => (
+          <div
+            key={i}
+            className={turn.role === "user" ? "text-right" : "text-left"}
+          >
+            <p
+              data-testid={
+                turn.role === "assistant" ? "ai-assistant-text" : undefined
+              }
+              className="whitespace-pre-wrap text-sm"
             >
-              {turns.length === 0 && (
-                <p className="text-xs text-muted-foreground">
-                  描述你想要的場地配置,或上傳參考圖,AI 會幫你產生平面圖。
-                </p>
-              )}
-              {turns.map((turn, i) => (
-                <div key={i} className={turn.role === "user" ? "text-right" : "text-left"}>
-                  <p className="whitespace-pre-wrap text-sm">
-                    {turn.role === "user" ? turn.displayText : extractText(turn.content)}
-                  </p>
-                  {turn.actionSummary && (
-                    <p
-                      data-testid="ai-action-summary"
-                      className="mt-1 whitespace-pre-wrap text-xs font-medium text-blueprint"
-                    >
-                      {turn.actionSummary}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            {pending && (
-              <p data-testid="ai-loading" className="text-xs text-muted-foreground">
-                AI 思考中...
+              {turn.role === "user"
+                ? turn.displayText
+                : extractText(turn.content)}
+            </p>
+            {turn.actionSummary && (
+              <p
+                data-testid="ai-action-summary"
+                className="mt-1 whitespace-pre-wrap text-xs font-medium text-blueprint"
+              >
+                {turn.actionSummary}
               </p>
             )}
+          </div>
+        ))}
+      </div>
 
-            {error && (
-              <div
-                data-testid="ai-error"
-                role="alert"
-                className="rounded-md bg-destructive/10 p-2 text-xs text-destructive"
-              >
-                {error.kind === "insufficient" && (
-                  <p>
-                    點數不足(目前餘額:{error.balance ?? "-"})。
-                    <a href="/shop" className="ml-1 underline">
-                      前往商店購買點數
-                    </a>
-                  </p>
-                )}
-                {error.kind === "auth" && <p>請先登入才能使用 AI 助理。</p>}
-                {error.kind === "generic" && <p>{error.message}</p>}
-              </div>
-            )}
-
-            {imageDraft && (
-              <div className="flex items-center gap-2">
-                {/* eslint-disable-next-line @next/next/no-img-element -- 本地 base64 預覽,非遠端圖檔,不適用 next/image 最佳化。 */}
-                <img
-                  src={imageDraft.previewUrl}
-                  alt="上傳預覽"
-                  className="h-12 w-12 rounded object-cover"
-                />
-                <Button type="button" size="sm" variant="ghost" onClick={clearImageDraft}>
-                  移除圖片
-                </Button>
-              </div>
-            )}
-
-            <div className="flex gap-2">
-              <Input
-                data-testid="ai-input"
-                value={input}
-                disabled={pending}
-                placeholder="描述你想要的場地配置..."
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleInputKeyDown}
-              />
-              <Button
-                type="button"
-                data-testid="ai-send"
-                disabled={pending}
-                onClick={() => void handleSend()}
-              >
-                送出
-              </Button>
-            </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              data-testid="ai-image-input"
-              disabled={pending}
-              onChange={handleImageChange}
-              className="text-xs"
-            />
-          </CardContent>
-        </Card>
+      {pending && (
+        <p data-testid="ai-loading" className="text-xs text-muted-foreground">
+          AI 思考中...
+        </p>
       )}
+
+      {error && (
+        <div
+          data-testid="ai-error"
+          role="alert"
+          className="rounded-md bg-destructive/10 p-2 text-xs text-destructive"
+        >
+          {error.kind === "insufficient" && (
+            <p>
+              點數不足(目前餘額:{error.balance ?? "-"})。
+              <a href="/shop" className="ml-1 underline">
+                前往商店購買點數
+              </a>
+            </p>
+          )}
+          {error.kind === "auth" && <p>請先登入才能使用 AI 助理。</p>}
+          {error.kind === "generic" && <p>{error.message}</p>}
+        </div>
+      )}
+
+      {imageDraft && (
+        <div className="flex items-center gap-2">
+          {/* eslint-disable-next-line @next/next/no-img-element -- 本地 base64 預覽,非遠端圖檔,不適用 next/image 最佳化。 */}
+          <img
+            src={imageDraft.previewUrl}
+            alt="上傳預覽"
+            className="h-12 w-12 rounded object-cover"
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={clearImageDraft}
+          >
+            移除圖片
+          </Button>
+        </div>
+      )}
+
+      <Textarea
+        data-testid="ai-input"
+        rows={3}
+        value={input}
+        disabled={pending}
+        placeholder="描述你想要的場地配置...(Enter 送出,Shift+Enter 換行)"
+        onChange={(e) => setInput(e.target.value)}
+        onKeyDown={handleInputKeyDown}
+      />
+      <div className="flex gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          data-testid="ai-image-button"
+          disabled={pending}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          上傳圖片
+        </Button>
+        <Button
+          type="button"
+          data-testid="ai-send"
+          disabled={pending}
+          className="ml-auto"
+          onClick={() => void handleSend()}
+        >
+          送出
+        </Button>
+      </div>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        data-testid="ai-image-input"
+        disabled={pending}
+        onChange={handleImageChange}
+        className="hidden"
+      />
     </div>
   );
 }

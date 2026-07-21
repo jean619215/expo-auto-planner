@@ -1,10 +1,9 @@
 {
-  "story_file": "stories/ai-planner-assistant.md",
-  "story_title": "場地規劃 AI 助理",
-  "task_index": 2,
-  "current_task": "[FRONTEND] 場地規劃頁 AI 助理面板:對話UI/前端state存歷史/tool call套用到PlanEditor/點數與錯誤狀態,Playwright驗收",
+  "story_file": "stories/ai-panel-bugfix.md",
+  "story_title": "AI 助理面板 bug 修復與 UI 改版",
+  "task_index": 0,
+  "current_task": "[FRONTEND] AI 助理面板改版:右側可收合側欄、描述區去外框、輸入框改大 textarea、圖片上傳改按鈕、點數餘額+每次扣點顯示(扣點值由後端提供)、@paid 煙霧測試斷言強化;Playwright 驗收(更新 AiPanelPage page object)",
   "task_type": "FRONTEND",
-  "stage": "complete",
   "iteration": {
     "review": 1,
     "qa": 1
@@ -18,11 +17,11 @@
     "qa": "completed",
     "playwright": "completed"
   },
+  "stage": "complete",
   "flags": {
     "review_critical_pending": false,
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "notes": "Story「場地規劃AI助理」完成:3/3 tasks(扣點資料層/AI chat API/助理面板)。全套Playwright 87+1skip。branch feat/ai-planner。",
-  "last_updated": "2026-07-17T20:30:00+08:00"
+  "last_updated": "2026-07-21T11:47:31+08:00"
 }

@@ -34,6 +34,23 @@ async function mockAiChat(page: Page, responses: MockResponse[]) {
   });
 }
 
+/** Mocks GET /api/ai/config (chatCost + initial balance shown on panel open, AC5). */
+async function mockAiConfig(
+  page: Page,
+  {
+    chatCost = 10,
+    balance = 100,
+  }: { chatCost?: number; balance?: number } = {},
+) {
+  await page.route("**/api/ai/config", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ chatCost, balance }),
+    });
+  });
+}
+
 const TEXT_REPLY_FIXTURE: MockResponse = {
   status: 200,
   body: {
@@ -81,7 +98,11 @@ const INSUFFICIENT_BALANCE_FIXTURE: MockResponse = {
 };
 
 test.describe("AI 助理面板 - AC1 面板 UI", () => {
-  test("開關切換顯示/隱藏面板,含訊息列表、輸入框、送出鈕、圖片上傳", async ({ page }) => {
+  test("開關切換顯示/隱藏面板,含訊息列表、輸入框、送出鈕、圖片上傳", async ({
+    page,
+  }) => {
+    await mockAiConfig(page, { chatCost: 10, balance: 100 });
+
     const editor = new PlanEditorPage(page);
     const ai = new AiPanelPage(page);
     await editor.navigate();
@@ -93,8 +114,13 @@ test.describe("AI 助理面板 - AC1 面板 UI", () => {
     await expect(ai.messages).toBeVisible();
     await expect(ai.input).toBeVisible();
     await expect(ai.sendButton).toBeVisible();
+    await expect(ai.imageButton).toBeVisible();
     await expect(ai.imageInput).toBeAttached();
     await expect(ai.balance).toBeVisible();
+
+    // AC5:面板展開即見扣點值與餘額,不需先送出訊息。
+    await expect(ai.chatCost).toHaveText("10");
+    await expect(ai.balance).toHaveText("100");
 
     await ai.toggle.click();
     await expect(ai.panel).toBeHidden();
@@ -103,6 +129,7 @@ test.describe("AI 助理面板 - AC1 面板 UI", () => {
 
 test.describe("AI 助理面板 - AC2 對話流程", () => {
   test("送出訊息後顯示助理文字回應與更新後的點數餘額", async ({ page }) => {
+    await mockAiConfig(page);
     await mockAiChat(page, [TEXT_REPLY_FIXTURE]);
 
     const editor = new PlanEditorPage(page);
@@ -118,6 +145,7 @@ test.describe("AI 助理面板 - AC2 對話流程", () => {
   });
 
   test("送出中:輸入與按鈕 disabled、顯示 loading 指示", async ({ page }) => {
+    await mockAiConfig(page);
     await mockAiChat(page, [{ ...TEXT_REPLY_FIXTURE, delayMs: 600 }]);
 
     const editor = new PlanEditorPage(page);
@@ -138,6 +166,7 @@ test.describe("AI 助理面板 - AC2 對話流程", () => {
   });
 
   test(">3MB 圖片拒絕上傳,顯示錯誤且不送出", async ({ page }) => {
+    await mockAiConfig(page);
     let requestSent = false;
     await page.route("**/api/ai/chat", async (route) => {
       requestSent = true;
@@ -170,6 +199,7 @@ test.describe("AI 助理面板 - AC3 tool call 執行", () => {
   test("generate_plan fixture 套用後 2D 平面圖出現對應家具,並顯示動作摘要", async ({
     page,
   }) => {
+    await mockAiConfig(page);
     await mockAiChat(page, [GENERATE_PLAN_FIXTURE]);
 
     const editor = new PlanEditorPage(page);
@@ -182,13 +212,18 @@ test.describe("AI 助理面板 - AC3 tool call 執行", () => {
     await expect(ai.actionSummary).toContainText("已產生配置");
     await expect(ai.actionSummary).toContainText("2 件家具");
 
-    const furnitureCount = await editor.editor.getAttribute("data-furniture-count");
+    const furnitureCount = await editor.editor.getAttribute(
+      "data-furniture-count",
+    );
     expect(Number(furnitureCount)).toBe(2);
   });
 });
 
 test.describe("AI 助理面板 - AC4 錯誤與點數狀態", () => {
-  test("402 顯示點數不足、目前餘額與商店連結,輸入保留可重送", async ({ page }) => {
+  test("402 顯示點數不足、目前餘額與商店連結,輸入保留可重送", async ({
+    page,
+  }) => {
+    await mockAiConfig(page);
     await mockAiChat(page, [INSUFFICIENT_BALANCE_FIXTURE]);
 
     const editor = new PlanEditorPage(page);
@@ -210,6 +245,7 @@ test.describe("AI 助理面板 - AC4 錯誤與點數狀態", () => {
   });
 
   test("500 錯誤顯示 ai-error(role=alert),歷史不留失敗輪", async ({ page }) => {
+    await mockAiConfig(page);
     await mockAiChat(page, [{ status: 500, body: { error: "伺服器錯誤" } }]);
 
     const editor = new PlanEditorPage(page);
@@ -253,9 +289,19 @@ test.describe("AI 助理面板 - 真模型煙霧測試 @paid", () => {
     await editor.navigate();
     await ai.open();
 
+    // 強化斷言(AC6):鎖定真正發出的 POST /api/ai/chat 請求並確認 200,
+    // 而非只看 optimistic user 訊息讓 messages 非空就判定通過 — 這樣才能
+    // 重現並封死 2026-07-21 發生過的「測試綠但 server log 無請求紀錄」問題。
+    const respPromise = page.waitForResponse(
+      (r) =>
+        r.url().includes("/api/ai/chat") && r.request().method() === "POST",
+      { timeout: 90_000 },
+    );
     await ai.sendMessage("你好");
+    expect((await respPromise).status()).toBe(200);
 
+    await expect(ai.lastAssistantText).toBeVisible({ timeout: 90_000 });
+    await expect(ai.lastAssistantText).not.toHaveText("");
     await expect(ai.error).toBeHidden();
-    await expect(ai.messages).not.toBeEmpty();
   });
 });
