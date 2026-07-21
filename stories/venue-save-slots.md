@@ -18,7 +18,7 @@
 
 ## 任務清單
 - [x] [BACKEND] `venue_plans` migration(slot 1–3 check + unique、RLS select-own、寫入 service_role + revoke)+ 儲存檔 API 五支:upsert 存檔/讀檔(含對話)/列表/改名/刪除
-- [ ] [BACKEND] `ai_conversations`(plan_id unique FK)+ `ai_messages` migration(RLS/revoke 同慣例);`/api/ai/chat` 增收 `planId`(所有權驗證、回應後增量落庫、圖片佔位符、落庫失敗不影響回應)
+- [x] [BACKEND] `ai_conversations`(plan_id unique FK)+ `ai_messages` migration(RLS/revoke 同慣例);`/api/ai/chat` 增收 `planId`(所有權驗證、回應後增量落庫、圖片佔位符、落庫失敗不影響回應)
 - [ ] [FRONTEND] 存檔 UI(三格面板:存/讀/改名/刪除/覆蓋與讀檔確認)+ AiPanel 續聊載入、清空對話、100 輪軟上限提示、歷史圖片占位 UI;Playwright 驗收(page object 模式)
 
 <!--

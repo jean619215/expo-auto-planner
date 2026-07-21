@@ -8,6 +8,10 @@
 //
 // 只操作既有本地 state 衍生資料,不引入外部輸入;不 import
 // src/lib/ai/(server-only)或 src/lib/supabase/admin.ts。
+//
+// PRIOR_IMAGE_PLACEHOLDER 亦被 src/app/api/ai/chat/route.ts(server)import,
+// 作為對話落庫時圖片 block 佔位符字串的單一事實來源 — 本模組必須維持
+// isomorphic,新增程式碼不得引入 server-only 模組或瀏覽器 API。
 
 import type Anthropic from "@anthropic-ai/sdk";
 

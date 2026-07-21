@@ -1,11 +1,11 @@
-# Code Review Report — venue_plans migration + 儲存檔 API 五支
-> Generated: 2026-07-22T05:10:00+08:00 | Review iteration: 1
+# Code Review Report — ai_conversations/ai_messages migration + /api/ai/chat 對話落庫
+> Generated: 2026-07-22T15:40:00+08:00 | Review iteration: 1
 
 ## Overall Assessment
 APPROVED
 
 ## Summary
-實作與 architect-plan.md 逐 step 一致(migration SQL 除時間戳外逐字對齊 Step 1 全文,計畫明文允許時間戳調整)。五支 route 的安全關鍵點——admin client 逐 query `user_id` 過濾、slot 白名單、404 不洩漏存在性——全數落實,`next typegen` + `npm run lint` + `tsc --noEmit` 皆乾淨。無 Critical、無 Should Fix。
+實作與 architect-plan.md 逐步一致(migration 全文一字不差、chat route 順序正確、plans GET 真查詢 additive)。安全關鍵點全部落實:所有權 404 在扣點之前、admin client 查詢必帶 `.eq("user_id")`、migration revoke 含 sequence、RLS select-own join 路徑正確。lint 與 tsc 乾淨。無 Critical、無 Should Fix。
 
 ## 🔴 Critical Issues (Must Fix — Pipeline Paused)
 無。
@@ -16,35 +16,56 @@ APPROVED
 ## 💡 Suggestions (Consider — No Action Required)
 
 ### Suggestion 1
-- **File**: `src/app/api/plans/[slot]/route.ts:167-170`
-- **Issue**: PATCH 收到非合法 JSON body 時回 400 `名稱不可為空`(EMPTY_NAME_ERROR),語意上是「body 壞掉」而非「名稱空白」。
-- **Note**: spec 只要求 400,訊息未指定,行為正確;若未來想區分可另加訊息。不需行動。
+- **File**: src/app/api/ai/chat/route.ts:74
+- **Issue**: `createSupabaseAdminClient()` 在不帶 `planId` 的路徑也會被建構(未使用)。client 建構為 lazy、無網路呼叫,且 service_role key 本就是該 route 的必要環境(deductPoints 亦依賴),故無行為差異——僅為整潔度,可移入 `planId` 存在時再建構。
+- **不列 🟡 理由**: 「零行為變化」AC 實測不受影響(零新增查詢成立);改動須在兩個 `if (planId)` 區塊間傳遞 client,可讀性未必更好。
 
 ### Suggestion 2
-- **File**: `src/app/api/plans/[slot]/route.ts:67`
-- **Issue**: `readJsonBody` 回傳型別 `Promise<unknown | null>` 中 `unknown | null` 塌縮為 `unknown`,null 標註僅為文件性質。無實際影響。
+- **File**: src/app/api/ai/chat/route.ts:236-239
+- **Issue**: 最後一則 user 訊息若無 `content` 欄位,`userContent` 為 `null`,insert 會撞 `content jsonb not null` → 落入 log-only 分支。理論上不發生(前端 `toApiMessages` 契約),且 orchestrator 已定案「不擴大防禦」,失敗路徑安全(response 不受影響)。僅供未來除錯時知悉此 log 來源之一。
 
 ## Security Assessment
-- Secrets scan: PASS(零硬編碼 secret;admin/server client 皆走 `src/lib/supabase/` factory)
-- Input validation: PASS(slot 嚴格字串白名單不經 `Number()`;plan 形狀檢查含 `Number.isFinite`;name trim;body JSON try/catch — 全在 DB 之前)
-- Auth/authz: PASS(proxy fail-closed + 五支 route 內 `getUser()` 雙重;`service_role` 僅 server route import)
-- **admin client user_id 過濾(本 task 最關鍵)**: PASS — 逐 query 核對 5/5:
-  1. `GET /api/plans` list → `.eq("user_id", userId)`(route.ts:21)
-  2. `GET /api/plans/[slot]` → `.eq("user_id", userId)`([slot]/route.ts:90)
-  3. `PUT` upsert → `user_id: userId` 在 payload + `onConflict: "user_id,slot"`(:134-144,寫入僅能落在本人列)
-  4. `PATCH` update → `.eq("user_id", userId)`(:178)
-  5. `DELETE` → `.eq("user_id", userId)`(:211)
-- 404 不區分「沒存過」vs「他人的」: PASS(GET/PATCH/DELETE 一律 `找不到存檔`)
-- Migration 雙層防禦: PASS(RLS select-own with `(select auth.uid())` + 明確 `revoke insert, update, delete from anon, authenticated`;重用既有 `set_updated_at()`,無 security definer,trigger 僅改 NEW record)
-- 錯誤 log: PASS(僅 `error.code`/`error.message`,無 token/cookie/session)
-- CORS/CSP: 未觸及。`src/proxy.ts` 零修改(`/api/:path*` matcher 已涵蓋新路由,fail-closed)
-- Test coverage: 無 JS 測試框架(AGENTS.md 規範)— 手動 checklist 15 條 AC 全覆蓋 + SQL 驗證腳本 13 節(含 grant/RLS/cascade);401/400 不碰 DB 路徑已於 pipeline 內實測,其餘標記待 migration push 後驗(QA 階段)
+- Secrets scan: PASS(無硬編 key/connection string;migration 無憑證;測試文件引用 `.env.playwright.local`)
+- Input validation: PASS(`planId` UUID 白名單 regex 於邊界驗證後才進 DB;body 5MB 上限沿用;client `system` 欄位持續被忽略)
+- Auth/authz: PASS(proxy fail-closed 未動;`getUser()` 401;所有權驗證 `.eq("user_id", userId)` 於扣點前;404 訊息與 plans route `NOT_FOUND_ERROR` 字面一致「找不到存檔」,不存在/非本人同狀態碼同訊息不可區分,無存在性洩漏;GET 對話查詢以已過濾的 `data.id` 錨定)
+- Sensitive data in logs: PASS(落庫失敗 log 僅 planId/refId/error message,無對話內容;查詢失敗 log 僅 code/message)
+- CORS/CSP: 未觸及
+- SQL injection: N/A(supabase-js query builder,參數化)
+- Test coverage: 手動 checklist(`ai_chat_manual.md` planId 落庫段落、`venue_plans_api_manual.md` conversation/planId 斷言)+ `ai_conversations_verify.sql` 17 節完整覆蓋新邏輯(專案無 JS 測試框架,BACKEND 慣例)
+
+## Migration 核對(已 push 上雲,重點複核)
+- [x] `plan_id uuid not null unique` FK → `venue_plans(id) on delete cascade`
+- [x] `ai_messages.id bigint generated always as identity` PK;`(conversation_id, id)` 複合索引
+- [x] 兩表 RLS enabled;select-own policy 經 join 回 `venue_plans.user_id = (select auth.uid())`(兩表皆不存 user_id,與 orchestrator Security Notes 一致)
+- [x] `revoke insert, update, delete from anon, authenticated` 兩表 + `revoke usage, select, update on sequence ai_messages_id_seq`(防前端偽造 assistant 訊息的技術屏障落實)
+- [x] `updated_at` trigger 重用 `public.set_updated_at()`
+- [x] 與 architect-plan.md「Migration SQL 全文」逐字一致
+
+## Chat Route 順序核對(AC 關鍵)
+auth 401 → body 大小/JSON 400 → messages 驗證 400 → **planId 格式 400** → **所有權 404(admin + `.eq("user_id")`,在 deductPoints 之前 — 404/400 情境零扣點、零 ledger 列)** → 扣點 → 模型 → usage log → **落庫(整段 try/catch,catch 僅 console.error,response 不受影響)** → safeBalance → 200。
+不帶 planId:零新增 DB 查詢,response 形狀不變(零行為變化)。
+
+## 落庫形狀核對
+- upsert `onConflict: "plan_id", ignoreDuplicates: false` → DO UPDATE 回傳既有列,race 消解(決策 3)
+- image block 逐一換 `PRIOR_IMAGE_PLACEHOLDER` text block(不合併);text/tool_result/未知型別原樣;非陣列 content 原樣
+- import 方向合法:server route import `@/lib/ai-panel/messages`(純 isomorphic,僅 `import type Anthropic`,無 server-only、無瀏覽器 API、無反向依賴);檔頭防退化註解已補
+- 單一 insert 兩列(user 先於 assistant,identity 保序);assistant content 原樣
+
+## Plans GET 核對
+- select 補 `id`;conversation 真查詢:`ai_conversations` by `plan_id` maybeSingle → 無列回 `[]`(200,合法狀態);有列 → `ai_messages` select `role, content` order by `id` 升冪(`{role, content}` 形狀,不帶 bigint id,無精度問題)
+- `planId` 欄位 additive(architect Architecture Notes 第 1 點刻意補洞,review 認可:task 3 前端需要 planId 才能觸達落庫功能;chat 端每次重驗所有權,曝露 uuid 無風險)
+- PUT/PATCH/DELETE 未動;`src/proxy.ts`、`src/lib/ai/`、既有 migrations 皆未觸及
 
 ## Plan Compliance
-- [x] All architect plan steps implemented(Step 1–10 逐項核對)
-- [x] Implementation matches plan intent(PUT name 保留採 upsert payload 欄位省略語意,程式碼註解已記錄此 PostgREST 依賴;`conversation: []` 佔位與 DELETE 不清對話均有 task 2 接手註解;`MIN_FLOOR_VERTICES` 自 `@/lib/venue/plan` import,經查該 module 無 React/`use client`,server 安全;`ctx.params` 正確 await + `RouteContext` 型別)
-- [x] No unauthorised scope additions(git status 僅 5 個計畫內新檔 + story 檔 + pipeline 狀態檔;零觸及 `src/proxy.ts`、`src/lib/ai/`、既有 migrations)
-- 備註:migration 檔名時間戳 `20260722030000`(計畫寫 `020000`)— 計畫明文「僅時間戳依實際建檔時間調整」,合規;測試資產內引用一致。
+- [x] All architect plan steps implemented(steps 1–9 全數對應)
+- [x] Implementation matches plan intent
+- [x] No unauthorised scope additions(唯一超出 orchestrator 明文者為 GET `planId` 欄位,architect 已標記並說理)
+
+## 靜態驗證
+- `npm run lint`:PASS
+- `npx tsc --noEmit`:PASS
 
 ## Conversation Log
-無(零 Should Fix,無需 developer 往返)。
+| Issue | Developer Response | Resolution |
+|---|---|---|
+| (無 🟡/🔴,無往返) | — | — |

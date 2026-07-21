@@ -86,7 +86,7 @@ export async function GET(_req: NextRequest, ctx: RouteContext<"/api/plans/[slot
   const admin = createSupabaseAdminClient();
   const { data, error } = await admin
     .from("venue_plans")
-    .select("slot, name, plan, updated_at")
+    .select("id, slot, name, plan, updated_at")
     .eq("user_id", userId) // ★ admin client 無 RLS,此過濾為安全關鍵
     .eq("slot", slot)
     .maybeSingle();
@@ -99,10 +99,45 @@ export async function GET(_req: NextRequest, ctx: RouteContext<"/api/plans/[slot
     return Response.json({ error: NOT_FOUND_ERROR }, { status: 404 });
   }
 
-  // conversation 本 task 固定回傳 []佔位(非 null)— task 2 建好 ai_conversations/
-  // ai_messages 後換成真實查詢結果,response 形狀不變。
+  // 所有權已由上面的 .eq("user_id", userId) 錨定 — data.id 只可能是本人存檔,
+  // 對話查詢無需重複過濾。無對話(從未聊過)是合法狀態,回 [] 而非 404/500。
+  const { data: conversation, error: conversationError } = await admin
+    .from("ai_conversations")
+    .select("id")
+    .eq("plan_id", data.id)
+    .maybeSingle();
+  if (conversationError) {
+    console.error(
+      "GET /api/plans/[slot] 對話查詢失敗",
+      conversationError.code,
+      conversationError.message
+    );
+    return Response.json({ error: SERVER_ERROR }, { status: 500 });
+  }
+
+  let messages: { role: string; content: unknown }[] = [];
+  if (conversation) {
+    const { data: messageRows, error: messagesError } = await admin
+      .from("ai_messages")
+      .select("role, content")
+      .eq("conversation_id", conversation.id)
+      .order("id", { ascending: true });
+    if (messagesError) {
+      console.error("GET /api/plans/[slot] 訊息查詢失敗", messagesError.code, messagesError.message);
+      return Response.json({ error: SERVER_ERROR }, { status: 500 });
+    }
+    messages = messageRows;
+  }
+
   return Response.json(
-    { slot: data.slot, name: data.name, plan: data.plan, updatedAt: data.updated_at, conversation: [] },
+    {
+      planId: data.id,
+      slot: data.slot,
+      name: data.name,
+      plan: data.plan,
+      updatedAt: data.updated_at,
+      conversation: messages,
+    },
     { status: 200 }
   );
 }

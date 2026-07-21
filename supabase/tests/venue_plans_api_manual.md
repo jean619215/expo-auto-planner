@@ -3,10 +3,13 @@
 > 對象:`GET /api/plans`、`GET|PUT|PATCH|DELETE /api/plans/[slot]`
 > 驗證方式:fetch/curl 腳本對 local dev server(`npm run dev`,接真雲端 Supabase)實測;查核用 service_role;登入用 Playwright 測試帳號(`.env.playwright.local`)或既有手動流程(瀏覽器登入後取 cookie)。
 > **前置條件(必須先完成,pipeline 內不執行)**:使用者手動跑 `supabase db push` 套用
-> `supabase/migrations/20260722030000_create_venue_plans.sql`,再跑
-> `supabase/tests/venue_plans_verify.sql` 全項通過。在 migration push 之前,以下所有
-> 打到 DB 的路徑都會回 500(`42P01` 表不存在)——本次交付只驗證了不碰 DB 的 401/400
-> 路徑(見下方「本次已驗證」段落),其餘標記「待 migration push 後驗」。
+> `supabase/migrations/20260722030000_create_venue_plans.sql` 與
+> `supabase/migrations/20260722080000_create_ai_conversations.sql`,再分別跑
+> `supabase/tests/venue_plans_verify.sql`、`supabase/tests/ai_conversations_verify.sql`
+> 全項通過(第 4 節 `GET /api/plans/[slot]` 的 `conversation`/`planId` 欄位依賴後者)。
+> 在 migration push 之前,以下所有打到 DB 的路徑都會回 500(`42P01` 表不存在)——本次
+> 交付只驗證了不碰 DB 的 401/400 路徑(見下方「本次已驗證」段落),其餘標記
+> 「待 migration push 後驗」。
 
 ## 準備
 
@@ -53,7 +56,11 @@ VALID_PLAN='{"polygon":[{"x":0,"y":0},{"x":1,"y":0},{"x":1,"y":1}],"walls":[],"c
 ## 4. `GET /api/plans/[slot]` 讀檔(待 migration push 後驗;對應 AC 7/8)
 
 - [ ] 對自己未使用過的格(如 slot 3)→ 404 `{"error":"找不到存檔"}`
-- [ ] 對已存檔的格 → 200,含完整 `plan` 快照、`name`、`updatedAt`、`conversation: []`
+- [x] 對已存檔、從未對話過的格 → 200,含完整 `plan` 快照、`name`、`updatedAt`、`planId`
+      (存檔 uuid)、`conversation: []`(尚無對話是合法狀態,非 404/500)【QA 2026-07-22 已驗證】
+- [x] 對已存檔且已透過 `POST /api/ai/chat`(帶 `planId`)對話過的格 → 200,`conversation`
+      為依插入序升冪的 `{role, content}` 陣列(對應 `ai_chat_manual.md` 的「planId 對話落庫」
+      驗證段落),非固定 `[]`【QA 2026-07-22 已驗證,4 則訊息依序 user/assistant/user/assistant】
 
 ## 5. `GET /api/plans` 列表(待 migration push 後驗;對應 AC 9)
 

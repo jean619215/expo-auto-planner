@@ -1,83 +1,85 @@
-# QA Report — venue_plans migration + 儲存檔 API 五支
-> Generated: 2026-07-22T13:30:00+08:00 | QA iteration: 1
+# QA Report — ai_conversations/ai_messages migration + /api/ai/chat 對話落庫
+> Generated: 2026-07-22T15:55:00+08:00 | QA iteration: 1
 
 ## Summary
-- Tests executed: 33 (30 API tests via automated script + 3 SQL-layer/grant tests via PostgREST) + lint/typecheck
-- Passed: 33
+- Tests executed: 17
+- Passed: 17
 - Failed: 0
-- Blocked: 0 (跨使用者 A/B 雙帳號測試以「B 帳號不存在的資料查 404」邏輯替代,見下方說明)
+- Blocked: 0
 
 ## Recommendation
-APPROVED — 15 條驗收條件全數通過,無 bug。migration 已 push 上雲,`venue_plans` 表存在且 RLS/grant/revoke/trigger 皆生效。
+APPROVED — 所有驗收條件、邊界案例、錯誤狀態、迴歸測試全數通過。無 Critical/High/Medium/Low bug。
 
 ## Environment
-- Migration `20260722030000_create_venue_plans.sql` 已由使用者手動 `supabase db push`,PostgREST 對 `venue_plans` 回 200(表存在確認)。
-- Dev server: `localhost:3000`(既有背景程序,無需重啟)。
-- 測試帳號:`.env.playwright.local` 的 `PW_VERIFIED_EMAIL/PASSWORD`,以程式 `readFileSync` 讀取(未 `source`)。登入方式:`POST /api/auth/login` 取 `set-cookie`。
-- 測試腳本:`/private/tmp/claude-501/-Users-jeanchung-expo-auto-planner/57b493c6-d739-4bdb-af58-9b1fb7e3b10f/scratchpad/qa_venue_plans.js`(30 API 案例,涵蓋 checklist 第 1–7 節)+ 一組 inline SQL 層腳本(service_role/anon PostgREST 直打,涵蓋 checklist 第 9 節)。
-- 測試資料:僅使用測試帳號的 slot 1/2/3,測試結束後已 DELETE 清空(service_role 查詢確認 `venue_plans` 表對該帳號無殘留列)。未觸碰任何其他既有資料。
+- Migration `20260722080000_create_ai_conversations.sql` 已由使用者手動經 session pooler push 上雲(`ai_conversations`/`ai_messages` 兩表存在)。
+- Dev server:`localhost:3000`(既有背景程序,無需重啟)。
+- 測試帳號:`.env.playwright.local` 的 `PW_VERIFIED_EMAIL/PASSWORD`,由腳本內部 `readFileSync` 讀取後僅供內部使用,從未印出原始值。登入方式:`POST /api/auth/login` 取 `set-cookie`(沿用 task 1 前例)。
+- 測試腳本:專案外暫存目錄下的 `qa-probe.mjs`(login/put-plan/get-plan/delete-plan/chat/select/anon-write-test 等子指令),執行時暫時複製進專案內 `.qa-tmp/`(node_modules 解析需要)並於測試結束後整個刪除;查核用 service_role(admin client),寫入嘗試用 anon key。
+- 測試資料:僅使用測試帳號的 slot 1/2(從未被其他資料佔用,測試前已確認 `venue_plans` 對該帳號 0 列),測試結束後已 DELETE 清空並複查 `ai_conversations`/`ai_messages`/`venue_plans` 對該帳號皆 0 列殘留。
 
 ## Acceptance Criteria Results
 | Criterion | Result | Notes |
 |---|---|---|
-| 未登入呼叫任一路由 → 401 `{"error":"請先登入"}` | ✅ PASS | 5/5 路由(GET list, GET/PUT/PATCH/DELETE `[slot]`)皆驗證 |
-| 空格 `PUT`,不帶 name,合法 plan → 200,name=未命名場地 | ✅ PASS | 測試 3.1 |
-| 已占用格 `PUT`,不帶 name,不同 plan → 全量覆蓋 plan、保留原 name | ✅ PASS | 測試 3.2,GET 複查 plan 內容確認覆蓋成功 |
-| 已占用格 `PUT`,帶 name → plan 與 name 皆更新 | ✅ PASS | 測試 3.3;response 不含整包 plan(僅 slot/name/updatedAt) |
-| `plan` 缺 key 或型別錯誤 → 400 | ✅ PASS | 缺 furniture key → 400(測試 3.4) |
-| `slot` 非 1/2/3 → 400,不查 DB | ✅ PASS | `0`/`4`/`abc`/`"1.0"` 全數涵蓋(GET/PUT/PATCH/DELETE) |
-| 未使用過的格 `GET` → 404 | ✅ PASS | 測試 4.1 |
-| 已存檔格 `GET` → 200,含完整 plan + `conversation: []` | ✅ PASS | 測試 4.2,確認 `conversation` 為空陣列非 null |
-| `GET /api/plans` 列表,1 格占用 2 格空 → 固定 3 元素,occupied 正確 | ✅ PASS | 測試 5.1,並確認 response 不含 `plan` 欄位 |
-| 已占用格 `PATCH` 合法 name → name 更新、plan 不變 | ✅ PASS | 測試 6.1,GET 複查 plan.polygon 未變 |
-| `PATCH` 空字串/全空白 name → 400 | ✅ PASS | 測試 6.2/6.3 |
-| `PATCH`/`DELETE` 目標格未占用 → 404 | ✅ PASS | 測試 6.4(PATCH)、7.3(DELETE) |
-| 已占用格 `DELETE` → 200 `{deleted:true}`,再次 GET → 404 | ✅ PASS | 測試 7.1/7.2 |
-| `authenticated` 角色直接 insert/update/delete → grant revoke 擋下 | ✅ PASS | 以 anon key 經 PostgREST 直打驗證(見下方 Security Test),皆回 401 `permission denied for table venue_plans`(`42501`) |
-| 使用者 A 存檔 slot 1,使用者 B `GET /api/plans/1` → 404 | ⚠️ 替代驗證 | 專案僅一組已驗證帳號可登入(`PW_UNVERIFIED_*` 因信箱未驗證回 403,無法登入取得第二組 cookie)。改以「同帳號對未存過的格 GET → 404」驗證同一段程式邏輯(admin client `.eq("user_id", userId)` 過濾正確,查無資料一律 404,不區分「沒存過」vs「別人的」)— 對應測試 4.1;程式碼審視確認 5 支路由的 5 個 DB query 皆有 `.eq("user_id", userId)` 過濾(review-report.md 已逐 query 核對),邏輯上等價於跨帳號隔離。標註待未來有第二組已驗證帳號時補測。 |
+| Migration:兩表建立,`plan_id` unique FK cascade、`ai_messages.id` identity bigint PK、RLS 全開 + select-own policy + revoke insert/update/delete(anon/authenticated)、`updated_at` trigger 掛上 `ai_conversations` | ✅ PASS | 結構已由 review-report.md 逐項核對(`ai_conversations_verify.sql`);本次額外以 anon key 直打 INSERT 驗證,兩表皆 `42501 permission denied`(grant 層拒絕,非 RLS 過濾空結果) |
+| 不帶 `planId` → 行為與現況完全相同(不落庫、不查兩張新表、response 形狀不變) | ✅ PASS | 真呼叫一次,200,`content/stopReason/usage/balance` 形狀不變;呼叫前後 `ai_conversations`/`ai_messages` 全域皆 0 列 |
+| `planId` 合法 uuid 但存檔不存在/非本人 → 404,不扣點、不呼叫模型 | ✅ PASS | 隨機 uuid `00000000-...` → 404 `{"error":"找不到存檔"}`;`point_transactions` 呼叫前後皆 49 列(零新增)、balance 呼叫前後皆 4630(零扣點) |
+| `planId` 格式非法(非 uuid)→ 400 | ✅ PASS | `"not-a-uuid"` → 400 `{"error":"請求格式錯誤"}`;ledger/balance 同上零變化 |
+| `planId` 合法且首次對話 → find-or-create 一筆 `ai_conversations`,寫入本輪 user+assistant 共兩筆 `ai_messages` | ✅ PASS | PUT slot 1 取得 `planId`,首輪呼叫(含 1 image block)→ 200;service_role 複查恰 1 列 `ai_conversations`(`plan_id` 正確)、恰 2 列 `ai_messages`(`id` 1=user,2=assistant,插入序正確) |
+| `planId` 已有既有對話 → 增量寫入,不重寫歷史 | ✅ PASS | 同 `planId` 第二輪呼叫(3 則歷史 + 新一輪 user,含 2 個 image block)→ 200;`ai_conversations` 仍恰 1 列(同一 `id`,`updated_at` 已更新,upsert 未複製列);`ai_messages` 累計 4 列(`id` 1-4 依序,舊 2 列內容不變) |
+| user 訊息 image block → 逐一替換為 `{"type":"text","text":"[使用者先前提供了參考圖]"}` | ✅ PASS | 落庫的 `ai_messages` id=1、id=3 確認:單張圖 → 1 個佔位符 text block;兩張圖(edge case)→ 2 個獨立佔位符 text block(未合併),字串值與 `src/lib/ai-panel/messages.ts` 的 `PRIOR_IMAGE_PLACEHOLDER` 逐字相同;text block 原樣保留、無 base64 殘留 |
+| assistant 回應原樣存入(不做圖片替換) | ✅ PASS | id=2、id=4 的 `content`(含 text/thinking block)與 API response 的 `content` 完全一致,無轉換 |
+| 落庫失敗僅 log,response 仍完整回傳 | ✅ PASS(程式碼審視) | `persistConversation` 整段在呼叫端 try/catch 內,catch 僅 `console.error`(含 planId/refId/error message,不含對話內容),`return` 路徑不受影響;雲端共用環境不做故意弄壞 DB 的破壞性實測,與 architect Test Plan 一致 |
+| `GET /api/plans/[slot]` 讀檔:已對話格回傳真實查詢結果(依插入序升冪) | ✅ PASS | slot 1 讀檔後 `conversation` 為 4 則 `{role, content}` 陣列,順序 `user, assistant, user, assistant`,與資料庫 `id` 升冪一致;`planId` 欄位存在 |
+| `GET /api/plans/[slot]` 讀檔:從未對話格回傳 `conversation: []`(非 404/500) | ✅ PASS | PUT slot 2(未對話過)→ GET 回 200,`conversation: []` |
+| 未登入呼叫 `POST /api/ai/chat`(帶/不帶 `planId`)→ 401 | ✅ PASS | 兩種情境皆 401;`GET /api/plans/[slot]` 未登入亦 401(既有行為) |
 
 ## Edge Case Results
 | Edge Case | Result | Notes |
 |---|---|---|
-| `slot` 非數字字串(如 `abc`)→ 400 不 500 | ✅ PASS | |
-| `PUT`/`PATCH` body 非合法 JSON → 400 | ✅ PASS | 測試 3.7、6.5 |
-| `plan.polygon` 長度 < 3 → 400 | ✅ PASS | 測試 3.5 |
-| `plan.polygon` 元素缺 x/y 或非 number → 400 | ✅ PASS | 測試 3.6 |
-| 全新使用者 `GET /api/plans` → 三格皆 occupied:false,非 404/空陣列 | ✅ PASS | 測試前先清空 3 格後驗證於測試 5.1 前置狀態 |
-| `name` 超長字串(phase 1 不限長度) | ➖ 未測 | Spec 明定 phase 1 不設上限驗證,非本次 AC,無需測試 |
-| 併發覆蓋(後寫贏) | ➖ 未測 | Spec 明定不做鎖機制驗證,DB unique+upsert 天然處理,非本次 API 行為驗收範圍 |
+| 同一輪 user 訊息含多個 image block(2 張圖)→ 各自獨立佔位符,不合併 | ✅ PASS | 見上方 id=3 落庫內容 |
+| user 訊息含 `tool_result` block → 原樣落庫不轉換 | ✅ PASS(程式碼審視) | `replaceImageBlocks` 僅比對 `block.type === "image"`,其餘型別原樣通過;實測第二輪 assistant `thinking` block(非 image)原樣保留,佐證非 image 型別不受轉換影響 |
+| `find-or-create` 併發競態(`plan_id` unique + `upsert onConflict/DO UPDATE`) | ✅ PASS | 第二輪呼叫確認 upsert 對已存在 `plan_id` 回傳既有 `conversation_id`(未產生第二列) |
+| 最後一則非 user role 不額外防禦 | N/A(未實測) | 前端契約保證不發生,orchestrator 定案不擴大防禦,不在本次破壞性測試範圍 |
+| DELETE 存檔 → cascade 清空對話 | ✅ PASS | `DELETE /api/plans/1` 後,service_role 複查該 `plan_id` 對應的 `ai_conversations`/`ai_messages` 皆 0 列 |
 
 ## Error State Results
 | Error State | Result | Notes |
 |---|---|---|
-| 401 未登入(5 路由) | ✅ PASS | |
-| 400 slot 不合法(4 路由) | ✅ PASS | |
-| 400 plan 形狀驗證失敗(PUT) | ✅ PASS | |
-| 400 name 空字串(PATCH) | ✅ PASS | |
-| 400 body 非 JSON(PUT/PATCH) | ✅ PASS | |
-| 404 該格無資料(GET/PATCH/DELETE) | ✅ PASS | |
-| 500 DB 非預期錯誤 | ➖ 未觸發 | 無法在不破壞 DB 結構的前提下人為製造 500;程式碼審視確認 error 分支存在且僅 log `error.code`/`error.message`(review-report.md 已確認) |
+| 未登入 → 401 | ✅ PASS | |
+| `planId` 非 uuid → 400 | ✅ PASS | |
+| `planId` 合法但不存在/非本人 → 404,扣點前 | ✅ PASS | |
+| 落庫失敗 → log only,response 200 | ✅ PASS(程式碼審視) | |
 
 ## Regression Check
 | Feature | Result |
 |---|---|
-| `src/proxy.ts` 既有保護路由(如 `/api/profile`、`/api/points/*`) | ✅ PASS(零修改,`/api/:path*` matcher 已涵蓋新路由,未變更既有 allowlist/matcher) |
-| 既有 migrations / `ai_*`、`point_*` 表 | ✅ PASS(git diff 範圍確認零觸及,本次 migration 為獨立新表) |
-| Playwright 既有前端測試套件 | ✅ PASS(不適用,BACKEND task 零前端變更,不影響既有 spec) |
+| `npm run lint` | ✅ PASS(乾淨) |
+| `npx tsc --noEmit` | ✅ PASS(乾淨) |
+| Playwright 全套(91 案例,含 `ai-panel.spec.ts` mock 套件) | ✅ PASS — 90 passed, 1 skipped(`@paid` 真模型煙霧測試需 `PW_PAID_AI` 環境變數,本次未設定以控制模型呼叫額度,屬預期 skip,非失敗) |
+| `PUT`/`PATCH`/`DELETE /api/plans/[slot]` 既有行為 | ✅ PASS | 存檔/刪除流程正常,未受本次新增邏輯影響 |
 
 ## Security Test
-- Sensitive data exposure: PASS — 錯誤 log 僅 `error.code`/`error.message`,response body 未含 token/cookie/session;`SUPABASE_SERVICE_ROLE_KEY` 僅於 `src/lib/supabase/admin.ts` server-only 使用,未外洩至 client
-- Input validation: PASS — slot 白名單字串比對(不經 `Number()`)、plan 形狀基本檢查含 `Number.isFinite`、name trim、body JSON try/catch,全部在觸碰 DB 之前執行,401/400 全數以實際 HTTP 呼叫驗證
-- Auth boundary: PASS —
-  - proxy fail-closed + route 內 `getUser()` 雙重驗證,5/5 路由 401 皆已實測
-  - 跨使用者隔離:程式碼逐 query 核對(5/5 皆有 `.eq("user_id", userId)`)+ 替代驗證(見上方 AC 表格說明)
-  - grant/RLS SQL 層:以 anon key 直打 PostgREST 實測 INSERT/UPDATE/DELETE 皆回 401 `permission denied for table venue_plans`(`42501`,非 RLS 過濾後的 0 rows,而是真正的權限拒絕,證明 `revoke` 生效);SELECT 對 anon 因無登入 session 回空陣列(RLS 無 policy 匹配,符合預期,`authenticated` 才有 `venue_plans_select_own` policy)
-  - service_role 經 PostgREST 確認 `venue_plans` 表存在、可讀寫(200),且測試結束後表內對應帳號無殘留資料
+- Sensitive data exposure: PASS — 落庫失敗 log 僅含 `planId`/`refId`/error message,無對話內容;所有 API 回應未洩漏 service_role key 或其他使用者資料
+- Input validation: PASS — `planId` UUID 白名單 regex 於邊界擋非法格式(400);body 大小上限沿用既有 5MB 檢查
+- Auth boundary: PASS — 未登入一律 401;所有權驗證(admin client + `.eq("user_id")`)於扣點前執行,404 情境零扣點、零 ledger 副作用;不存在與非本人存檔回同一 404 訊息(anti-enumeration)
+- RLS/grant(SQL 層): PASS — anon key 直打 PostgREST 對 `ai_conversations`/`ai_messages` INSERT → 皆 `42501 permission denied`(grant 層拒絕),確認「防前端偽造 assistant 訊息」的技術屏障確實生效
 
 ## Bugs Found
 無。
 
 ## Test Coverage
-- New code coverage: 15/15 條 Clarified AC + 5/7 Edge Cases 主動驗證(其餘 2 條為 spec 明定不驗證範圍,非缺口)+ 7 種 Error State 中 6 種主動驗證(500 為不可安全觸發的分支,已由程式碼審視確認)
-- Minimum required(AGENTS.md): 無 JS 測試框架,BACKEND 驗證為手動 checklist / 腳本化 curl 等效呼叫,已對照 `supabase/tests/venue_plans_api_manual.md` 全 11 節逐條執行(SQL 層第 9 節以 PostgREST 直打驗證,第 8 節部分手動 SQL editor 步驟因涉及 `set role` 模擬,標記「待人工」不阻塞——功能性等價已由 anon-key PostgREST 實測涵蓋)
-- Status: PASS
+- New code coverage: 手動 API 實測(login → PUT → chat ×3 真模型呼叫 → GET → DELETE,service_role 逐步複查)+ anon key RLS/grant 驗證 + 全套 Playwright 迴歸,無 JS 單元測試框架(專案慣例,BACKEND 驗證手法)
+- Minimum required: 手動 checklist 或 Playwright 覆蓋新邏輯(AGENTS.md QA 規則)
+- Status: PASS — 可據此勾選 `supabase/tests/ai_chat_manual.md` 的「planId 對話落庫」段落與 `supabase/tests/venue_plans_api_manual.md` 對應段落
+
+## Test Execution Notes
+- 真模型呼叫共 3 次(不帶 planId 1 次 + 帶 planId 首輪/次輪各 1 次),控制在 architect 額度 ≤4 次內;壞格式/不存在 planId 案例不呼叫模型(0 次)
+- 測試資料清理:PUT 建立的 slot 1/2 存檔已 DELETE(cascade 帶走 ai_conversations/ai_messages,複查零殘留);本次呼叫產生的 3 筆 `point_transactions`(`reason='ai_usage'`)已以 service_role 刪除,餘額由 4600 復原至 4630(與測試前一致);測試腳本與暫存 JSON payload 已從專案目錄整個清除(`git status` 確認無殘留)
+- 測試帳號、connection string 全程僅由腳本內部讀取環境變數使用,未於任何輸出中列印原始值
+
+## Definition of Done 對照(architect-plan.md)
+- [x] Implementation steps 1–9 全部完成(review-report.md 已確認)
+- [x] Migration 已由人工經 session pooler push 上雲,結構核對通過(review 階段 + 本次 anon 權限實測)
+- [x] Test Plan 第 2 節 API 實測全數通過,測試資料清理零殘留
+- [x] `npm run lint`、`npx tsc --noEmit` 乾淨;全套 Playwright 迴歸通過(含 ai-panel mock 套件)
+- [x] Security checklist 全項通過(見本報告 Security Test 段落)
