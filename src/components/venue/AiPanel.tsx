@@ -17,6 +17,7 @@ import {
   type AiAction,
   type AiActionResult,
 } from "@/lib/ai-panel/actions";
+import { toApiMessages, CONFIG_APPENDIX_HEADER } from "@/lib/ai-panel/messages";
 
 // 單張圖片上限(AC2):超過拒絕上傳,不送出。
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
@@ -150,7 +151,7 @@ export default function AiPanel({ plan, applyActions }: AiPanelProps) {
     });
     const textBlock: Anthropic.TextBlockParam = {
       type: "text",
-      text: `${trimmed}\n\n[目前配置]\n${configJson}`,
+      text: `${trimmed}\n\n${CONFIG_APPENDIX_HEADER}\n${configJson}`,
     };
 
     const content: ContentBlock[] = [...pendingToolResults];
@@ -179,12 +180,7 @@ export default function AiPanel({ plan, applyActions }: AiPanelProps) {
       const res = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: nextTurns.map(({ role, content: c }) => ({
-            role,
-            content: c,
-          })),
-        }),
+        body: JSON.stringify({ messages: toApiMessages(nextTurns) }),
       });
       const data = await res.json().catch(() => null);
 

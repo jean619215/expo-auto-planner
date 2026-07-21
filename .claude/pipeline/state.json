@@ -1,9 +1,9 @@
 {
   "story_file": "stories/ai-chat-cost-quality.md",
   "story_title": "AI 助理對話成本與品質優化",
-  "task_index": 0,
-  "current_task": "[BACKEND] 系統提示強化:src/lib/ai/system.ts 批次更新(確認摘要流程/失敗回饋/去寒暄),維持凍結字串與 cache 斷點;以 script 或 @paid 煙霧驗證 scope guard 未退化",
-  "task_type": "BACKEND",
+  "task_index": 1,
+  "current_task": "[FRONTEND] 送出 payload 瘦身:組請求時舊輪移除配置 JSON 附錄與圖片 block(換佔位符),本地顯示不變;Playwright 以 route 攔截驗證 payload 形狀 + 既有套件迴歸",
+  "task_type": "FRONTEND",
   "stage": "complete",
   "iteration": {
     "review": 1,
@@ -16,12 +16,12 @@
     "implement": "completed",
     "review": "completed",
     "qa": "completed",
-    "playwright": "pending"
+    "playwright": "completed"
   },
   "flags": {
     "review_critical_pending": false,
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "last_updated": "2026-07-22T00:30:00+08:00"
+  "last_updated": "2026-07-22T01:50:00+08:00"
 }

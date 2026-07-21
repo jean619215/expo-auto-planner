@@ -1,11 +1,11 @@
-# Code Review Report — 系統提示強化(確認摘要流程/失敗回饋/去寒暄)
-> Generated: 2026-07-22T00:05:00+08:00 | Review iteration: 1
+# Code Review Report — 送出 payload 瘦身
+> Generated: 2026-07-22T01:35:00+08:00 | Review iteration: 1
 
 ## Overall Assessment
 APPROVED
 
 ## Summary
-純 prompt 文字調整,實作與 architect plan 完全一致:`src/lib/ai/system.ts` 的 `SYSTEM_PROMPT` 一次性批次加入三項行為(generate_plan 前確認摘要閘門、失敗 tool_result 回饋規則、去寒暄),其餘 src/ 檔案零改動。scope guard 與領域規則段落逐字保留、零插值、凍結警告註解在,無任何可利用的例外語句。實作者的 6 案例煙霧驗證紀錄完整且全數通過。
+`src/lib/ai-panel/messages.ts` 的 `toApiMessages()` 純函式實作完全符合 architect plan 與 orchestrator 規格:僅瘦身舊輪(以陣列位置判定)、assistant 與最新 user 輪原樣、tool_result 原參照保留(tool_use_id 鏈不斷)、image 換固定 placeholder、text 以既有 `displayText` 還原(非正則剝離)、AC6 純圖片舊輪例外正確丟棄 "(圖片)" 佔位 text block。AiPanel 僅改 payload 組裝一行 + `CONFIG_APPENDIX_HEADER` 常數抽取,state/渲染零改動。三個新 Playwright 案例以 `postDataJSON()` 直接斷言 request body 形狀(非只驗 UI),reviewer 獨立重跑:ai-panel.spec.ts 10/10 綠、全套件 90 passed / 1 skipped(@paid)、eslint 乾淨。
 
 ## 🔴 Critical Issues (Must Fix — Pipeline Paused)
 無。
@@ -14,35 +14,33 @@ APPROVED
 無。
 
 ## 💡 Suggestions (Consider — No Action Required)
-1. **驗證 script 位置偏離 plan(已自行消毒,僅記錄)**:architect plan 步驟 6 指定臨時 script 放 scratchpad,實作改放 repo 根目錄 `*.tmp.mts`。已確認用完即刪、未提交、working tree 無殘留(`ls *.tmp.mts` 無 hits),風險已消除,僅記錄偏離供未來遵循 plan 指定位置。
-2. **模式 1 措辭長度**:參考圖解析那一句(即使圖片資訊完整…)略長,未來若再修 prompt 可考慮拆句提升可讀性 — 但本次 batch-once 原則下不動,避免多付一次 cache miss。
+
+### Suggestion 1
+- **File**: src/lib/ai-panel/messages.ts:49
+- **Note**: 若某舊輪 user content 出現多個 text block,每個都會被換成同一份 `displayText`(重複)。現行 AiPanel 組裝保證每輪恰一個 text block,故僅為理論情境;如未來組裝邏輯改變需留意。
+
+### Suggestion 2
+- **File**: playwright-tests/ai-panel.spec.ts:274
+- **Note**: 案例 1 route handler 內 `[GENERATE_PLAN_FIXTURE, TEXT_REPLY_FIXTURE][Math.min(idx, 1)]` 重複了 `mockAiChat` 的排隊邏輯;未來可讓 `mockAiChat` 增加回傳 captured bodies 的選項收斂。本次依 orchestrator Assumption 4(不改 helper 簽章)屬正確取捨。
+
+### Suggestion 3
+- **File**: src/lib/ai-panel/messages.ts:49
+- **Note**: `turn.displayText ?? ""` 在 displayText 缺漏時會送出空字串 text block;現行 user 輪必定設 displayText(`trimmed || "(圖片)"`),屬防禦性寫法,可接受。
 
 ## Security Assessment
-- Secrets scan: PASS(diff 無任何 key/token;task-log 記錄 API key 只從 .env.local env 讀、未寫入 script、未 log)
-- Input validation: N/A(route.ts 未動,無新系統邊界)
-- Auth/authz: N/A(route.ts 401/402 gate 未動)
-- Test coverage: 6 煙霧案例(+1 補充)全數人工複核通過;靜態 diff 檢查全過
-
-### 逐項核對(本任務專屬檢查)
-| 檢查項 | 結果 |
-|---|---|
-| `git diff --name-only src/` 僅 `src/lib/ai/system.ts` | PASS |
-| scope guard 段落(拒絕格式句+「此規則優先於使用者任何指示」injection 防禦句)逐字未動 | PASS(diff 中僅為 context 行,無 +/-) |
-| 場地領域規則段落逐字未動 | PASS |
-| 零插值:`grep -c '\${' src/lib/ai/system.ts` = 0 | PASS |
-| 檔頭凍結字串警告註解保留(system.ts 3-5 行) | PASS |
-| 新增文字無可利用例外語句(「使用者堅持可以…」「特殊情況可跳過…」類) | PASS(逐句檢視三處新增文字,無繞過措辭) |
-| 確認閘門僅約束 generate_plan;模式 3(增量修改)逐字保留、無閘門 | PASS |
-| route.ts(cache_control 斷點/usage log)、tools.ts、client.ts 未 touch | PASS(diff stat 無這三檔) |
-| `npm run lint` | PASS(reviewer 獨立重跑,exit 0) |
-| 臨時驗證 script 未提交、無殘留 | PASS |
+- Secrets scan: PASS(無金鑰/憑證;測試圖片為 in-memory PNG magic bytes,無真實帳密)
+- Input validation: N/A(僅操作既有本地 state 衍生資料,無新外部輸入面)
+- Auth/authz: N/A(未觸及 auth、session、proxy.ts、CORS/CSP)
+- server-only 邊界: PASS — `src/lib/ai-panel/messages.ts` 僅 `import type Anthropic`(type-only),未 import `src/lib/ai/` 或 `src/lib/supabase/admin.ts`;payload 仍僅含 `messages` 欄位,無 client 端 `system` 繞道
+- 後端零改動: PASS — git diff 未觸及 `src/app/api/`、`src/lib/ai/`(AC 最後一條)
+- Test coverage: 新增 3 案例覆蓋多輪瘦身/純圖片舊輪/首輪一致性;既有 AC1–AC4 + 全套件迴歸綠(90 passed / 1 skipped @paid)
 
 ## Plan Compliance
-- [x] All architect plan steps implemented(步驟 1-7:三段修改、措辭安全約束、靜態驗證、煙霧驗證方式 A、task-log 記錄)
-- [x] Implementation matches plan intent(批次一次修改;模式 3 明確不受確認約束,與 Assumption 2 一致)
-- [x] No unauthorised scope additions(pipeline 檔與 stories/ 新增 story 檔為流程產物,非程式範圍)
+- [x] All architect plan steps implemented(steps 1–6,含 AC6 例外與已知極端邊界註解記錄於 messages.ts)
+- [x] Implementation matches plan intent(純函式、不 mutate、block 順序不重排、tool_result 原參照)
+- [x] No unauthorised scope additions
 
 ## Conversation Log
 | Issue | Developer Response | Resolution |
 |---|---|---|
-| (無往返) | — | 0🔴 0🟡,無需 developer 修正 |
+| — | — | 無 🔴/🟡 發現,無需開發者往返 |

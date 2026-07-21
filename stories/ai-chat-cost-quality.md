@@ -16,7 +16,7 @@
 
 ## 任務清單
 - [x] [BACKEND] 系統提示強化:`src/lib/ai/system.ts` 批次更新(確認摘要流程/失敗回饋/去寒暄),維持凍結字串與 cache 斷點;以 script 或 @paid 煙霧驗證 scope guard 未退化
-- [ ] [FRONTEND] 送出 payload 瘦身:組請求時舊輪移除配置 JSON 附錄與圖片 block(換佔位符),本地顯示不變;Playwright 以 route 攔截驗證 payload 形狀 + 既有套件迴歸
+- [x] [FRONTEND] 送出 payload 瘦身:組請求時舊輪移除配置 JSON 附錄與圖片 block(換佔位符),本地顯示不變;Playwright 以 route 攔截驗證 payload 形狀 + 既有套件迴歸
 
 <!--
 背景(2026-07-21 討論定案,story A 對話持久化延後):
