@@ -21,6 +21,12 @@ export class AiPanelPage {
   readonly lastAssistantText: Locator;
   readonly chatCost: Locator;
   readonly imageButton: Locator;
+  readonly clearButton: Locator;
+  readonly clearConfirmDialog: Locator;
+  readonly clearConfirmCancel: Locator;
+  readonly clearConfirmAccept: Locator;
+  readonly turnLimitHint: Locator;
+  readonly historyImagePlaceholder: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -37,6 +43,22 @@ export class AiPanelPage {
     this.lastAssistantText = page.getByTestId("ai-assistant-text").last();
     this.chatCost = page.getByTestId("ai-chat-cost");
     this.imageButton = page.getByTestId("ai-image-button");
+    // Task 3(存檔 UI):清空對話(只在 planId !== null 時可見)、100 輪軟
+    // 上限提示、歷史圖片佔位 chip。
+    this.clearButton = page.getByTestId("ai-clear-conversation-button");
+    this.clearConfirmDialog = page.getByTestId(
+      "ai-clear-conversation-confirm-dialog",
+    );
+    this.clearConfirmCancel = page.getByTestId(
+      "ai-clear-conversation-confirm-cancel",
+    );
+    this.clearConfirmAccept = page.getByTestId(
+      "ai-clear-conversation-confirm-accept",
+    );
+    this.turnLimitHint = page.getByTestId("ai-turn-limit-hint");
+    this.historyImagePlaceholder = page.getByTestId(
+      "ai-history-image-placeholder",
+    );
   }
 
   async open() {

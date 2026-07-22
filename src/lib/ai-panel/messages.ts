@@ -43,14 +43,28 @@ function slimOldUserContent(turn: PanelTurn): Anthropic.ContentBlockParam[] {
   const isImageOnlyTurn = hasImage && turn.displayText === "(圖片)";
 
   const result: Anthropic.ContentBlockParam[] = [];
+  let displayTextPushed = false;
   for (const block of turn.content) {
     if (block.type === "tool_result") {
       result.push(block);
     } else if (block.type === "image") {
       result.push({ type: "text", text: PRIOR_IMAGE_PLACEHOLDER });
     } else if (block.type === "text") {
+      // 讀檔還原的歷史輪:圖片在落庫時已是 placeholder「text」block,
+      // 必須原樣保留 — 不可被 displayText 覆蓋(否則 placeholder 語意
+      // 遺失;image-only 歷史輪的 displayText 為 "" 還會產生空 text
+      // block,Anthropic API 會拒絕)。
+      if (block.text === PRIOR_IMAGE_PLACEHOLDER) {
+        result.push(block);
+        continue;
+      }
       if (isImageOnlyTurn) continue;
-      result.push({ type: "text", text: turn.displayText ?? "" });
+      // displayText 只推一次,且空字串不推(API 拒絕空 text block)。
+      if (displayTextPushed) continue;
+      const displayText = turn.displayText ?? "";
+      if (displayText === "") continue;
+      result.push({ type: "text", text: displayText });
+      displayTextPushed = true;
     } else {
       // 防禦性 fallthrough:理論上不存在其他 block type,原樣保留不丟資料。
       result.push(block);
@@ -67,4 +81,75 @@ export function toApiMessages(turns: PanelTurn[]): ApiMessage[] {
     }
     return { role: turn.role, content: slimOldUserContent(turn) };
   });
+}
+
+// --- 讀檔還原:落庫 conversation rows -> 面板 ChatTurn seed(反向操作) -----
+
+export interface RestoredTurn {
+  role: "user" | "assistant";
+  content: Anthropic.ContentBlockParam[];
+  /** user 輪:去掉 CONFIG_APPENDIX_HEADER 附錄後的可讀文字。 */
+  displayText?: string;
+  /** user 輪:content 中等於 PRIOR_IMAGE_PLACEHOLDER 的純文字 block 數。 */
+  priorImageCount?: number;
+}
+
+interface StoredMessageRow {
+  role: string;
+  content: unknown;
+}
+
+function extractDisplayText(content: Anthropic.ContentBlockParam[]): string {
+  const textBlock = content.find(
+    (block): block is Anthropic.TextBlockParam =>
+      block.type === "text" && block.text !== PRIOR_IMAGE_PLACEHOLDER,
+  );
+  if (!textBlock) return "";
+  const text = textBlock.text;
+  const appendixWithSeparator = `\n\n${CONFIG_APPENDIX_HEADER}`;
+  const separatorIndex = text.indexOf(appendixWithSeparator);
+  if (separatorIndex >= 0) {
+    return text.slice(0, separatorIndex).trim();
+  }
+  const headerIndex = text.indexOf(CONFIG_APPENDIX_HEADER);
+  if (headerIndex >= 0) {
+    return text.slice(0, headerIndex).trim();
+  }
+  return text.trim();
+}
+
+function countPriorImagePlaceholders(
+  content: Anthropic.ContentBlockParam[],
+): number {
+  return content.filter(
+    (block) => block.type === "text" && block.text === PRIOR_IMAGE_PLACEHOLDER,
+  ).length;
+}
+
+/**
+ * 把 `GET /api/plans/[slot]` 回傳的落庫 `conversation` rows 還原成 AiPanel
+ * 的 turns 初始值。防禦性跳過:`content` 非陣列或 `role` 非
+ * user/assistant 的列直接略過,不 throw(落庫資料理論上不會出現此形狀,
+ * 但讀檔流程不應因單一髒列整段崩潰)。
+ */
+export function fromStoredConversation(
+  rows: StoredMessageRow[],
+): RestoredTurn[] {
+  const turns: RestoredTurn[] = [];
+  for (const row of rows) {
+    if (row.role !== "user" && row.role !== "assistant") continue;
+    if (!Array.isArray(row.content)) continue;
+    const content = row.content as Anthropic.ContentBlockParam[];
+    if (row.role === "assistant") {
+      turns.push({ role: "assistant", content });
+      continue;
+    }
+    turns.push({
+      role: "user",
+      content,
+      displayText: extractDisplayText(content),
+      priorImageCount: countPriorImagePlaceholders(content),
+    });
+  }
+  return turns;
 }

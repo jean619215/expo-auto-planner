@@ -1,9 +1,9 @@
 {
   "story_file": "stories/venue-save-slots.md",
   "story_title": "場地儲存檔與 AI 對話持久化",
-  "task_index": 1,
-  "current_task": "[BACKEND] ai_conversations(plan_id unique FK)+ ai_messages migration(RLS/revoke 同慣例);/api/ai/chat 增收 planId(所有權驗證、回應後增量落庫、圖片佔位符、落庫失敗不影響回應)",
-  "task_type": "BACKEND",
+  "task_index": 2,
+  "current_task": "[FRONTEND] 存檔 UI(三格面板:存/讀/改名/刪除/覆蓋與讀檔確認)+ AiPanel 續聊載入、清空對話、100 輪軟上限提示、歷史圖片占位 UI;Playwright 驗收(page object 模式)",
+  "task_type": "FRONTEND",
   "stage": "complete",
   "iteration": {
     "review": 1,
@@ -16,12 +16,12 @@
     "implement": "completed",
     "review": "completed",
     "qa": "completed",
-    "playwright": "pending"
+    "playwright": "completed"
   },
   "flags": {
     "review_critical_pending": false,
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "last_updated": "2026-07-22T15:55:00+08:00"
+  "last_updated": "2026-07-22T09:00:46+08:00"
 }

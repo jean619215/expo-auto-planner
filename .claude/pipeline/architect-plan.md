@@ -1,283 +1,229 @@
-# Architect Plan — ai_conversations/ai_messages migration + /api/ai/chat 對話落庫
+# Architect Plan — 存檔 UI 三格面板 + AiPanel 續聊/清空對話/軟上限/歷史圖片占位
 
-> Story: 場地儲存檔與 AI 對話持久化 | Task type: BACKEND | Generated: 2026-07-22T14:30:00+08:00
+> Story: 場地儲存檔與 AI 對話持久化 | Task type: FRONTEND(含一支已核可的小型後端端點) | Generated: 2026-07-22T10:30:00+08:00
 
 ## Overview
 
-新增兩張對話表(單一 migration:`ai_conversations` 1:1 掛 `venue_plans`、`ai_messages` identity bigint 序),`POST /api/ai/chat` 增收可選 `planId`(auth → 格式 400 → 所有權 404 → 扣點 → 模型 → try/catch 落庫,失敗僅 log),`GET /api/plans/[slot]` 的 `conversation: []` 佔位換成真查詢。寫入僅 service_role(migration 明確 revoke),防前端偽造 assistant 訊息。
+在 `PlanEditor` 的 edit 工具列新增「我的存檔」入口,開啟三格存檔 Dialog(存/讀/改名/刪除/覆蓋確認);讀檔把 plan 快照套回編輯器 state、把落庫 conversation 還原成 AiPanel turns 並續聊帶 `planId`;AiPanel 加清空對話(走新端點 `DELETE /api/plans/[slot]/conversation`)、100 輪軟上限提示與歷史圖片占位 UI。Playwright 全程 `page.route()` mock 驗收。
 
 ## Task Type Confirmed
 
-BACKEND — 無 UI 變更、無 Playwright 新 spec(僅跑既有全套迴歸確認不退化)。與 orchestrator-output.md 一致,無矛盾。
+FRONTEND — 與 orchestrator-output.md 一致。內含的 `DELETE /api/plans/[slot]/conversation` 已由 orchestrator 明列為本任務唯一允許的後端新增(§8),複雜度與 `[slot]/route.ts` 既有 handler 同級,不需拆 task,不構成 escalation。
 
-## Escalation 檢查(先於計畫)
+## Escalation Check(結論:不升級)
 
-| 觸發條件 | 判定 |
-| --- | --- |
-| 外部 API contract 修改 | 否 — `/api/ai/chat` 僅**新增可選欄位** `planId`,不帶時行為與 response 形狀完全不變;`GET /api/plans/[slot]` 的 `conversation` 本來就宣告為佔位待換,另新增 `planId` 欄位為 additive(見 Architecture Notes 第 1 點,已標記) |
-| DB schema 影響既有資料 | 否 — 純新增兩張表,零 ALTER 既有表、零資料搬移 |
-| Auth/安全模型變更 | 否 — 沿用 proxy fail-closed(`/api/ai/chat` 已受保護,免改 allowlist)+ route 內 `getUser()`;RLS/revoke 慣例照抄 `venue_plans` |
-| 複雜度超出 story 範圍 | 否 |
-| 資訊不足 | 否 — orchestrator 已定案 schema 與流程順序 |
-
-**結論:不需 escalation,繼續產出計畫。**
+- 無外部 API 契約變更(新端點為內部 `/api/*`,受 `src/proxy.ts` fail-closed 保護,免改 allowlist)。
+- 無 DB schema 變更(task 1/2 的表與 cascade FK 原樣沿用)。
+- 無 auth/安全模型變更(沿用 `requireUser()` + admin client `.eq("user_id")` 既有慣例)。
+- 複雜度在 story 範圍內;spec 資訊充分。
 
 ## Files to Create
 
 | File path | Purpose |
-| --- | --- |
-| `supabase/migrations/20260722080000_create_ai_conversations.sql` | 兩表 + FK cascade + RLS select-own(join)+ grant/revoke + index + updated_at trigger(全文見下) |
-| `supabase/tests/ai_conversations_verify.sql` | 比照 `venue_plans_verify.sql` 的唯讀 SQL 核對 checklist(結構/約束/RLS/policy/grant/trigger/cascade) |
+| --------- | ------- |
+| `src/components/venue/PlanSlotsDialog.tsx` | 三格存檔面板(Dialog)+ 覆蓋/讀檔/刪除確認彈窗 + 改名小 Dialog。所有 slot API 呼叫與列表 state 都在此元件內;透過 props 與 PlanEditor 溝通 |
+| `src/app/api/plans/[slot]/conversation/route.ts` | 新端點 `DELETE`:清空該格對話(刪整列 `ai_conversations`,cascade 帶走 `ai_messages`) |
+| `playwright-tests/pages/PlanSlotsPage.ts` | 存檔面板 page object(獨立檔案,不塞進 PlanEditorPage/AiPanelPage) |
+| `playwright-tests/plan-slots.spec.ts` | 本任務 Playwright 驗收 spec(存/讀/改名/刪除/dirty 確認/續聊/清空對話/軟上限/圖片占位) |
 
 ## Files to Modify
 
 | File path | What changes |
-| --- | --- |
-| `src/app/api/ai/chat/route.ts` | 增收可選 `planId`:uuid 格式驗證(400)、所有權驗證(404,先於扣點)、模型回應後 try/catch 增量落庫(module-private `persistConversation()`,失敗僅 `console.error`) |
-| `src/app/api/plans/[slot]/route.ts` | GET:select 補 `id`,`conversation: []` 換兩段真查詢(conversation → messages 依 `id` 升冪),response 增列 `planId`;移除「task 2 換真查詢」過時註解 |
-| `src/lib/ai-panel/messages.ts` | 僅改檔頭註解:標註 `PRIOR_IMAGE_PLACEHOLDER` 亦被 server route import,本模組必須維持 isomorphic(不得引入 server-only 或瀏覽器 API)——不改任何程式邏輯 |
-| `supabase/tests/ai_chat_manual.md` | 追加「planId 落庫」驗證段落(案例見 Test Plan) |
-| `supabase/tests/venue_plans_api_manual.md` | GET 讀檔段落更新:`conversation` 由固定 `[]` 改為「無對話回 `[]`/有對話回訊息陣列」+ 新增 `planId` 欄位斷言 |
+| --------- | ------------ |
+| `src/components/venue/PlanEditor.tsx` | 新增「我的存檔」按鈕 + 掛載 `PlanSlotsDialog`;新增 `currentSlot`/`currentPlanId`/`savedBaseline`/`conversationSeed` state;讀檔套用函式 `applyLoadedPlan`;dirty 判定;把 `planId`/`slot`/`conversationSeed` 傳給 `AiPanel` |
+| `src/components/venue/AiPanel.tsx` | 新 props(`planId`、`slot`、`conversationSeed`);chat body 帶 `planId`;清空對話按鈕 + 確認彈窗 + DELETE 呼叫;100 輪軟上限提示;歷史圖片占位「📷 參考圖」渲染 |
+| `src/lib/ai-panel/messages.ts` | 新增純函式 `fromStoredConversation()`(落庫訊息 → 面板 turns 的反向還原:displayText 去附錄、標記歷史圖片占位)。維持 isomorphic,不引入 server-only/瀏覽器 API |
+| `src/lib/venue/plan.ts` | 新增 `PlanSnapshot` 型別 + `serializePlanSnapshot()` + 初始空場地 baseline 常數 |
+| `playwright-tests/pages/AiPanelPage.ts` | 補 locators:`clearButton`、`clearConfirmDialog`、`turnLimitHint`、`historyImagePlaceholder` |
+| `supabase/tests/`(既有 plans 手動清單檔;若無則新增 `plans_conversation_manual.md`) | 新端點手動驗證項目:401 / 400 / 404(跨使用者)/ 200 冪等 |
 
-## 關鍵設計決策
+## Key Design Decisions
 
-### 決策 1:RLS select-own 採 join,不 denormalize `user_id`
+### D1. 元件與彈窗選型(沿用 shadcn 慣例)
+- 存檔面板本體:`@/components/ui/dialog` 的 `Dialog`(`data-testid="plan-slots-dialog"`),modal(shadcn 預設鎖背景互動)→ orchestrator edge case「開面板同時編輯畫布」自動消失,無需額外處理。
+- 四個確認彈窗(覆蓋 `plan-overwrite-confirm-dialog`、讀檔 dirty `plan-load-confirm-dialog`、刪除 `plan-delete-confirm-dialog`、清空對話 `ai-clear-conversation-confirm-dialog`)一律用 `AlertDialog`,比照既有 `venue-size-confirm-dialog` 的結構與 testid 慣例(`*-cancel` / `*-accept` 命名)。
+- 改名:小 `Dialog`(`plan-rename-dialog`)含 `Input` + 確認/取消;空字串前端擋(disable 確認鈕,不送 API)。
+- 前三個確認彈窗屬存檔面板職責,放在 `PlanSlotsDialog` 內;清空對話彈窗屬 AiPanel 職責,放在 `AiPanel` 內。
 
-兩張新表**不存 `user_id` 欄位**,policy 逐層 join 回 `venue_plans.user_id`:
+### D2. state 歸屬與 planId 傳遞
+- `PlanEditor` 持有:`slotsDialogOpen`、`currentSlot: 1|2|3|null`、`currentPlanId: string|null`、`savedBaseline: string|null`、`conversationSeed: { seq: number; turns: ChatTurn[] } | null`。
+- `PlanSlotsDialog` props(單一職責:面板 UI + slot API;不直接碰編輯器 state):
+  - `open` / `onOpenChange`
+  - `getSnapshot(): PlanSnapshot` — 存檔時取目前整包快照
+  - `isDirty(): boolean` — 讀檔前檢查
+  - `currentSlot: number | null`
+  - `onLoaded(data: LoadedPlan): void` — 讀檔成功回拋(PlanEditor 套用)
+  - `onSaved(slot: Slot, planId: string): void` / `onDeleted(slot: Slot): void`
+- `AiPanel` props 擴充:`planId: string | null`、`slot: number | null`、`conversationSeed`。**不用 `key` remount**(remount 會重置 `open` 收合狀態與 config fetch);改用受控 seed:AiPanel 內 `useEffect` 監看 `conversationSeed?.seq`,變化時 `setTurns(seed.turns)`、`setPendingToolResults([])`、`setError(null)`。`seq` 為遞增計數器,連續讀同一格兩次也會觸發。
 
-- 所有權單一事實來源在 `venue_plans`,denormalize 會引入資料漂移風險(存檔理論上不換主人,但多一份拷貝就多一個要守的 invariant),且 orchestrator Security Notes 已明確警告「這兩張表本身都不直接存 user_id」。
-- 效能不是理由:實際讀取路徑走 API(admin client,bypass RLS,直接 `plan_id`/`conversation_id` 索引查詢);RLS 只是第二道防線(專案既定原則「RLS is a second line of defense」),join 成本僅發生在極少數直連情境,且 `plan_id` unique index + `ai_messages` 複合索引都在。
-
-### 決策 2:佔位符常數 — server 直接 import client 純函式模組
-
-`/api/ai/chat/route.ts` 直接 `import { PRIOR_IMAGE_PLACEHOLDER } from "@/lib/ai-panel/messages"`,不另建共用常數檔、不複製字串:
-
-- **方向合法**:server-only 邊界是單向的——client 模組不得 import server-only 模組;反向(server import 無副作用的純模組)完全安全。`messages.ts` 檔頭已自我約束「不 import src/lib/ai/(server-only)或 admin.ts」,只依賴 `@anthropic-ai/sdk` 的 **type import**(編譯後歸零),是純 isomorphic 模組,不會把任何 client 專屬東西拖進 server bundle,也不會反向洩漏 key。
-- **單一事實來源**:orchestrator 唯一硬性要求是兩處字串值完全相同——import 同一個 `export const` 讓「不同步」在結構上不可能發生,優於複製字串(靠人肉同步)與抽第三個常數檔(AGENTS.md:「do not invent premature patterns」;目前只有一個字串要共用,不值得為它開新模組)。
-- **防退化**:在 `messages.ts` 檔頭註解補一句「本模組被 server route import,新增程式碼不得引入 server-only / 瀏覽器 API」,把約束留在最接近風險的位置。未來若共用面擴大(第二、三個常數出現),再抽 `src/lib/ai-shared/` 不遲。
-
-### 決策 3:find-or-create 用 `upsert(onConflict: "plan_id", ignoreDuplicates: false)`
-
-`ignoreDuplicates: false` 產生 `ON CONFLICT DO UPDATE`(set `plan_id = excluded.plan_id`,無害自賦值),**衝突時仍回傳既有列**,一次呼叫拿到 `conversation_id`,天然消解 race(orchestrator edge case);副作用是 DO UPDATE 觸發 `set_updated_at()`,`ai_conversations.updated_at` 恰好語意化為「最後對話時間」,是加分不是缺陷。若用 `ignoreDuplicates: true`(DO NOTHING),衝突時回傳空集合還得補一次 select,多一步且引入 TOCTOU 空窗。
-
-### 決策 4:讀檔訊息形狀 `{ role, content }`,不帶 id/createdAt
-
-依 orchestrator Assumption 3 精簡為兩欄:前端 state 零轉換直接續聊;不帶 `id` 就不存在 bigint→JS number 精度問題(PostgREST 對 bigint 預設序列化為 number,超過 2^53 會失真——不選字串序列化的麻煩,直接不帶)。排序由 SQL `order by id asc` 保證,前端渲染 key 用陣列 index 即可(唯讀歷史列表,不重排)。未來需要再加,additive 不破壞。
-
-## Migration SQL 全文
-
-`supabase/migrations/20260722080000_create_ai_conversations.sql`:
-
-```sql
--- AI 對話持久化:一格存檔 (venue_plans) 1:1 一段對話 (ai_conversations),
--- 訊息 (ai_messages) 以 identity bigint 為插入序即顯示序。
---
--- 設計原則(比照 venue_plans / point_transactions 慣例):
--- * plan_id unique FK + on delete cascade:刪存檔帶走整段對話;未來要 1:N
---   只需拔 unique constraint,不動表結構。
--- * 兩表皆不存 user_id — 所有權單一事實來源在 venue_plans.user_id,
---   RLS select-own 逐層 join 驗證(RLS 是第二道防線;實際讀寫走 API 層
---   admin client + 應用層過濾)。
--- * 寫入僅 service_role(API route 內 admin client);authenticated 只能讀
---   自己的。明確 revoke insert/update/delete — Supabase default privileges
---   對新表會 grant anon/authenticated 完整 CRUD(20260717010000 踩過的坑),
---   不依賴預設。此 revoke 是「防前端直寫 ai_messages 偽造 assistant 訊息」
---   的技術落地,不只是慣例延續。
--- * content 存 Anthropic API 原生 content blocks(jsonb),讀出直接塞回前端
---   state 續聊,零轉換;圖片 block 已於 API 層落庫前換成佔位符文字 block,
---   不存 base64。
--- * ai_conversations.updated_at 由 DB trigger 維護,沿用 public.set_updated_at()。
-
-create table public.ai_conversations (
-  id          uuid        primary key default gen_random_uuid(),
-  plan_id     uuid        not null unique references public.venue_plans (id) on delete cascade,
-  created_at  timestamptz not null default now(),
-  updated_at  timestamptz not null default now()
-);
-
-comment on table public.ai_conversations is
-  'AI 對話:與 venue_plans 1:1(plan_id unique FK cascade),刪存檔帶走對話';
-
-create table public.ai_messages (
-  id               bigint      generated always as identity primary key,
-  conversation_id  uuid        not null references public.ai_conversations (id) on delete cascade,
-  role             text        not null check (role in ('user', 'assistant')),
-  content          jsonb       not null,
-  created_at       timestamptz not null default now()
-);
-
-comment on table public.ai_messages is
-  'AI 訊息:content 為 Anthropic 原生 content blocks(圖片已換佔位符);id 插入序即顯示序';
-
--- 讀檔查詢路徑:where conversation_id = ? order by id asc
-create index ai_messages_conversation_id_id_idx
-  on public.ai_messages (conversation_id, id);
-
-alter table public.ai_conversations enable row level security;
-alter table public.ai_messages enable row level security;
-
--- 只開放讀自己的;寫入僅 service_role(bypass RLS)。
-grant select on public.ai_conversations to authenticated;
-grant select on public.ai_messages to authenticated;
-
-create policy "ai_conversations_select_own"
-  on public.ai_conversations
-  for select
-  to authenticated
-  using (
-    exists (
-      select 1
-      from public.venue_plans vp
-      where vp.id = ai_conversations.plan_id
-        and vp.user_id = (select auth.uid())
-    )
-  );
-
-create policy "ai_messages_select_own"
-  on public.ai_messages
-  for select
-  to authenticated
-  using (
-    exists (
-      select 1
-      from public.ai_conversations c
-      join public.venue_plans vp on vp.id = c.plan_id
-      where c.id = ai_messages.conversation_id
-        and vp.user_id = (select auth.uid())
-    )
-  );
-
--- grant 層 + RLS 雙層防禦:明確拔掉 default privileges 給的寫入權。
-revoke insert, update, delete on public.ai_conversations from anon, authenticated;
-revoke insert, update, delete on public.ai_messages from anon, authenticated;
-
--- identity 欄位的 backing sequence 也拔掉(anon/authenticated 本就不該碰;
--- default privileges 對新 sequence 一樣會 grant)。
-revoke usage, select, update on sequence public.ai_messages_id_seq from anon, authenticated;
-
--- updated_at trigger:重用 20260708173519 建立的 public.set_updated_at()
--- (該 function 已存在於 DB,不重複定義)。
-create trigger ai_conversations_set_updated_at
-  before update on public.ai_conversations
-  for each row
-  execute function public.set_updated_at();
+### D3. Plan 快照 TS type(含 venueSizeM)
+於 `src/lib/venue/plan.ts` 定義並 export(spec/page object 也可 import):
+```ts
+export interface PlanSnapshot {
+  polygon: FloorPolygon;
+  walls: WallSegment[];
+  columns: Column[];
+  furniture: FurnitureItem[];
+  venueSizeM: number;
+}
 ```
+(注意 `FurnitureItem` 在 `@/lib/venue/furniture` — 若 import 造成循環依賴,改放 `src/components/venue/` 層級的小型 types 檔或 PlanEditor 內 export,developer 視實際 import 圖擇一,不得複製型別定義。)
+存檔 PUT body = `{ plan: PlanSnapshot, name?: string }`。後端 `isValidPlanShape` 只驗 4 欄位、放行多餘欄位 — 不改後端。
+
+### D4. 讀檔資料流(`applyLoadedPlan`)
+`GET /api/plans/[slot]` 200 後,在 PlanEditor 依序:
+1. `const sizeM = typeof plan.venueSizeM === "number" ? clamp(plan.venueSizeM, MIN_VENUE_SIZE_M..MAX_VENUE_SIZE_M) : VENUE_SIZE_M`(舊測試資料缺欄位 fallback,edge case 明列)。
+2. `setVenueSizeM(sizeM)`、`setSizeInput(String(sizeM))`、`setPolygon(plan.polygon)`、`setWalls(plan.walls)`、`setColumns(plan.columns)`、`setFurniture(plan.furniture)`(整批覆蓋,同 `applyVenueSize` 精神但保留讀入內容、不重算預設地板)、`setSelectedObject(null)`、`setSelectedVertex(null)`。ref 同步交給既有 render-後 useEffect,毋須 eager 更新(applyActions 只會在之後的 chat 回應才讀 ref)。
+3. `setCurrentSlot(slot)`、`setCurrentPlanId(planId)`。
+4. `setConversationSeed({ seq: prev+1, turns: fromStoredConversation(conversation) })`。
+5. `setSavedBaseline(serializePlanSnapshot(讀入內容))`。
+6. 關閉 slots dialog。
+讀檔失敗(非 200):錯誤訊息顯示在面板內,**不執行以上任何一步**(原地狀態不丟)。
+
+### D5. Dirty 判定(取捨:序列化比對,不做逐操作 dirty flag)
+- dirty = `serializePlanSnapshot(目前) !== (savedBaseline ?? EMPTY_PLAN_BASELINE)`;`EMPTY_PLAN_BASELINE` = 初始空場地 `{ polygon: createDefaultFloor(VENUE_SIZE_M), walls: [], columns: [], furniture: [], venueSizeM: VENUE_SIZE_M }` 的序列化字串,module-level 算一次。
+- 取捨:逐操作 dirty flag 需在十多個 mutation handler(頂點/牆/柱/家具/AI actions/尺寸)各插一筆,侵入面大且易漏;序列化比對只在「點讀取」瞬間執行一次,物件量級小(百件內)成本可忽略,且天然涵蓋「改了又改回去 = not dirty」語意。僅讀檔前檢查,存檔不檢查(spec §5);既有尺寸彈窗/上一步下一步流程零改動。
+- 存檔成功、讀檔成功後各自重設 `savedBaseline`。
+
+### D6. conversation → ChatTurn 還原(`fromStoredConversation`)
+放 `src/lib/ai-panel/messages.ts`(與 `PRIOR_IMAGE_PLACEHOLDER`/`CONFIG_APPENDIX_HEADER` 同檔,單一事實來源;維持 isomorphic)。簽名:
+```ts
+export interface RestoredTurn {
+  role: "user" | "assistant";
+  content: Anthropic.ContentBlockParam[];
+  displayText?: string;        // user 輪:去掉 CONFIG_APPENDIX_HEADER 附錄後的可讀文字
+  priorImageCount?: number;    // user 輪:content 中 text === PRIOR_IMAGE_PLACEHOLDER 的 block 數
+}
+export function fromStoredConversation(rows: { role: string; content: unknown }[]): RestoredTurn[]
+```
+規則:
+- 逐列轉 turn;`content` 非陣列或 role 非 user/assistant 的列防禦性跳過(不 throw)。
+- user 輪 `displayText`:取第一個**非** placeholder 的 text block,若含 `CONFIG_APPENDIX_HEADER` 則截斷附錄(先找 `"\n\n" + CONFIG_APPENDIX_HEADER`,找不到退 `CONFIG_APPENDIX_HEADER`),trim。
+- `priorImageCount`:精確 `block.text === PRIOR_IMAGE_PLACEHOLDER` 全等比對(import 常數,不複製字串字面值)。
+- assistant 輪原樣(渲染沿用 `extractText`);`tool_result` block 原樣保留在 content(續聊送出時 `toApiMessages` 既有邏輯已正確處理舊輪,tool_use_id 鏈不斷)。
+- 歷史 turns 不重建 `actionSummary`(落庫沒有 tool 執行結果;assistant 文字本身已描述動作)— 明確接受,非 AC 要求。
+- AiPanel 的 `ChatTurn` 介面加 `priorImageCount?: number`(`RestoredTurn` 結構相容,seed 直接塞入)。
+
+### D7. AiPanel 渲染/行為變更
+- **歷史圖片占位**:user 輪渲染時,若 `priorImageCount` ≥ 1,在 displayText 旁渲染 N 個 chip「📷 參考圖」(`data-testid="ai-history-image-placeholder"`)。本 session 剛送出的訊息(handleSend 建立)不帶 `priorImageCount`,原圖預覽行為完全不變 — 採「還原時標記」而非「渲染時字串比對」,天然滿足「規則只套用讀回的歷史訊息」,並免去使用者剛好打出同字串的渲染誤判(比對本身仍引用同一常數)。
+- **chat 帶 planId**:`handleSend` fetch body 改 `{ messages: toApiMessages(nextTurns), ...(planId ? { planId } : {}) }`。`planId === null` 完全不帶欄位(後端 undefined 走零查詢路徑;既有 payload 瘦身斷言不受影響)。
+- **100 輪軟上限**:`Math.floor(turns.length / 2) >= 100` 時顯示 `data-testid="ai-turn-limit-hint"`(文案:「對話已達 100 輪,建議清空對話後重新開始,以確保 AI 回應品質」),不 disable 送出;清空/重整後自然消失。planId 有無皆同一邏輯(spec §7)。
+- **清空對話**:`planId !== null` 時才渲染 `data-testid="ai-clear-conversation-button"`(對話空也可見,spec 假設 3)。點擊開 `AlertDialog`(`ai-clear-conversation-confirm-dialog`,文案照 spec §6);確認 → `DELETE /api/plans/${slot}/conversation`;200 → `setTurns([])`、`setPendingToolResults([])`;非 200 → 以既有 `ChatError` 呈現(401 auth / 404 通用「找不到存檔」/ 其餘 generic),turns 原封不動(不 optimistic)。呼叫期間 disable 確認鈕防連點。
+- **刪除目前讀檔中的格**(PlanEditor 端):`onDeleted(slot)` 時若 `slot === currentSlot` → `setCurrentSlot(null)`、`setCurrentPlanId(null)`,**不動** turns/畫布/`conversationSeed`;AiPanel 因 `planId` 變 null 自動隱藏清空鈕、chat 不再帶 planId。刪除確認彈窗文案含「連同該格的 AI 對話一併刪除」,並補一句「若刪除的是目前讀取中的格,畫面內容保留但不再對應任何存檔」。
+
+### D8. 新端點 `DELETE /api/plans/[slot]/conversation`
+`src/app/api/plans/[slot]/conversation/route.ts`,只 export `DELETE`:
+1. `parseSlot`(嚴格白名單字串比對 "1"/"2"/"3")→ 400 `存檔格位不正確`。
+2. `requireUser()` → 401 `請先登入`。
+3. admin client 查 `venue_plans.select("id").eq("user_id", userId).eq("slot", slot).maybeSingle()` — `.eq("user_id")` 為安全關鍵(admin 無 RLS);查詢錯誤 500,無列 404 `找不到存檔`(與既有端點同字串同狀態碼,跨使用者/不存在不可區分)。
+4. `admin.from("ai_conversations").delete().eq("plan_id", planId)` — 採 orchestrator 建議「刪整列」,DB cascade 帶走 `ai_messages`,邏輯最簡;無對話列時 delete 影響 0 列仍回 200(冪等)。
+5. 回 `{ slot, cleared: true }` 200;錯誤字串沿用既有常數值。
+`parseSlot`/`requireUser` 為 module-local 小函式,在新檔內**複製**(~25 行)而非抽共用模組 — 對齊 AGENTS.md「route 內 validation inline、尚未抽 service layer」慣例(取捨見 Architecture Notes)。
+
+### D9. 存檔面板細節(PlanSlotsDialog)
+- 開啟時 `GET /api/plans`,loading 期間顯示載入中;失敗顯示錯誤 + 重試鈕,不擋關閉。
+- 固定渲染 3 列(後端保證回 3 元素):`plan-slot-row-{slot}`;占用列:`plan-slot-name-{slot}`、`plan-slot-updated-{slot}`(格式 `new Date(updatedAt).toLocaleString("zh-TW", { hour12: false })`,人類可讀即可)+「讀取」(`plan-load-button-{slot}`)「改名」(`plan-rename-button-{slot}`)「刪除」(`plan-delete-button-{slot}`)「存入此格」(`plan-save-button-{slot}`);空列:`plan-slot-empty-{slot}` +「存入此格」。
+- 名稱輸入:面板內一個共用選填 `Input`(`plan-save-name-input`),存入時帶上;空白不帶(後端 default「未命名場地」/更新沿用舊值)。
+- 存入此格統一函式:占用格先開覆蓋確認(文案帶該列現有 name/updatedAt);空格直送。PUT 成功 → 用回傳值局部更新該列 + 呼叫 `onSaved`。**PUT 不回 planId**(既有契約,本任務不改既有 5 支 API)→ 存檔成功後 `PlanSlotsDialog` 補一次 `GET /api/plans/[slot]` 取 `planId` 再呼叫 `onSaved(slot, planId)`;**該次 GET 的 `conversation` 一律丟棄,不餵入 seed**(存檔語意不改對話)。PlanEditor 在 `onSaved` 中設 `currentSlot`/`currentPlanId` 並重設 baseline。
+- 所有 mutation 呼叫期間 disable 對應按鈕(edge case:連點防重複送出;不做 optimistic-lock)。
+- 錯誤:PUT/PATCH/DELETE 失敗 → 在對應彈窗內顯示錯誤、不關閉、可重試/取消;讀檔失敗 → 面板內錯誤,狀態不丟。
+- 改名成功且 `slot === currentSlot`:無常駐徽章(Out of Scope 第 7 條),更新面板列即滿足 AC。
 
 ## Implementation Steps
 
-1. **建立 migration** `supabase/migrations/20260722080000_create_ai_conversations.sql`,內容照上方全文(一字不差;若 push 時 sequence 名非 `ai_messages_id_seq` 再依實名修正——identity 預設命名即此,見 Verification 步驟 1 的先查後推)。
-
-2. **修改 `src/app/api/ai/chat/route.ts` — planId 解析與驗證**(插在既有 messages 驗證之後、`deductPoints` 之前):
-   - 新增常數 `PLAN_NOT_FOUND_ERROR = "找不到存檔"`(與 `/api/plans/[slot]` 的 `NOT_FOUND_ERROR` 字面一致)與 module-private `UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i`。
-   - 從已 parse 的 `body` 取 `planId`:`undefined` 或 `null` → 視為未帶,走現況路徑(**零新增查詢**);其餘值必須是通過 `UUID_RE` 的 string,否則回 400 `INVALID_BODY_ERROR`(沿用既有常數,orchestrator AC 授權)。
-   - `planId` 有效時,以 `createSupabaseAdminClient()`(新增 import `@/lib/supabase/admin`)查 `venue_plans`:`.select("id").eq("id", planId).eq("user_id", userId).maybeSingle()` — **`.eq("user_id", userId)` 為安全關鍵**(admin client 無 RLS,比照 plans route 既有註解慣例,不存在與非本人同樣回 404 不可區分)。查詢層錯誤(`error` 非 null)→ 500 `SERVER_ERROR`(此時尚未扣點,安全);無列 → 404 `{ error: PLAN_NOT_FOUND_ERROR }`。**此段必須在 `deductPoints` 呼叫之前**,確保 404 情境零扣點、零 `ai_usage` ledger 列。
-
-3. **修改 `src/app/api/ai/chat/route.ts` — 落庫**(插在既有 `ai_usage` console.log 之後、`safeBalance`/return 之前):
-   - 新增 import:`import { PRIOR_IMAGE_PLACEHOLDER } from "@/lib/ai-panel/messages";`(決策 2)。
-   - `if (planId 有效) { try { await persistConversation(...) } catch (err) { console.error("POST /api/ai/chat 落庫失敗", JSON.stringify({ planId, refId, error: ... })) } }` — **catch 只 log,絕不改變 response**;log 不含訊息內容(避免對話內容進 log)。
-   - module-private `persistConversation(admin, planId, lastUserMessage, assistantContent)`(route 檔內函式,不抽 service 層,遵循「validation + response logic inline」慣例):
-     a. find-or-create:`admin.from("ai_conversations").upsert({ plan_id: planId }, { onConflict: "plan_id", ignoreDuplicates: false }).select("id").single()`(決策 3);`error` → throw(由外層 catch 統一 log)。
-     b. user 訊息內容 = `messages[messages.length - 1]` 原樣(orchestrator Assumption 1;不驗 role,edge case 定案不擴大防禦),經 image→佔位符轉換:`content` 為陣列時逐 block map,`block.type === "image"` → `{ type: "text", text: PRIOR_IMAGE_PLACEHOLDER }`(**逐一替換不合併**,AC 明定),其餘 block(text/tool_result/未知型別)原樣保留;`content` 非陣列(理論不發生,Anthropic 允許 string)→ 原樣存,不轉換。
-     c. 一次 `admin.from("ai_messages").insert([{ conversation_id, role: "user", content: 轉換後 }, { conversation_id, role: "assistant", content: response.content }])` — 同一條 INSERT 兩列,identity 依陣列順序遞增,user 必在 assistant 之前;assistant content 原樣(AC 明定不轉換)。`error` → throw。
-
-4. **修改 `src/app/api/plans/[slot]/route.ts` — GET 真查詢**:
-   - select 改為 `"id, slot, name, plan, updated_at"`。
-   - plan 列查到後:`admin.from("ai_conversations").select("id").eq("plan_id", data.id).maybeSingle()` — `error` → 500 `SERVER_ERROR`(讀取路徑一致沿用既有錯誤策略);無列 → `conversation: []`(合法狀態,AC 明定非 404/500)。
-   - 有 conversation 時:`admin.from("ai_messages").select("role, content").eq("conversation_id", conv.id).order("id", { ascending: true })` — `error` → 500;結果即 `conversation` 陣列(形狀 `{ role, content }`,決策 4)。此兩查詢的所有權已由外層 `venue_plans` 查詢的 `.eq("user_id", userId)` 錨定(`data.id` 只可能是本人存檔),無需重複過濾。
-   - response 增列 `planId: data.id`(見 Architecture Notes 第 1 點),並刪除「task 2 換真查詢」過時註解。GET 以外的 PUT/PATCH/DELETE 一概不動。
-
-5. **修改 `src/lib/ai-panel/messages.ts` 檔頭註解**:在既有「不 import src/lib/ai/(server-only)」段落補一句 —— `PRIOR_IMAGE_PLACEHOLDER` 被 `src/app/api/ai/chat/route.ts`(server)import 作為落庫佔位符的單一事實來源,本模組必須維持 isomorphic(不得引入 server-only 模組或瀏覽器 API)。零程式邏輯變更。
-
-6. **建立 `supabase/tests/ai_conversations_verify.sql`**,比照 `venue_plans_verify.sql` 格式(唯讀 checklist + Expected 註解),涵蓋:兩表欄位形狀、PK(含 `ai_messages.id` 為 identity)、FK cascade 兩條、`plan_id` unique、role check constraint、`ai_messages_conversation_id_id_idx`、兩表 RLS enabled、恰好各一條 select policy、grant(authenticated 僅 SELECT、anon 零 rows、sequence 無 grant)、trigger 綁定、以及註解形式的破壞性段落:authenticated 寫入 permission denied、跨使用者 RLS 隔離(join 路徑)、刪 `venue_plans` 列 cascade 清空 conversation+messages。
-
-7. **更新 `supabase/tests/ai_chat_manual.md`**:追加「planId 對話落庫」段落(案例清單見 Test Plan),並將「未涵蓋」段落中對話持久化相關字樣同步。
-
-8. **更新 `supabase/tests/venue_plans_api_manual.md`**:GET 讀檔段落改寫 `conversation` 斷言(無對話 `[]` / 有對話依序陣列)+ `planId` 欄位存在斷言。
-
-9. **靜態驗證**:`npm run lint` 與 `npx tsc --noEmit` 乾淨;`git status` 確認未觸及 `src/proxy.ts`(`/api/ai/chat` 已受保護,不需 allowlist 變更)、`src/lib/ai/`、既有 migrations。
+1. **`src/lib/ai-panel/messages.ts`**:新增 `RestoredTurn` 介面與 `fromStoredConversation()`(D6),export;不動既有 `toApiMessages`。
+2. **`src/lib/venue/plan.ts`**(或 D3 註記的替代位置):新增 export `PlanSnapshot`、`serializePlanSnapshot(s): string`(固定欄位順序 stringify)、`EMPTY_PLAN_BASELINE` 常數。
+3. **`src/app/api/plans/[slot]/conversation/route.ts`**:實作 `DELETE`(D8)。
+4. **`src/components/venue/PlanSlotsDialog.tsx`**:新元件(D1/D9),含列表 fetch、三個 AlertDialog(覆蓋/讀檔 dirty/刪除)、改名 Dialog、名稱輸入,全部 testid 照 spec。讀取流程:`isDirty()` → 需要時先開 `plan-load-confirm-dialog` → 確認後 `GET /api/plans/[slot]` → 成功 `onLoaded(data)`。
+5. **`src/components/venue/PlanEditor.tsx`**:
+   a. 工具列「場地尺寸」旁新增 `plan-slots-button`(「我的存檔」,`variant="outline"`、`h-[34px]` 對齊既有按鈕)。
+   b. 新 state(D2)+ `applyLoadedPlan`(D4)+ `isDirty`/`getSnapshot` 回呼 + `onSaved`/`onDeleted` 處理(D7/D9)。
+   c. 掛載 `<PlanSlotsDialog …/>`(root div 內,與 size AlertDialog 同層);`<AiPanel plan={…} applyActions={…} planId={currentPlanId} slot={currentSlot} conversationSeed={conversationSeed} />`。
+   d. 供 Playwright 斷言:root div 加 `data-current-slot` / `data-current-plan-id`(比照既有 data-* 慣例)。
+6. **`src/components/venue/AiPanel.tsx`**:props 擴充 + seed useEffect + chat body 帶 planId + 清空對話(按鈕/AlertDialog/DELETE)+ 軟上限提示 + `priorImageCount` 占位 chip 渲染(D7)。`ChatTurn` 加 `priorImageCount?: number` 並 export type(供 seed 型別)。
+7. **`playwright-tests/pages/PlanSlotsPage.ts`**:locators(button、dialog、rows、name/updated/empty、各操作鈕、四個彈窗與 cancel/accept、rename input、save name input)+ 動作方法(`open()`、`saveToSlot(n)`、`loadSlot(n)`、`renameSlot(n, name)`、`deleteSlot(n)`)。
+8. **`playwright-tests/pages/AiPanelPage.ts`**:補 `clearButton`、`clearConfirmDialog`、`turnLimitHint`、`historyImagePlaceholder` locators。
+9. **`playwright-tests/plan-slots.spec.ts`**:mock 策略與案例見 Test Plan。
+10. **手動清單**:`supabase/tests/` 補新端點 4 情境(401 / 400 / 404 跨使用者 / 200 冪等重複呼叫)。
+11. `npm run lint` + 全套 Playwright(新 spec + `ai-panel.spec.ts` + `venue-*.spec.ts` 迴歸)綠燈。
 
 ## Data Flow
 
 ```
-POST /api/ai/chat(帶 planId)
-  cookie session ──getUser()──▶ userId
-  body ──▶ messages 驗證(既有)──▶ planId 格式驗證(UUID_RE)──400
-  admin.venue_plans.select(id).eq(id, planId).eq(user_id, userId) ──無列──▶ 404(未扣點)
-  deductPoints(ai_usage, ai:{uuid}) ──▶ anthropic.messages.create(既有)
-  response.content ──▶ 200 回應組裝(既有,形狀不變)
-       └─(回應前,try/catch 隔離)persistConversation:
-            ai_conversations.upsert(plan_id) ──▶ conversation_id
-            ai_messages.insert([user(image→佔位符), assistant(原樣)])
-            任一步 throw ──▶ console.error only,response 照常
+存: PlanSlotsDialog --getSnapshot()--> PlanEditor 快照(含 venueSizeM)
+     --PUT /api/plans/[slot] {plan,name?}--> upsert --200--> 更新列
+     --GET /api/plans/[slot](取 planId,丟棄 conversation)--> onSaved(slot, planId)
+     --> PlanEditor: currentSlot/currentPlanId + savedBaseline 重設
 
-GET /api/plans/[slot]
-  venue_plans(.eq user_id)──▶ { id, slot, name, plan, updated_at }
-  ai_conversations.eq(plan_id, id).maybeSingle ──無──▶ conversation: []
-       └─有──▶ ai_messages.eq(conversation_id).order(id asc) ──▶ [{role, content}...]
-  response: { planId, slot, name, plan, updatedAt, conversation }
+讀: 讀取 click -> isDirty()? confirm -> GET /api/plans/[slot]
+     --200 {planId,slot,name,plan,updatedAt,conversation}--> onLoaded
+     --> PlanEditor.applyLoadedPlan:
+         plan.* -> setVenueSizeM/setPolygon/setWalls/setColumns/setFurniture
+         conversation -> fromStoredConversation() -> conversationSeed{seq++, turns}
+         planId/slot -> currentPlanId/currentSlot;baseline 重設;dialog 關閉
+     --> AiPanel useEffect(seed.seq): setTurns(seed.turns), pendingToolResults=[]
 
-刪存檔:DELETE /api/plans/[slot](不動)──▶ DB FK cascade 帶走 conversation + messages
+聊: AiPanel.handleSend -> POST /api/ai/chat {messages, planId?}
+     (後端:所有權驗證 -> 扣點 -> 模型 -> 該格落庫)
+
+清: ai-clear-conversation-button -> AlertDialog 確認
+     -> DELETE /api/plans/[slot]/conversation -> 200 -> turns=[], pendingToolResults=[]
+
+刪: plan-delete-button -> AlertDialog -> DELETE /api/plans/[slot]
+     -> onDeleted(slot): slot===currentSlot 時 currentSlot/PlanId=null(畫布/turns 不動)
 ```
 
 ## Test Plan
 
-無 JS 測試框架(專案慣例)— BACKEND 驗證為 migration 人工 push + 腳本/curl 實測 + SQL 核對。
+無 unit test framework(專案慣例);FRONTEND 驗收 = Playwright,後端新端點 = 手動清單。
 
-### 1. Migration push(人工,前例:20260717010000)
-- push 前先以 SQL Editor 確認 `public.set_updated_at()` 存在、`venue_plans` 表存在(FK 依賴)。
-- 由使用者經 **session pooler(ap-southeast-1,port 5432)** 手動 push——transaction pooler(6543)有 prepared statement 錯誤前例,勿用;connection string 一律取自環境,不落檔。
-- push 後跑 `ai_conversations_verify.sql` 唯讀段落逐項核對(含 sequence 實名確認 `ai_messages_id_seq`)。
+**Playwright 策略(mock vs 真 API 取捨)**:全部 `page.route()` mock(assumption 5 + `ai-panel.spec.ts` 既有慣例)— 不打真 Supabase/Anthropic、不需登入、零 flakiness、可精準做 postDataJSON payload 斷言;新端點與 401/404 真實行為由手動清單把關(專案後端驗證慣例)。route 匹配注意 Playwright「後註冊者先匹配」:建議用 **regex 分流**(`/\/api\/plans$/`、`/\/api\/plans\/\d$/`、`/\/api\/plans\/\d\/conversation$/`),避免 `/conversation` 被 `[slot]` 的 glob 吃掉;fixtures 以 helper 函式集中管理(比照 `mockAiChat` 佇列式)。
 
-### 2. API 行為實測(dev server + 雲端 Supabase;真呼叫模型會花錢/扣點,控制在 ≤4 次模型呼叫,比照 ai_chat_manual.md 慣例;腳本讀 `.env.playwright.local` 帳號,查核用 service_role)
-- 不帶 `planId`:成功呼叫一次,response 形狀不變,service_role 查兩張新表零列(**不落庫**)。
-- `planId: "not-a-uuid"` → 400,ledger 無新 `ai_usage` 列(格式檢查在扣點前)。
-- `planId` 為合法 uuid 但不存在(隨機 uuid)→ 404,ledger 無新列、**餘額不變**(所有權檢查在扣點前;單帳號環境以「不存在的 uuid」替代跨使用者案例,佐以步驟 2 程式碼審視 `.eq("user_id")`,比照 task 1 QA 前例標註)。
-- 先 PUT 存檔取得 planId(經 GET 讀檔的 `planId` 欄位),首次帶 planId 呼叫(訊息含一個 image block + text block)→ 200;service_role 查核:恰一列 `ai_conversations`(plan_id 正確)、恰兩列 `ai_messages`(id 升冪 user→assistant;user content 內 image block 已成 `{"type":"text","text":"[使用者先前提供了參考圖]"}` 且 text block 原樣、**無任何 base64 殘留**;assistant content 與 response.content 相同)。
-- 同 planId 第二次呼叫 → 仍恰一列 conversation(upsert 未複製)、messages 累計四列且 `updated_at` 已更新。
-- `GET /api/plans/[slot]` → `conversation` 為四則 `{role, content}` 依序陣列 + `planId` 欄位;另查一個從未對話的已存檔格 → `conversation: []`(200,非 404)。
-- 未登入 POST(帶/不帶 planId)→ 401(既有,proxy 迴歸)。
-- `DELETE /api/plans/[slot]` → service_role 複查 conversation/messages 已 cascade 清空。
-- 落庫失敗隔離(邊界,靜態驗證):code review 確認 persist 整段在 try/catch 內、catch 僅 console.error、return 路徑不受影響——不做故意弄壞 DB 的實測(雲端共用環境)。
-- SQL 層:以 anon key 直打 PostgREST 對兩張新表 INSERT/UPDATE/DELETE → 皆 permission denied(42501,grant 層非 RLS 過濾);authenticated select 只見自己的(join policy)。
-- 清理:測試存檔 DELETE(cascade 帶走對話)、測試 `ai_usage` ledger 列以 service_role 沖銷/刪除,餘額復原,service_role 複查零殘留。
+`plan-slots.spec.ts` 案例(對應 Clarified AC):
+1. 開面板:3 列固定渲染,占用列 name/updated、空列占位(AC1)。
+2. 空格存入:直接 PUT;**postDataJSON 斷言 body.plan 含 `venueSizeM` + 4 欄位**(AC2)。
+3. 占用格存入:先覆蓋確認(含現有名稱/時間文案);確認才 PUT、取消不發請求(AC3)。
+4. dirty 讀檔:先動畫布(加一根柱子)再點讀取 → `plan-load-confirm-dialog`;取消不發 GET(AC4)。
+5. not-dirty 讀檔:直接讀,不跳彈窗(AC5)。
+6. 讀檔套用:mock GET 回含 venueSizeM 的 plan + conversation → 斷言 `data-vertices`/`data-furniture`/`data-current-plan-id` 等 data-*,AiPanel 顯示歷史對話;再送一則訊息,**攔截 chat 請求斷言 body.planId**(AC6)。加一條缺 venueSizeM 的 fixture 變體(fallback 不崩潰)。
+7. 歷史圖片占位:conversation fixture 含 `PRIOR_IMAGE_PLACEHOLDER` text block → `ai-history-image-placeholder` 顯示「📷 參考圖」,原始 placeholder 字串不出現(AC7)。
+8. displayText 還原:fixture user text 含 `[目前配置]` JSON 附錄 → 面板顯示不含附錄(AC8)。
+9. 改名:空字串不發請求;合法名稱 PATCH 後列更新(AC9)。
+10. 刪除:確認彈窗文案含「對話一併刪除」;確認後 DELETE、列變空格;刪除 currentSlot → `data-current-plan-id` 清空、turns 仍在、後續 chat 不帶 planId(AC10)。
+11. 清空對話:讀檔後按鈕可見 → 確認 → DELETE conversation → turns 清空、`data-furniture` 等配置不變;未讀檔時按鈕不存在(AC11/AC12)。
+12. 軟上限:seed 200 則訊息(100 輪)conversation fixture → `ai-turn-limit-hint` 顯示且送出鈕仍 enabled(AC13)。
+13. 錯誤路徑:GET /api/plans 500 → 面板錯誤 + 重試;讀檔 500 → 原地狀態不丟(Error States)。
 
-### 3. 迴歸
-- `npm run lint` + `npx tsc --noEmit` 乾淨。
-- 全套 Playwright 迴歸(含 `ai-panel.spec.ts` mock 套件——response 形狀不變、mock 不帶 planId,必須全綠)。
+迴歸:`ai-panel.spec.ts` 全綠(未讀檔情境 chat body 不含 planId,既有 payload 攔截斷言不變)、`venue-*.spec.ts` 全綠(AC16)。
+AC14/AC15(401/跨使用者 404,含新端點):手動清單驗證 — Playwright mock 架構驗不到真後端,明確劃給手動。
 
-### Edge cases(對應 orchestrator 清單)
-- 多個 image block → 逐一各換一個佔位符 block(實測訊息帶兩張圖,落庫應見兩個佔位符 text block)。
-- `tool_result` block 原樣落庫(可併入第二次呼叫案例:先取得 tool_use 再回 tool_result)。
-- 最後一則非 user role:不防禦、照存(程式碼審視確認無額外擋)。
-- upsert race:由 `plan_id` unique + DO UPDATE 消解(決策 3),失敗一律走 log-only 分支。
+Edge cases 對應(orchestrator 清單):Dialog modal 鎖背景(邊界自動消滅)、空 conversation 讀檔 seed turns=[] 顯示既有空狀態、連點 disable、刪後重存同格 = 新 planId 新存檔(預期行為,無需處理)、placeholder 全等比對 import 常數、缺 venueSizeM fallback(D4 步驟 1 + 案例 6 變體)。
 
 ## Architecture Notes
 
-1. **超出 orchestrator 明文的一項 additive 變更:GET 讀檔 response 增列 `planId`。** orchestrator 未提及,但 task 3 前端讀檔後續聊必須把 `planId` 傳給 `/api/ai/chat`,而目前無任何 API 曝露存檔 uuid——不加則本 task 交付的落庫功能對前端不可觸達。曝露 uuid 無安全風險(chat 端所有權每次重驗)。此為刻意補洞,review 階段請特別確認。
-2. `ai_conversations` 沒有獨立的「建立」端點——首次落庫時 lazy create(upsert),與 out-of-scope「無 /api/conversations 路由」一致。
-3. 落庫在組 response 之前 `await`(非 fire-and-forget):serverless 環境下 response 送出後的 pending promise 可能被凍結/丟棄,必須等落庫完成(或失敗被 catch)再 return;成本是成功路徑多 2 次 DB round-trip,可接受。
-4. `venue_plans` 所有權查詢使 chat 路由在帶 planId 時多一次 DB round-trip;不帶 planId 零開銷(AC 明定現況零變化)。
-5. 已知取捨(orchestrator 定案,非遺漏):落庫失敗不補償、不重試(phase 1;`ai_usage` log 為軌跡);扣點與模型呼叫間、模型與落庫間皆非 transaction;100 輪上限與清空對話端點屬 task 3。
-6. migration 的 sequence revoke 依 identity 預設命名 `ai_messages_id_seq`;若雲端實名不同(理論不會),push 前以 `\d public.ai_messages` 或 `pg_get_serial_sequence` 確認後修正(比照 20260717070000「先查實名再動」前例)。
+- **不用 key remount AiPanel**(spec §6 留給 architect 決定):remount 會丟 `open` 收合狀態並重跑 config fetch;受控 `conversationSeed.seq` useEffect 侵入最小、行為可測。
+- **PUT 不回 planId** 是既有後端契約(本任務不改既有 5 支 API)→ 存檔成功後補一次 GET 取 planId。代價:每次存檔多一請求;收益:零契約變更。若 review 認為值得讓 PUT 回 planId,另開 task,本任務不做。
+- **新 route 複製 parseSlot/requireUser** 而非抽共用:對齊「validation inline、無 service layer」既定慣例;第三處重複時再抽(留給未來 task)。
+- **dirty 用序列化比對**:取捨見 D5;JSON key 順序風險不存在 — 快照物件由我們以固定字面量順序組裝。
+- **歷史 turns 無 actionSummary**:落庫未存 tool 執行結果,不重建;tool_use/tool_result 鏈由原樣保留的 content 維持不斷。
+- 效能:讀檔整批 setState 一次 render;serialize 僅在點「讀取」時執行一次,無熱路徑成本。
 
 ## Security Checklist
 
-- [ ] 無硬編 secrets/credentials/connection string(migration push 用環境的 connection string;測試帳號在 `.env.playwright.local`)
-- [ ] 輸入驗證在邊界:`planId` uuid 格式白名單驗證後才進 DB 查詢;body 大小上限沿用既有 5MB 檢查
-- [ ] 所有權驗證:chat 路由 admin client 查詢**必帶** `.eq("user_id", userId)`(admin 無 RLS,此過濾為安全關鍵);plans GET 的對話查詢以已過濾的 `data.id` 錨定
-- [ ] 404 語意不洩漏:存檔不存在與非本人同回 404 同訊息(anti-enumeration 精神)
-- [ ] 敏感資料不落 log:落庫失敗 log 僅 planId/refId/錯誤訊息,**不含對話內容**;沿用既有「無 token/key/內容」log 慣例
-- [ ] 寫入鎖死 service_role:migration revoke insert/update/delete(anon/authenticated)+ sequence revoke;此為「防偽造 assistant 訊息」的技術屏障,verify SQL 需以 permission denied(42501)確認為 grant 層而非 RLS 過濾
-- [ ] `service_role` key 僅經 `src/lib/supabase/admin.ts` factory 於 server route 使用,零 client 元件觸及
-- [ ] client 傳來的 `system` 欄位持續被忽略(既有行為不動);落庫 content 中 user 部分視為不可信資料原樣存 jsonb(不執行、不插值),assistant 部分來自 Anthropic 回應
-- [ ] 不引入 base64/大 payload 落庫路徑:image block 一律先換佔位符
+- [ ] 無硬編碼 secrets/credentials(新增程式碼零 env 直讀;admin client 走既有 factory)
+- [ ] 新端點輸入驗證:slot 嚴格白名單字串比對(不用 Number())
+- [ ] 新端點 `requireUser()` 401 + admin 查詢 `.eq("user_id", userId)`(admin 無 RLS,安全關鍵)
+- [ ] 跨使用者/不存在統一 404 同字串**同狀態碼**(狀態碼相等性,防列舉慣例)
+- [ ] 不 log tokens/session/對話內容(錯誤 log 只含 code/message)
+- [ ] 前端一律走 `/api/*`,不直呼 Supabase client;`src/lib/ai-panel/` 不 import server-only 模組
+- [ ] AiPanel fetch 不新增任何 client 可控 `system` 欄位;planId 僅 uuid 字串
+- [ ] Playwright 不硬編碼真實憑證(本任務 mock 架構甚至不需帳號)
 
 ## Definition of Done
 
-- [ ] Implementation steps 1–9 全部完成
-- [ ] Migration 已由人工經 session pooler push 上雲,`ai_conversations_verify.sql` 唯讀段落逐項通過
-- [ ] Test Plan 第 2 節 API 實測全數通過,測試資料清理零殘留
-- [ ] `npm run lint`、`npx tsc --noEmit` 乾淨;全套 Playwright 迴歸通過(含 ai-panel mock 套件)
-- [ ] 無 TODO、無註解掉的程式碼、無 debug log
-- [ ] 符合 AGENTS.md 全部規則(factory 使用、server-only 邊界、`/api/*` 慣例、扣點順序)
-- [ ] Security checklist 全項通過
+- [ ] Implementation Steps 1–11 全部完成,無 TODO/註解掉的程式碼/debug log
+- [ ] orchestrator-output.md 全部 16 條 AC 可對應到實作與測試(AC14/15 → 手動清單)
+- [ ] `npm run lint` 通過
+- [ ] `plan-slots.spec.ts` 全綠 + `ai-panel.spec.ts`、`venue-*.spec.ts` 迴歸全綠
+- [ ] Security Checklist 全數通過
+- [ ] 符合 AGENTS.md 全部守則(`@/*` alias、shadcn 元件沿用、admin client 慣例、isomorphic 邊界)
