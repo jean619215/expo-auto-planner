@@ -1,67 +1,66 @@
-# Orchestrator Output — 2D 畫布 zoom/pan(移除場地尺寸編輯,固定 200x200)
-> Story: PlanEditor 操作體驗改善(zoom/pan + AI 面板常駐) | Generated: 2026-07-22T14:08:18Z
+# Orchestrator Output — AiPanel 跨步驟常駐
+> Story: PlanEditor 操作體驗改善(zoom/pan + AI 面板常駐) | Generated: 2026-07-22T15:40+08:00
 
 ## Task Type
 FRONTEND
 
 ## Refined Requirement
-`src/components/venue/PlanEditor.tsx` 的 2D 平面圖畫布改為支援縮放(zoom)與平移(pan),取代現行「場地尺寸」編輯功能:
 
-1. **Zoom/Pan(Konva Stage 層)**:Stage 增加 `scaleX`/`scaleY`(等比)與 `x`/`y` position 狀態。滑鼠滾輪以游標為錨點縮放;工具列提供 `+`/`−` 按鈕與「重置視圖」按鈕;顯示目前倍率(如「100%」)。平移透過拖曳空白處達成,與既有「拖曳物件/頂點/把手」操作互斥(由 architect 定案区隔機制,見下方選項)。
-2. **座標换算全面遷移**:所有互動使用 Konva 事件的 `getRelativePointerPosition()`(將 Stage 的 scale/position 已還原到 Stage 內部座標系),取代現行 `stage.getPointerPosition()`(回傳未還原的螢幕像素座標,zoom/pan 後會失準)。物件的公尺座標系統(`pxToMeters`/`metersToPx`/`computePxPerMeter`)完全不受 zoom/pan 影響 — zoom/pan 純屬 Stage 顯示層 transform,不進入 `src/lib/venue/plan.ts` 的任何運算。
-3. **移除場地尺寸編輯 UI**:`venue-size-button`/`venue-size-editor`(含 `venue-size-input`/`venue-size-confirm-button`/`venue-size-cancel-button`)與 `sizeConfirmOpen` AlertDialog(`venue-size-confirm-dialog`/`venue-size-confirm-cancel`/`venue-size-confirm-accept`)整組移除,含對應 state(`sizeEditorOpen`/`sizeInput`/`pendingSizeM`/`sizeConfirmOpen`)與 handler(`openSizeEditor`/`applyVenueSize`/`handleSizeConfirm`/`handleSizeConfirmAccept`)。
-4. **可規劃範圍固定 200x200 公尺**:`venueSizeM` 不再是可變 state,前端一律以固定常數 `200`(`MAX_VENUE_SIZE_M` 現值,可直接沿用/更名)驅動所有 clamp/snap/create 函式呼叫(`clampToBounds`/`snapPoint`/`createWall`/`createColumn`/`translateWall`/`translateColumn`/`resizeColumnCorner`/`moveVertex`/`insertVertexOnEdge`/`moveWallEndpoint` 等既有 `sizeM` 參數)。
-5. **預設視圖 fit 中央 50x50**:見下方 Assumption 1 — 座標原點與 `DEFAULT_FLOOR` 常數維持不變(左上角 (0,0)、地板仍在 20,20–30,30),Stage 初始 scale/position 使畫面呈現與現行完全一致的視覺(等同 fit `[0,50]x[0,50]` 這個子區域);`zoom out` 後可看到並編輯延伸到 200x200 的完整範圍。
-6. **AI 系統提示與工具 schema 尺寸描述批次更新**:`src/lib/ai/system.ts`(`SYSTEM_PROMPT`,frozen string)與 `src/lib/ai/tools.ts`(schema `description` 中的座標範圍描述)兩處所有「50」「0-50」相關描述一次性改為對應 200 的敘述,一次 commit 內完成(prompt cache 這輪必失效,不得分批改動造成 system.ts 與 tools.ts 描述不一致的過渡態)。僅文字/數值變更,不動 `src/lib/ai/` 的邏輯結構、不新增插值。
+目前 `AiPanel` 掛在 `PlanEditor.tsx` 的 `step === "edit"` 區塊內(`src/components/venue/PlanEditor.tsx:1533-1539`),切到 `step === "preview"` 時該區塊整個不渲染,`AiPanel` 隨之 unmount,對話 state(`turns`/`pendingToolResults`/`input`/`imageDraft`/`open` 等,皆為 `AiPanel` 內部 `useState`)全部遺失。
 
-## Task Type Confirmation
-FRONTEND — 核心變更在 `PlanEditor.tsx`(UI/畫布互動)。`system.ts`/`tools.ts` 的純文字數值更新是本任務的必要配套(座標範圍改變必須讓 AI 端同步認知),但不涉及後端邏輯/API 契約變更,不足以讓本任務整體判定為 BACKEND。
+本任務要求:
+
+1. **常駐掛載**:重構 `PlanEditor` 的 JSX 結構,讓 `<AiPanel>` 節點在 `step === "edit"` 與 `step === "preview"` 兩種情況下,於 React tree 中位於**同一個父層、同一個相對位置**(例如把 edit/preview 各自的內容包成左欄,`AiPanel` 提升為與「左欄」並列的 flex sibling,兩個 step 共用同一份外層 `<div className="flex ...">`),使 React 不會因為 step 切換而 unmount/remount `AiPanel`。顯示與否純粹用 CSS/條件 class 控制左欄內容,`AiPanel` 本身節點恆在。
+   - `AiPanel` 已有自己的收合邏輯(`open` state,收合時只渲染 toggle 按鈕,見 `AiPanel.tsx:324-338`),沿用即可,不需另外包一層顯示/隱藏邏輯。
+2. **preview 步驟版面**:`step === "preview"` 時,`VenueSceneLoader`/`VenueScene` 與 `AiPanel` 並列(左：3D 場景含其既有 `venue-sidebar` 家具工具列 + Canvas;右：AiPanel)。3D 場景本身已是 `flex gap-3`(內部 aside + canvas),`AiPanel` 應以與 edit 步驟相同的模式(shrink-0 側欄)接在最外側,不嵌入 VenueScene 內部。
+3. **關鍵資料流(本任務最大技術風險,architect 需在 architect-plan.md 明確定案,以下為功能性約束,非實作指定)**:
+   - `PlanEditor` 目前有兩份幾何 state:(a) edit 步驟的權威 state(`polygon`/`walls`/`columns`/`furniture`,`applyActions` 寫入這裡);(b) `sceneSnapshot`(`handleNextStep` 從 (a) 複製產生,餵給 `VenueSceneLoader`,並透過 `onSceneChange` 接收使用者在 3D 內手動操作後的回寫)。`VenueScene.tsx` 自己還有第三份 local state(`localWalls`/`localColumns`/`localFurniture`,`useState(props)` 初始化、**沒有** `useEffect` 隨 props 變化重新同步 — 元件掛載後 props 再變,local state 不會自動跟)。
+   - 使用者在 preview 步驟對 AI 下指令、AI 回傳 tool call 時,`applyActions` 執行結果必須讓 **當下畫面上的 3D 場景立即反映變更**(不需使用者離開再進入 preview 步驟、不需重新整理)。
+   - AI 在 preview 步驟造成的變更,回到 edit 步驟(「上一步」)時,edit 步驟畫布必須顯示同一份最新結果 — 不能出現「AI 在 preview 改的東西,回 edit 步驟後消失/被舊 state 蓋回去」的資料遺失。
+   - 使用者在 3D 內手動操作(拖曳/旋轉,經 `onSceneChange` 回寫)與 AI 在同一個 preview 步驟內交錯操作時,兩者的變更都必須保留,不得互相覆蓋踩掉對方(參考 edit 步驟既有的 `polygonRef`/`wallsRef`/`columnsRef`/`furnitureRef` 這種「用 ref 讀最新 committed state、避免 await 期間 stale closure 覆蓋手動編輯」的既有解法,preview 步驟需要類似等級的保護,但因為多了 `VenueScene` 自己的 local state 這一層,不能直接照搬 — architect 需決定 `VenueScene` local state 要如何被外部(preview 步驟下的 AI 變更)可靠地推入。)
+   - `AiPanel` 送給 AI 的「目前配置 JSON」(`AiPanel.tsx:189-194`,依据 `plan` prop)在 preview 步驟必須反映**畫面上使用者看到的最新幾何**,包含使用者剛才手動在 3D 內做的調整(即 `sceneSnapshot`/`VenueScene` local state 而非 edit 步驟可能已經過時的 (a) state)。若 AI 在 preview 步驟根據過期配置做判斷(例如要求移動「第 2 件家具」卻是舊的家具列表順序),即為資料流未接上,視為不符合本任務要求。
 
 ## Clarified Acceptance Criteria
-- [ ] Given 2D 編輯畫布,when 滑鼠滾輪在畫布上滾動,then Stage 以游標所在點為錨點縮放(游標下的公尺座標點縮放前後視覺位置不變)。
-- [ ] Given 2D 編輯畫布,when 點擊 `+`/`−` 縮放按鈕,then 以畫布中心為錨點縮放一個固定步進。
-- [ ] Given 已縮放/平移的畫布,when 點擊「重置視圖」按鈕,then Stage scale/position 回到預設值(fit 中央 50x50,即與初始掛載時完全一致)。
-- [ ] Given 任意縮放倍率,then 工具列顯示目前倍率百分比,並即時隨縮放更新。
-- [ ] Given 縮放倍率已達上限/下限,when 繼續嘗試放大/縮小(滾輪或按鈕),then 倍率夾在範圍內不再變化(architect 決定具體 min/max,建議 0.25x–4x 落在合理帶,實際數值由 architect 定案並記錄於 architect-plan.md)。
-- [ ] Given `mode === "select"` 且畫布空白處(無命中任何頂點/物件/把手)按下滑鼠,when 拖曳,then 畫布平移(pan),不觸發選取框選或物件移動。
-- [ ] Given 任意物件/頂點/把手上按下滑鼠,when 拖曳,then 觸發既有的物件移動/頂點移動/把手縮放邏輯,不觸發畫布平移(即使當前已縮放/平移)。
-- [ ] Given 任意縮放/平移狀態,when 畫地板頂點(拖曳/雙擊加頂點/右鍵刪頂點)、畫牆(wall 工具拖曳起訖)、放柱子(column 工具點擊)、拖曳家具/柱子/牆體移動、拖曳牆端點、拖曳柱子縮放把手,then 產生的公尺座標與縮放/平移為 1x/(0,0) 時完全一致(誤差在既有 `toBeCloseTo(_, 5)` 級別內)。
-- [ ] Given 頁面首次載入編輯步驟,then 畫面呈現與現行(修改前)預設視覺完全一致(地板方塊位置、視覺比例不變)——見 Assumption 1。
-- [ ] Given 讀取一份 `venueSizeM` 為 40(或其他 ≤200 舊值)的存檔,when 套用至編輯器,then 正常顯示與編輯,不觸發任何範圍/資料遷移邏輯,不論存檔中的 `venueSizeM` 為何值,前端一律以固定 200 作為 clamp 上限。
-- [ ] Given 讀取一份缺少 `venueSizeM` 欄位的舊存檔,then fallback 不崩潰(沿用現行 `rawPlan.venueSizeM` 型別檢查與 fallback 邏輯,fallback 值為固定 200 而非現行的 `VENUE_SIZE_M`=50 常數,因為場地已無「預設 50」概念)。
-- [ ] Given 使用者存檔(PUT `/api/plans/[slot]`),then payload 的 `venueSizeM` 欄位固定送出 `200`(不再受任何前端可變 state 影響)。
-- [ ] Given 「場地尺寸」按鈕/編輯器/確認彈窗已移除,then 頁面上不存在 `venue-size-button`/`venue-size-editor`/`venue-size-confirm-dialog` 等 DOM(`data-testid`),對應舊 Playwright 測試(若存在)同步移除。
-- [ ] Given AI 對話生成/修改配置(`generate_plan`/`resize_floor`/`add_furniture`/`move_item` 等 tool call),then 產生座標的合法範圍為 0–200(不再是 0–50),前端 clamp 行為與工具 schema 描述一致。
-- [ ] Given 既有 Playwright 迴歸套件(`venue-plan-editor.spec.ts`/`venue-dimensions.spec.ts`/`venue-objects.spec.ts`/`venue-3d-scene.spec.ts`/`plan-slots.spec.ts`/`ai-panel.spec.ts`),when 在預設(未縮放/平移)視圖下執行,then 全數維持通過,不需改動既有斷言的期望值(視覺/座標不變)。
+
+- [ ] Given 使用者在 edit 步驟已與 AI 對話過(至少一輪 user+assistant),when 點擊「下一步」進入 preview 步驟,then AiPanel 內對話歷史(所有 turns)完整可見、未消失。
+- [ ] Given 承上,in preview 步驟,when 點擊「上一步」回到 edit 步驟,then 對話歷史依然完整保留(往返多次皆成立)。
+- [ ] Given 使用者在 edit 步驟輸入框打了字但未送出,when 切到 preview 再切回 edit,then 輸入框內容原樣保留。
+- [ ] Given preview 步驟,when AiPanel 尚未展開(收合狀態),then 畫面上只顯示 toggle 按鈕(不佔用/不遮擋 3D 場景),點擊後展開側欄。
+- [ ] Given preview 步驟且 AiPanel 已展開,when 使用者送出一則會觸發 tool call(如 `add_furniture`/`move_item`/`remove_item`)的指令,then `/api/ai/chat` 回應套用後,3D 場景畫面上的物件數/位置立即反映變更(以 `venue-scene` 的 `data-*-mesh-count` 或等效 data attribute 驗證),不需離開/重進 preview 步驟。
+- [ ] Given preview 步驟,when AI tool call 修改了幾何(例如新增家具),then 回到 edit 步驟後,2D 畫布(`plan-editor` 的 `data-furniture-count` 等)顯示同一份包含 AI 新增結果的最新配置。
+- [ ] Given preview 步驟,when 使用者先手動在 3D 內拖曳移動一件家具(未回 edit 步驟),再對 AI 下一則會參照「目前配置」的指令,then AI 收到的配置 JSON 反映該手動移動後的最新位置(而非切換到 preview 當下的舊快照)。
+- [ ] Given 使用者已讀取某個存檔格(`planId`/`slot` 非 null,`conversationSeed` 已還原對話),when 在 edit/preview 之間切換,then `planId`/`slot` 不變、「清空對話」按鈕行為(僅 `planId !== null` 顯示、DELETE `/api/plans/{slot}/conversation` 成功後清空 turns)在兩步驟下皆正常。
+- [ ] Given 尚未進入 preview 步驟(`sceneSnapshot === null`,即從未點過下一步),then 不需渲染 3D 場景或 preview 版面(維持現況:`step === "preview" && sceneSnapshot` 才渲染,見 `PlanEditor.tsx:1542`)。AiPanel 提升為常駐不改變這個既有的「需先產生 scene 才能看 3D」邏輯。
 
 ## Edge Cases to Handle
-- 滾輪錨點縮放發生在畫布邊緣/角落,游標接近或超出 Stage 可視區域時不得產生 NaN/Infinity position。
-- 連續快速滾輪事件(高頻 wheel event)不應造成 scale 抖動或超出 min/max 後又跳回。
-- 平移拖到極端位置(地板/物件完全移出可視範圍)UI 不崩潰,重置視圖按鈕仍可一鍵復原。
-- 縮放至最小倍率時,200x200 整個範圍應可完整容納於可視區域內(min zoom 需與 200/50 的比例關係一併驗證,不能出現「zoom out 到底仍看不到邊界」)。
-- 雙擊加頂點、右鍵刪頂點等非拖曳互動在縮放/平移狀態下的命中判定(hit test)須用 `getRelativePointerPosition()` 換算後的座標,不能用螢幕像素直接命中。
-- 舊存檔 `venueSizeM` 大於 200 的異常資料(理論上不該出現,因為現行 `MAX_VENUE_SIZE_M` 本來就是 200)—— 沿用現行 `Math.min/Math.max` 防呆讀入邏輯即可,不需新增例外處理。
-- AiPanel 側欄展開/收合造成 Stage 寬度(`stagePx`)透過 ResizeObserver 改變時,現行 `pxPerMeter` 會跟著變 —— 需確認這與新的 zoom scale 是疊加關係(`pxPerMeter` 走公尺→畫布內部像素、zoom scale 是畫布內部像素→螢幕像素的第二層 transform),兩者不可互相覆蓋或雙重換算,architect 需在方案中明確畫出兩層座標系的職責分界。
+
+- 使用者在 preview 步驟送出 AI 指令的請求還在等待中(`pending`)時,點擊「上一步」切回 edit:比照既有 edit 步驟的 ref-based 保護精神,等待中的回應到達後 `applyActions` 仍必須套用到正確(當下最新)的幾何 state,不因為使用者已切換步驟而遺失或套用到錯誤目標。
+- AI 在 preview 步驟回傳的 tool call 因索引越界等原因被 `applyActions` 判定失敗(`ok: false`,現有邏輯已處理,見 `PlanEditor.tsx:644-858`)—— 此行為不因常駐掛載而改變,preview 步驟下失敗訊息一樣要顯示在 `ai-action-summary`。
+- `sceneSnapshot === null`(從未按過下一步)時,`step` 不可能是 `"preview"` 且同時渲染 preview 版面(見既有 `step === "preview" && sceneSnapshot` guard)—— 此時 AiPanel 仍應正常掛載於 edit 步驟版面,不受影響。
+- 面板在 preview 步驟展開時的寬度(`w-80`/`xl:w-96`,`AiPanel.tsx:343`)與 3D Canvas 固定寬高(`VenueScene.tsx:324`,`h-[480px] w-full`)並列 — 需確認整體版面不因為新增一個常駐右側欄而在較窄視窗下造成水平溢出(比照 edit 步驟現有 `editorColumnRef` 量測 wrapper 寬度、非最外層容器的既有作法,見 `PlanEditor.tsx:158-161` 註解)。
 
 ## Error States
-- 縮放倍率計算異常(除以 0、NaN 輸入)→ 靜默 clamp 回目前有效值,不拋錯、不重置整個 Stage。
-- `getRelativePointerPosition()` 回傳 `null`(理論上僅在事件不含 Stage 情境下發生)→ 沿用現行 `if (!pointer) return;` 防呆模式(既有程式碼已大量使用此 pattern,遷移時保留)。
+
+- `/api/ai/chat` 於 preview 步驟回傳非 200(402 點數不足 / 401 未登入 / 其他 generic 錯誤):現有 `AiPanel` 錯誤處理(`error` state,`ai-error` testid)邏輯不變,preview 步驟下同樣顯示,不因掛載點改變而需要新增分支。
+- preview 步驟下 AI 回傳的 tool call 更新幾何後,若使用者尚未回到 edit 步驟即重新整理頁面/離開:比照現況(無 preview 步驟自動存檔機制),AI 在 preview 造成的變更視同任何未存檔的手動編輯,遺失屬既有預期行為,非本任務需新增的保護範圍(存檔仍是 Task 3 既有「我的存檔」手動存檔流程)。
 
 ## Out of Scope
-- AiPanel 跨步驟常駐、3D 預覽步驟 AI 對話(story 的第二個 task,不在本任務範圍)。
-- 場地尺寸的伺服器端/資料庫 schema 變更 —— `venueSizeM` 欄位本身、`/api/plans/[slot]` route 不變,僅前端固定送出的數值改變。
-- 既有存檔資料遷移/批次更新資料庫中舊 `venueSizeM` 值 —— 明確不做,舊存檔原樣保留,讀檔時前端固定以 200 為運算上限。
-- 觸控手勢(pinch-to-zoom、雙指平移)—— 本任務僅要求滑鼠滾輪/按鈕/拖曳,行動裝置觸控手勢不在範圍內(除非既有 Playwright/需求另有規定,目前未見)。
-- AI 系統提示或 tools schema 的任何邏輯/規則變更 —— 僅座標範圍數值/描述文字的批次更新,不新增/修改工作模式規則或 scope guard。
+
+- 不新增/修改任何 `/api/ai/*` 後端路由或 `src/lib/ai/` 系統提示、工具 schema(`src/lib/ai/system.ts`、`src/lib/ai/tools.ts` 目前的未提交變更屬於另案範圍,與本任務無關,不在本任務改動範圍內)。
+- 不改變「需先點下一步產生 `sceneSnapshot` 才能看到 3D 預覽」的既有流程門檻。
+- 不新增 preview 步驟下的存檔/自動存檔機制 — 沿用既有「我的存檔」手動存檔按鈕(僅存在於 edit 步驟版面)。
+- 不改變 `AiPanel` 既有的清空對話 / 100 輪提示 / 圖片上傳 / 點數餘額顯示等既有行為的規格,僅要求這些行為在常駐掛載後於兩個步驟下都繼續正常運作。
+- 不處理 `VenueScene.tsx` 內與本任務資料流無關的既有已知限制(例如場景內部沒有自己的 undo/redo)。
 
 ## Assumptions Made
-1. **「預設視圖 fit 中央 50x50」的語意**:優先滿足 AC 明文的「與現行預設視覺一致」— 因此座標原點與 `DEFAULT_FLOOR` 常數不變(仍在左上角 0,0 為基準、地板仍在 20,20–30,30),初始 Stage transform 呈現的畫面等同「fit 顯示 `[0,50]x[0,50]` 這個(原點角落而非幾何正中心)子區域」。之所以稱為「中央 50x50」,取其相對於使用者「起始關注區」的直覺說法,而非要求以 200x200 空間的幾何正中心 (75,75)–(125,125) 作為預設視窗 —— 後者會讓地板初始視覺位置整個改變,與 AC 明文的「一致」互斥。如果人類事後確認需要幾何正中心語意,屬於範圍變更,需重新走 orchestrate。
-2. **`VENUE_SIZE_M`(`src/lib/venue/plan.ts` 常數,現為 50)不在本任務變更範圍** —— 它驅動 `createDefaultFloor` 的預設參數與 `EMPTY_PLAN_BASELINE`,這兩者的現行行為(10x10 置中地板、dirty 判定基準)依 AC「與現行預設視覺一致」應保持不變。「固定 200x200」指的是 `PlanEditor.tsx` 元件層面驅動 clamp 的 `venueSizeM`(現行 `MAX_VENUE_SIZE_M`),兩個常數在本任務後語意分裂(`VENUE_SIZE_M`=預設地板生成用、200=可規劃範圍上限),architect 可視情況重新命名以消除混淆,但不得讓 `createDefaultFloor()` 的預設行為隨之改變。
-3. `src/lib/ai/tools.ts` 的 schema `description` 字串(如 `"公尺,0-50"`)雖非 AC 明文點名的「系統提示」,但屬於同一份 AI 對場地尺寸的認知來源,不同步會讓 AI 生成超出新範圍(50-200 之間)的座標時被前端 clamp,體驗劣化 — 判定為本任務隱含範圍,與 `system.ts` 一併批次修改。
-4. Playwright 既有 `PlanEditorPage.meterToScreen()`(`playwright-tests/pages/PlanEditorPage.ts`)目前假設 Stage 沒有 scale/position transform,直接用 `pxPerMeter` 換算螢幕座標。此任務引入 Stage transform 後,該 helper 必須改為同時納入目前 scale/position 才能在「縮放/平移狀態下」正確點擊 —— 這是既有測試基礎設施的必要配套修改,不算需求範圍外,architect 需規劃對應的測試 hook(例如比照現行 `data-px-per-meter` 屬性,新增可讀取當前 stage scale/x/y 的 data attribute 或等效 API)。
-5. 「+/− 按鈕與滾輪的縮放步進」「min/max 倍率」「pan 與物件拖曳的區隔機制(空白鍵 modifier vs. 純粹以命中測試判斷 vs. 獨立平移工具模式)」為技術實作細節,已在 AC 中列出選項與方向、留給 architect 定案,惟 architect 定案後的具體數值/機制需記錄在 architect-plan.md 供 Playwright 撰寫測試依據。
+
+- **A1**:AiPanel 提升掛載點時,沿用其現有的內部收合邏輯(`open` state 控制渲染 toggle 按鈕 vs 完整側欄),不另外設計新的顯示/隱藏機制。
+- **A2**:preview 步驟版面採「3D 場景(含自身 sidebar+canvas)在左、AiPanel 在右」,與 edit 步驟「2D 畫布在左、AiPanel 在右」視覺上一致,維持使用者心智模型連貫,而非把 AiPanel 疊加在 3D 場景上方或改成其他版位。
+- **A3**:「即時反映 3D」的驗收標準以 `venue-scene` 上既有的 `data-wall-mesh-count`/`data-column-mesh-count`/`data-furniture-mesh-count` 等 data attribute 變化來驗證(既有 Playwright 慣例,3D `<canvas>` 對 Playwright 不透明,見 `venue-3d-scene.spec.ts` 開頭註解),不要求逐 pixel 或 WebGL 內容驗證。
+- **A4**:資料流的具體修法(例如是否讓 `VenueScene` local state 隨 props 用 `useEffect` 同步、或改用 `key` 強制 remount、或把幾何 state 進一步上提、或讓 preview 步驟改為純 controlled component 不再自己持有 local state)屬架構決策,留給 architect 定案;本文件僅鎖定功能性行為(AI 改動需立即可見、與使用者手動 3D 編輯不互相覆蓋、離開 preview 後資料不遺失)。
+- **A5**:`conversationSeed`/`planId`/`slot` 的既有語意(見 `PlanEditor.tsx:219-222`, `330-345`)不變,本任務不修改讀檔續聊的資料結構,只確保其在新版面下依然正確運作。
 
 ## Security Notes
-- `src/lib/ai/system.ts`、`src/lib/ai/tools.ts` 均在 `src/lib/ai/` 模組下,已 `import "server-only"`,本任務僅改動字串常數,不改變 import 邊界,無新增 client-side 洩漏風險。
-- 無新增使用者輸入面(zoom/pan 為純前端顯示狀態,不落地存檔、不影響 API payload 除了 `venueSizeM` 固定值),無新增安全性/隱私疑慮。
-- 座標範圍放寬至 200 對 `resizeColumnCorner`/`clampColumnCenter` 等既有邊界防呆函式無結構性風險 —— 皆已透過 `sizeM` 參數化,非硬編碼 50。
+
+- 本任務純前端版面/state 生命週期重構,不涉及新的資料輸入、權限或後端呼叫,無新增安全性疑慮。
+- 需留意:preview 步驟下如果幾何資料流修法不慎導致 `applyActions` 被重複呼叫或套用到錯誤的目標 state,可能造成資料一致性問題(不是資訊安全問題,但屬於資料正確性風險),已在「Edge Cases」與「關鍵資料流」段落標出,architect 需明確定案避免 race condition。

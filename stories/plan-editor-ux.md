@@ -15,7 +15,7 @@
 
 ## 任務清單
 - [x] [FRONTEND] 2D 畫布 zoom/pan:Konva Stage scale/position + 滾輪/按鈕/重置 UI、指標座標全面遷移 `getRelativePointerPosition`、移除場地尺寸編輯器與確認彈窗、可規劃範圍固定 200x200(預設視圖 fit 中央 50x50)、AI 系統提示尺寸描述批次更新;Playwright 驗收(縮放狀態下互動座標正確 + 迴歸)
-- [ ] [FRONTEND] AiPanel 跨步驟常駐:掛載點提升至步驟切換之外(CSS 控制顯示),3D 預覽步驟顯示側欄並可對話、tool call 套用即時反映 3D;Playwright 驗收(切步驟對話保留、預覽步驟下指令)
+- [x] [FRONTEND] AiPanel 跨步驟常駐:掛載點提升至步驟切換之外(CSS 控制顯示),3D 預覽步驟顯示側欄並可對話、tool call 套用即時反映 3D;Playwright 驗收(切步驟對話保留、預覽步驟下指令)
 
 <!--
 背景(2026-07-22 討論定案):

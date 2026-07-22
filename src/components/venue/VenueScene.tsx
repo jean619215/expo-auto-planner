@@ -115,9 +115,6 @@ export default function VenueScene({
   onSceneChange,
 }: VenueSceneProps) {
   const fit = viewFitSizeM ?? venueSizeM;
-  const [localWalls, setLocalWalls] = useState(walls);
-  const [localColumns, setLocalColumns] = useState(columns);
-  const [localFurniture, setLocalFurniture] = useState<FurnitureItem[]>(furniture);
   const [selectedId, setSelectedId] = useState<SelectedId>(null);
   const [transformMode, setTransformMode] = useState<"translate" | "rotate">(
     "translate",
@@ -150,15 +147,10 @@ export default function VenueScene({
 
     if (selectedId.type === "furniture" && transformMode === "rotate") {
       const deg = -(obj.rotation.y * 180) / Math.PI;
-      const nextFurniture = localFurniture.map((f) =>
+      const nextFurniture = furniture.map((f) =>
         f.id === selectedId.id ? rotateFurniture(f, deg) : f,
       );
-      setLocalFurniture(nextFurniture);
-      onSceneChange?.({
-        walls: localWalls,
-        columns: localColumns,
-        furniture: nextFurniture,
-      });
+      onSceneChange?.({ walls, columns, furniture: nextFurniture });
       return;
     }
 
@@ -167,25 +159,22 @@ export default function VenueScene({
     if (!start) return;
     const deltaPlan = { x: obj.position.x - start.x, y: obj.position.z - start.z };
 
-    let nextWalls = localWalls;
-    let nextColumns = localColumns;
-    let nextFurniture = localFurniture;
+    let nextWalls = walls;
+    let nextColumns = columns;
+    let nextFurniture = furniture;
 
     if (selectedId.type === "wall") {
-      nextWalls = localWalls.map((w) =>
+      nextWalls = walls.map((w) =>
         w.id === selectedId.id ? translateWall(w, deltaPlan, venueSizeM) : w,
       );
-      setLocalWalls(nextWalls);
     } else if (selectedId.type === "column") {
-      nextColumns = localColumns.map((c) =>
+      nextColumns = columns.map((c) =>
         c.id === selectedId.id ? translateColumn(c, deltaPlan, venueSizeM) : c,
       );
-      setLocalColumns(nextColumns);
     } else {
-      nextFurniture = localFurniture.map((f) =>
+      nextFurniture = furniture.map((f) =>
         f.id === selectedId.id ? translateFurniture(f, deltaPlan, venueSizeM) : f,
       );
-      setLocalFurniture(nextFurniture);
     }
     onSceneChange?.({ walls: nextWalls, columns: nextColumns, furniture: nextFurniture });
   }
@@ -197,15 +186,10 @@ export default function VenueScene({
         { x: e.point.x, y: e.point.z },
         venueSizeM,
       );
-      const nextFurniture = [...localFurniture, item];
-      setLocalFurniture(nextFurniture);
+      const nextFurniture = [...furniture, item];
       setPlacingKind(null);
       selectObject({ type: "furniture", id: item.id });
-      onSceneChange?.({
-        walls: localWalls,
-        columns: localColumns,
-        furniture: nextFurniture,
-      });
+      onSceneChange?.({ walls, columns, furniture: nextFurniture });
       return;
     }
     setSelectedId(null);
@@ -213,9 +197,16 @@ export default function VenueScene({
 
   const isFurnitureRotate =
     selectedId?.type === "furniture" && transformMode === "rotate";
+  const selectionExists =
+    selectedId !== null &&
+    (selectedId.type === "wall"
+      ? walls.some((w) => w.id === selectedId.id)
+      : selectedId.type === "column"
+        ? columns.some((c) => c.id === selectedId.id)
+        : furniture.some((f) => f.id === selectedId.id));
   const selectedFurniture =
     selectedId?.type === "furniture"
-      ? localFurniture.find((f) => f.id === selectedId.id) ?? null
+      ? furniture.find((f) => f.id === selectedId.id) ?? null
       : null;
 
   return (
@@ -223,9 +214,9 @@ export default function VenueScene({
       data-testid="venue-scene"
       data-generated="true"
       data-orbit-controls="true"
-      data-wall-mesh-count={localWalls.length}
-      data-column-mesh-count={localColumns.length}
-      data-furniture-mesh-count={localFurniture.length}
+      data-wall-mesh-count={walls.length}
+      data-column-mesh-count={columns.length}
+      data-furniture-mesh-count={furniture.length}
       data-floor-vertex-count={polygon.length}
       className="mt-4 w-full"
     >
@@ -346,7 +337,7 @@ export default function VenueScene({
             position={[venueSizeM / 2, 0.01, venueSizeM / 2]}
           />
           <FloorMesh polygon={polygon} onClick={handleFloorClick} />
-          {localWalls.map((wall) => {
+          {walls.map((wall) => {
             const isSelected = selectedId?.type === "wall" && selectedId.id === wall.id;
             const rotationY = -Math.atan2(
               wall.end.y - wall.start.y,
@@ -376,7 +367,7 @@ export default function VenueScene({
               </mesh>
             );
           })}
-          {localColumns.map((col) => {
+          {columns.map((col) => {
             const isSelected = selectedId?.type === "column" && selectedId.id === col.id;
             return (
               <mesh
@@ -395,7 +386,7 @@ export default function VenueScene({
               </mesh>
             );
           })}
-          {localFurniture.map((item) => {
+          {furniture.map((item) => {
             const isSelected =
               selectedId?.type === "furniture" && selectedId.id === item.id;
             const defaults = FURNITURE_DEFAULTS[item.kind];
@@ -423,7 +414,7 @@ export default function VenueScene({
               </mesh>
             );
           })}
-          {selectedId && (
+          {selectionExists && (
             <TransformControls
               key={`${selectedId.type}-${selectedId.id}-${transformMode}`}
               object={selectedMeshRef as RefObject<THREE.Object3D>}

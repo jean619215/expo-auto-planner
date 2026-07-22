@@ -1,8 +1,8 @@
 {
   "story_file": "stories/plan-editor-ux.md",
   "story_title": "PlanEditor 操作體驗改善(zoom/pan + AI 面板常駐)",
-  "task_index": 0,
-  "current_task": "[FRONTEND] 2D 畫布 zoom/pan:Konva Stage scale/position + 滾輪/按鈕/重置 UI、指標座標全面遷移 getRelativePointerPosition、移除場地尺寸編輯器與確認彈窗、可規劃範圍固定 200x200(預設視圖 fit 中央 50x50)、AI 系統提示尺寸描述批次更新;Playwright 驗收(縮放狀態下互動座標正確 + 迴歸)",
+  "task_index": 1,
+  "current_task": "[FRONTEND] AiPanel 跨步驟常駐:掛載點提升至步驟切換之外(CSS 控制顯示),3D 預覽步驟顯示側欄並可對話、tool call 套用即時反映 3D;Playwright 驗收(切步驟對話保留、預覽步驟下指令)",
   "task_type": "FRONTEND",
   "stage": "complete",
   "iteration": {
@@ -23,5 +23,5 @@
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "last_updated": "2026-07-22T23:35:00Z"
+  "last_updated": "2026-07-23T02:45:00+08:00"
 }

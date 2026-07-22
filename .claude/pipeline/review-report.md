@@ -1,51 +1,69 @@
-# Code Review Report — 2D 畫布 zoom/pan(固定 200x200,移除場地尺寸編輯器)
+# Code Review Report — AiPanel 跨步驟常駐 + preview 可對話 + tool call 即時反映 3D
 
-> Generated: 2026-07-22T23:55:00+08:00 | Review iteration: 1
+> Generated: 2026-07-23T01:05+08:00 | Review iteration: 1
 
 ## Overall Assessment
 
-APPROVED
+APPROVED WITH MINOR FIXES(1 項 🟡 測試穩定性問題,reviewer 依 pipeline 慣例已自行修正並重跑相關測試,全綠)
 
 ## Summary
 
-實作與 architect-plan.md 高度一致:兩層座標系(pxPerMeter × Stage transform)分界正確、4 處 `getPointerPosition` 遷移完整且僅 `handleWheel` 依計畫保留螢幕座標(附註解)、pan 命中判斷(`panBlockedRef` + `stopDrag`)不搶物件拖曳、場地尺寸編輯器移除乾淨無殘留、`EMPTY_PLAN_BASELINE`/`getSnapshot()`/`applyLoadedPlan()` baseline 三處同步為 200(dirty 判定一致)。`npm run lint` 與 `npx tsc --noEmit` 皆乾淨。唯一顯著發現:working tree 混入一組**不屬於本任務計畫**的家具種類擴充(6 種新家具,詳見 🟡 Issue 1),為 pipeline 啟動前即存在的未 commit 變更,內部一致且不違反安全規則,但超出本任務「AI 提示僅改尺寸字串」的計畫敘述,需人類在 commit 時知悉處置。
+實作完全符合 architect-plan.md D1–D4:三份幾何 state 收斂為 PlanEditor 頂層唯一資料源(`sceneSnapshot` 幾何複本刪除、`VenueScene` 完全 controlled 化),AiPanel 提升為兩步驟共用 flex row 的常駐 sibling。受控化為行為等價重構(對外介面、testid、data attribute 全數保留),race 保護(eager ref 同步)與 `selectionExists` guard 均正確落地。程式碼品質高、註解記錄決策理由,無 🔴 問題。
 
 ## 🔴 Critical Issues (Must Fix — Pipeline Paused)
 
 無。
 
-## 🟡 Should Fix (Auto-resolved by Developer)
+## 🟡 Should Fix (Auto-resolved by Reviewer)
 
-### Issue 1 — 計畫外變更混入 working tree:家具種類由 3 種擴充為 9 種
+### Issue 1
 
-- **File**: `src/lib/venue/furniture.ts`、`src/lib/ai-panel/actions.ts`、`src/lib/ai/system.ts`(場地領域規則家具清單行)、`src/lib/ai/tools.ts`(`generate_plan`/`add_furniture` 的 kind enum 與 description)、`src/components/venue/VenueScene.tsx`(FURNITURE_ICONS 6 個新 icon)
-- **Issue**: 新增 counter/bannerStand/sofa/podium/plant/display 六種家具。architect-plan.md Step 10 與 orchestrator Out of Scope 明文「AI 提示/tools schema 僅尺寸描述文字變更,不動 schema 結構」,此變更改了 tools.ts 的 enum(結構性)並改了 system.ts 家具清單行(非尺寸字串)。查證:這 5 個檔案在本 pipeline 任務啟動前即已是 modified 狀態(前次 git status 快照僅列這 5 檔),developer 的 implement 記錄(task-log 2026-07-22T15:14:39Z)亦完全未提及 → 判定為使用者既有的 in-flight 工作(68ba48e 家具系統的延伸),非 developer agent 越界。
-- **內部一致性已核**: `FurnitureKind` 型別(furniture.ts/actions.ts)、`FURNITURE_DEFAULTS` 9 鍵齊全(applyActions/2D/3D 渲染均查此表,無 crash 路徑)、tools.ts 兩處 enum 同步、system.ts 描述與 defaults 尺寸吻合、lucide icon(Store/Flag/Sofa/Presentation/Flower2/Package)皆存在、lint/tsc 乾淨。凍結字串規則未破壞(零插值)、scope guard/工作模式規則逐字未動、`import "server-only"` 不變。
-- **Suggested fix**: 程式碼本身無需修改。處置 = commit 衛生:建議將家具擴充與本任務分成兩個 commit(注意 system.ts/tools.ts 的「尺寸 200」與「家具九種」若分拆,每個 commit 內 system/tools 需各自認知一致);或由人類確認一併納入。prompt cache 本輪必失效一次,一起 commit 反而少失效一輪 — 由人類定奪。
+- **File**: `playwright-tests/ai-panel-persistent.spec.ts:259`(AC7/AC6 案)
+- **Issue**: `expect(lastChatBody).not.toBeNull()` 在 `sendMessage()`(click)返回後同步斷言。`page.route` 攔截經 CDP 非同步觸發,click resolve 當下 route handler 可能尚未執行、`lastChatBody` 仍為 null — 潛在 flaky test。
+- **Fix applied**: 改為 `await expect.poll(() => lastChatBody).not.toBeNull()` 並加註解。純測試碼修改,產品碼零變動。已重跑 `ai-panel-persistent.spec.ts` + `venue-3d-scene.spec.ts` + `ai-panel.spec.ts`:31 passed / 1 skipped(@paid)/ 0 failed。
 
 ## 💡 Suggestions (Consider — No Action Required)
 
-1. **VenueScene `maxDistance={150}`**:venueSizeM=200 後,3D 相機最遠 150 拉不到能盡覽 200x200 地面的距離(對角 ~283m)。計畫明訂 3D 最小變更,僅記錄供後續任務。
-2. **`zoomTo` 讀 render 閉包的 `view`**:同一 frame 內若連續多發 wheel event,第二發用到舊 view 可能有極輕微錨點抖動(clamp 保證不發散)。計畫原文即此寫法(Konva 官方食譜同),僅記錄。
-3. **`venue-objects.spec.ts` 邊界測試新增了 zoom-out 前置操作**(30 次 wheelZoomAt 錨定 (0,0) + stageScale 斷言),超出「僅改數值與標題」的字面範圍 — 但為必要配套(199.9 在預設 50m 視圖點不到),clamp-to-boundary 斷言意圖不變,認可並已在該測試留有理由註解。
+1. `VenueScene.tsx` — `selectedId` 在對應物件被 AI 刪除後仍殘留(guard 讓 TransformControls 不渲染,無實害)。未來若加「選取高亮清單」等衍生 UI,可考慮在 selectionExists 為 false 時順手 `setSelectedId(null)` 收斂 state。現階段不需要。
+2. `ai-panel-persistent.spec.ts` — `clickFloor()` 以固定 `waitForTimeout(100/50)` 等 OrbitControls 首幀穩定。已有清楚註解說明理由,屬 3D canvas 測試的合理權衡(canvas 對 Playwright 不透明,無事件可等);若日後 flake 可改為輪詢重試點擊。
+3. `ai-panel-persistent.spec.ts:261` — `lastChatBody as unknown as {...}` 雙重 cast 可用型別化的 route handler 收斂,可讀性微幅提升,非必要。
+
+## 審查重點逐項核對(依 review 指派清單)
+
+| 檢核項 | 結果 |
+| --- | --- |
+| 受控化正確性:VenueScene 無殘留 local state,讀寫全走 props + onSceneChange | PASS — grep 確認 `localWalls/localColumns/localFurniture` 零殘留;mesh map、`data-*-mesh-count`、`selectedFurniture`、commitTransform、handleFloorClick 全部直讀 props,單向資料流成立 |
+| `selectionExists` guard | PASS — wall/column/furniture 三型皆以 props 陣列 `some(id)` 派生,TransformControls 渲染條件由 `selectedId &&` 收緊為 `selectionExists &&`;commitTransform id-map 天然 no-op,無需額外分支 |
+| eager ref 同步(handleSceneChange) | PASS — `setWalls/setColumns/setFurniture` 後立即 `wallsRef/columnsRef/furnitureRef.current = next.*`,與 `applyActions` 尾段既有模式一致,附註解說明 race 理由;AI await 期間 3D 手動編輯不被舊 ref 快照覆蓋(edge case 測試案實證) |
+| sceneSnapshot → sceneGenerated boolean | PASS — 純 gate 語意,`data-scene-generated` 行為等價;`handleNextStep` 保留 generation+1 與清選取,`handleBackToEdit` 簡化為 `setStep("edit")`(資料在唯一資料源,回拷不再需要);grep 確認 `sceneSnapshot` 零殘留;AC9 gate 語意不變 |
+| AiPanel 常駐同 parent 同位置 | PASS — 兩步驟共用單一 `flex items-start gap-4` row,左欄 `min-w-0 flex-1` 內條件切換 step-edit/step-preview,AiPanel 恆為第二 sibling → React reconcile 不 unmount;`git diff` 確認 `AiPanel.tsx`、`VenueSceneLoader.tsx` 零修改;Delete/Backspace onKeyDown 維持綁在 step-edit 內層(preview 誤刪防護迴歸測試過);`editorColumnRef` 量測目標仍填滿左欄,effect 的 `step !== "edit"` early return 不變 |
+| 測試斷言真的驗 | PASS — AC5 斷言 `data-furniture-mesh-count` 0→1 且 stepPreview 仍可見(不離開 preview);AC7 攔截 `postDataJSON` 解析 `[目前配置]` JSON 斷言含手動放置的 table(即時性),再驗 AI 套用後 2 件互不清掉;AC6 回 edit 驗 `data-furniture-count` 與 `data-furniture` 內容(chair+table);pending 切步驟案驗牆與椅子皆保留;失敗訊息案驗 `ai-action-summary` |
+| clickFloor pause 偏離合理性 | 合理 — 僅測試碼,檔頭與函式註解說明 OrbitControls 首幀 lookAt 未穩定會 miss raycast;不影響產品碼,記 💡 2 |
 
 ## Security Assessment
 
-- Secrets scan: PASS(全 diff 無 secrets/tokens/credentials;`venue-zoom-pan.spec.ts` 全程 page.route mock,無登入、無硬編帳密)
-- Input validation: PASS(座標一律經 `snapPoint`/`clampToBounds`(0–200)既有防呆;`zoomTo` 有 `Number.isFinite` + clamp、`getRelativePointerPosition` null 走既有 `if (!pointer) return;`;無新增使用者輸入面)
-- Auth/authz: N/A(未觸及 auth/session/`DATABASE_URL`/proxy.ts/API 保護 — 無自動 🔴 觸發)
-- `src/lib/ai/` 專項: PASS(`import "server-only"` 不動、SYSTEM_PROMPT 維持凍結 template literal 零插值、cache 斷點結構不動、client 端無 `src/lib/ai/*` import、system.ts 與 tools.ts 同一 working tree 將同 commit)
+- Secrets scan: PASS(diff 無任何 key/token/credential;測試全走 mock route,無真實帳密)
+- Input validation: N/A(無新系統邊界;未新增/修改任何 API 呼叫)
+- Auth/authz: N/A(不觸及 auth、session、`/api/*` 路由;`src/proxy.ts` 未動)
 - CORS/CSP: 未修改
-- Test coverage: 新功能由 `venue-zoom-pan.spec.ts` 9 案完整覆蓋(對齊 AC 逐條),3 支既有 spec 邊界常數 50→200 配套,`PlanEditorPage.meterToScreen` transform 感知後既有呼叫端零改動;developer 已回報全套迴歸 113 passed(playwright stage 將再驗)
+- Out of Scope 遵守: PASS(`src/lib/ai/*`、`AiPanel.tsx`、`/api/ai/*` 零變動;client 端無 `admin.ts`/service_role import)
+- Test coverage: 新 spec 8 案覆蓋全部 9 條 AC(AC6+AC7 併一案)+ 2 edge cases;迴歸 spec 抽驗全綠
 
 ## Plan Compliance
 
-- [x] All architect plan steps implemented(Steps 1–14 逐項核對:PLAN_AREA_SIZE_M/baseline、view state/zoomTo/wheel/pan、4 處遷移 + 2 類「明確不遷移」遵守、UI 移除清單全數(state/handler/JSX/import 無殘留,grep 驗證)、getSnapshot/applyLoadedPlan/VenueSceneLoader 配套、viewFitSizeM(預設回退 venueSizeM,既有呼叫端不變;ground plane/clamp 仍用 venueSizeM)、AI 尺寸字串 3+4 處(grep 無 `0-50`/`50x50`/`50 公尺` 殘留)、page object、9 案新 spec)
-- [x] Implementation matches plan intent(pan 區隔機制、MIN_SCALE=0.25/MAX_SCALE=4、步進 1.06/1.25、按鈕錨點畫布中心、背景 Rect 200*ppm、data-stage-* hooks、zoom UI 復用 segmentClassName,皆與定案一致)
-- [ ] No unauthorised scope additions — **家具九種擴充混入(🟡 Issue 1,判定為使用者既有工作,非 agent 越界;commit 時人類處置)**
+- [x] All architect plan steps implemented(Implementation Steps 1–11 逐項對應到 diff 與測試)
+- [x] Implementation matches plan intent(D1 唯一資料源、D2 版面結構、D3 AiPanel 零修改、D4 race 表全數落地)
+- [x] No unauthorised scope additions(diff 僅涉計畫列出的 3 檔 + 新 spec + pipeline 檔)
+
+## Verification Runs
+
+- `npx tsc --noEmit`: PASS
+- `npm run lint`: PASS
+- `npx playwright test ai-panel-persistent.spec.ts venue-3d-scene.spec.ts ai-panel.spec.ts`(live dev server): 31 passed / 1 skipped(@paid)/ 0 failed
+- 開發者回報的全套迴歸(122 案 121 passed / 1 skipped)記錄於 task-log,本次抽驗與其一致
 
 ## Conversation Log
 
 | Issue | Developer Response | Resolution |
-|---|---|---|
-| 🟡 Issue 1(計畫外家具擴充) | 非 developer agent 產出(pipeline 啟動前即存在的使用者 working tree 變更),無程式碼修正需求 | 內部一致性/安全規則已由 reviewer 核畢;處置(同 commit 或分拆)留待人類 commit 時決定,已記錄 |
+| --- | --- | --- |
+| 🟡 Issue 1(spec 同步斷言 race) | —(依 pipeline 慣例由 reviewer 直接修正測試碼) | `expect.poll` 修正,相關 3 spec 重跑全綠 |
