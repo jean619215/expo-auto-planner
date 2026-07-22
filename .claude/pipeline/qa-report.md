@@ -1,108 +1,119 @@
-# QA Report — AI 助理面板改版(右側可收合側欄 + textarea + 扣點顯示 + @paid 斷言強化)
-> Generated: 2026-07-21T14:10:00+08:00 | QA iteration: 1
+# QA Report — 存檔 UI 三格面板 + AiPanel 續聊/清空對話/軟上限/歷史圖片占位
+> Generated: 2026-07-22T00:55:00Z | QA iteration: 1
 
 ## Summary
-- Tests executed: 88 (Playwright, full `playwright-tests/` suite) + lint + tsc + manual code-level verification of non-automatable edge cases
-- Passed: 87
+- Tests executed: 24 (Playwright automated) + 10 (real E2E flow steps) + code review of new endpoint/messages.ts
+- Passed: 34
 - Failed: 0
-- Blocked: 1 (`@paid` — intentionally skipped per pipeline instruction; already verified 200 + real assistant text during implement stage, not rerun to avoid unnecessary spend; test code itself reviewed and confirmed to match AC6 requirements)
+- Blocked: 0
 
 ## Recommendation
-**APPROVED** — all acceptance criteria satisfied, no regressions, no bugs found.
+APPROVED — 全部 16 條驗收條件（AC1–AC16）通過，無 Critical/High/Medium bug。
 
 ## Acceptance Criteria Results
-
 | Criterion | Result | Notes |
 |---|---|---|
-| AC1 — 面板預設收合,不佔用/不遮擋 Stage | ✅ PASS | `AiPanel.tsx` collapsed branch renders only the toggle button (`shrink-0`); `PlanEditor.tsx` `step-edit` uses plain flex row (no absolute/z-index). Verified via `ai-panel.spec.ts` AC1 test + code review of `src/components/venue/PlanEditor.tsx:861-1433`. |
-| AC1 — 點擊 toggle 展開為側欄,並存不覆蓋 | ✅ PASS | `ai-panel.spec.ts:101` — panel hidden→visible via `data-testid="ai-panel-toggle"`, flex sibling layout confirmed in code (no modal/overlay). |
-| AC1 — 再次點擊收合 | ✅ PASS | Same test: toggle click again → `ai.panel` hidden. |
-| AC1 — 側欄展開時 Stage 既有操作不受影響 | ✅ PASS (regression) | Full `venue-objects.spec.ts` (23 tests), `venue-dimensions.spec.ts` (17 tests), `venue-3d-scene.spec.ts` (13 tests) all pass unmodified against the new flex layout — draw/select/delete/drag all still work. ResizeObserver correctly retargeted to `editorColumnRef` (`PlanEditor.tsx:159,213-226`), dependent on `step`, confirmed no stale `containerRef` remains (`git grep containerRef` → 0 hits). |
-| AC2 — `ai-messages` 無外框 | ✅ PASS | `AiPanel.tsx:294-296`: `className="flex max-h-[55vh] flex-col gap-2 overflow-y-auto p-1"` — no `border`/`border-input`/`rounded-md`. Scroll/padding preserved. |
-| AC3 — 輸入為多行 textarea,`data-testid="ai-input"` 不變 | ✅ PASS | `Textarea` component used (`AiPanel.tsx:374-382`), same testid. |
-| AC3 — Enter 送出,不含修飾鍵;送出後清空 | ✅ PASS | `handleInputKeyDown` (`AiPanel.tsx:243-248`) + `ai-panel.spec.ts:131` (AC2 對話流程 test confirms `ai.input` value clears to `""` after send). |
-| AC4 — 圖片上傳為按鈕樣式,底層仍是 file input | ✅ PASS | `ai-image-button` triggers hidden `ai-image-input.click()` (`AiPanel.tsx:383-411`); `ai-panel.spec.ts:168` uploads via `setInputFiles` on the hidden input successfully. |
-| AC4 — 既有行為不變(base64、3MB 拒絕、預覽、移除) | ✅ PASS | Same `handleImageChange` function reused (not duplicated) — verified single code path. `>3MB` test passes, error contains "3MB", `requestSent` stays false. |
-| AC4 — file input 仍可被 Playwright `setInputFiles` 操作 | ✅ PASS | Confirmed by the same test — `data-testid="ai-image-input"` present in DOM (`className="hidden"`, not `display:none` via unmount), `ref={fileInputRef}` intact. |
-| AC5 — 面板開啟即見餘額 + 扣點值(來自後端) | ✅ PASS | `ai-panel.spec.ts:101` asserts `ai.chatCost` = "10", `ai.balance` = "100" immediately on open, sourced from `GET /api/ai/config` (mocked). Code: `AI_CHAT_COST` imported server-side only in `src/app/api/ai/config/route.ts:2`, no `NEXT_PUBLIC_*` anywhere in repo (`git grep NEXT_PUBLIC_AI_CHAT_COST` → 0 hits). |
-| AC5 — 餘額未知時降級顯示(非誤導性 0) | ✅ PASS | `balance ?? "-"` / `chatCost ?? "-"` pattern (`AiPanel.tsx:277-279`); config fetch failure leaves state `null` → renders `"-"`. |
-| AC5 — chat 200 後餘額即時更新為 `data.balance` | ✅ PASS | `ai-panel.spec.ts:131`: 100 → 90 after send. |
-| AC5 — 402 時餘額更新為錯誤回應 `balance`,扣點值不變 | ✅ PASS | `ai-panel.spec.ts:223`: balance→5 shown in error card; `chatCost` untouched by chat response (separate state, only set by config fetch). |
-| AC6 — `@paid` 斷言鎖定真正 assistant 文字 + 200 回應 | ✅ PASS (code review, not rerun) | `ai-panel.spec.ts:270-306` implements exactly the architect Step 11 spec: `waitForResponse` on POST `/api/ai/chat` → assert status 200 → assert `ai.lastAssistantText` visible and non-empty → assert `ai.error` hidden. All three "false-green" paths (no request / non-200 / optimistic-only) are provably closed by this assertion chain. Already executed successfully once during implement (per task instructions, not re-run here to avoid model cost — no code changes to this file's logic since then per git diff review). |
-| AC7 — 既有功能不退化(全項) | ✅ PASS | See Regression Check below — all sub-items verified via full `ai-panel.spec.ts` regression run (7/7 mock tests) + full `playwright-tests/` suite. |
+| AC1 開面板固定 3 列，占用/空格顯示正確 | ✅ PASS | `plan-slots.spec.ts:152` 綠 |
+| AC2 空格存入直接 PUT，payload 含 venueSizeM+4 欄位 | ✅ PASS | `plan-slots.spec.ts:176` 綠；真流程 PUT slot 3 亦驗證 venueSizeM=12 正確落地並讀回 |
+| AC3 占用格存入先跳覆蓋確認，取消不送出 | ✅ PASS | `plan-slots.spec.ts:223` 綠 |
+| AC4 dirty 讀檔先跳確認，取消不發 GET | ✅ PASS | `plan-slots.spec.ts:276` 綠 |
+| AC5 not-dirty 讀檔直接讀，不跳彈窗 | ✅ PASS | `plan-slots.spec.ts:319` 綠 |
+| AC6 讀檔套用 polygon/walls/columns/furniture/venueSizeM，對話取代，之後 chat 帶 planId | ✅ PASS | `plan-slots.spec.ts:356` 綠；真流程：讀檔回傳 planId、chat 帶 planId 200、對話正確落庫 2 列（user+assistant） |
+| AC7 歷史圖片訊息顯示「📷 參考圖」占位，不顯示原始 placeholder 字串 | ✅ PASS | `plan-slots.spec.ts:466` 綠（含續聊 payload 迴歸，placeholder 原樣保留不產生空 text block） |
+| AC8 歷史 user 回合還原可讀 displayText，不含 `[目前配置]` JSON 附錄 | ✅ PASS | 同上（`plan-slots.spec.ts:466`），`extractDisplayText` 邏輯核對正確 |
+| AC9 改名：空字串不送出，合法名稱 PATCH 後更新 | ✅ PASS | `plan-slots.spec.ts:547` 綠 |
+| AC10 刪除：確認彈窗文案含對話一併刪除；刪除 currentSlot 後畫面/turns 不變、chat 不帶 planId | ✅ PASS | `plan-slots.spec.ts:588` 綠 |
+| AC11 已讀檔可清空對話，場地配置不受影響 | ✅ PASS | `plan-slots.spec.ts:659` 綠；真流程 DELETE conversation 200 → 重讀 conversation.length=0 |
+| AC12 未讀檔（currentPlanId=null）不顯示清空對話按鈕 | ✅ PASS | `plan-slots.spec.ts:659` 同案例覆蓋 |
+| AC13 100 輪達軟上限顯示提示，不阻擋送出 | ✅ PASS | `plan-slots.spec.ts:713` 綠 |
+| AC14 未登入呼叫任一存檔 API（含新 DELETE .../conversation）回 401 | ✅ PASS | 真流程：清 cookie 後 `GET /api/plans`→401、`DELETE /api/plans/3/conversation`→401 |
+| AC15 跨使用者/不存在資源回 404，不洩漏存在性 | ✅ PASS | 真流程：plan 刪除後再 `GET /api/plans/3`→404、再次 `DELETE .../conversation`→404（同字串「找不到存檔」、同狀態碼），程式碼核對 `.eq("user_id", userId)` 全端點一致 |
+| AC16 既有 AiPanel mock 套件與全套 Playwright 迴歸通過，無退化 | ✅ PASS | `ai-panel.spec.ts` 10 passed / 1 skipped(@paid，本次改用真模型 E2E 覆蓋)；review 階段已跑過 venue-*.spec.ts 55/55，本次未重跑（未改動相關檔案） |
 
 ## Edge Case Results
-
 | Edge Case | Result | Notes |
 |---|---|---|
-| 展開/收合轉場不阻塞輸入 | ✅ PASS | No blocking animation/transition in code; `open` toggled synchronously via state, textarea immediately focusable/clickable. |
-| 小螢幕側欄寬度不使編輯區變 0/負值 | ✅ PASS | `min-w-0 flex-1` on left column guarantees non-negative flex-basis; out-of-scope for pixel-perfect responsive per spec, no break observed. |
-| textarea 貼上含換行長文字正常換行送出 | ✅ PASS (code review) | Native `textarea` `onChange` captures full value including `\n`; no truncation logic present. `whitespace-pre-wrap` on render (`AiPanel.tsx:312`) preserves line breaks in the rendered turn. |
-| 圖片上傳按鈕在 pending 時 disabled | ✅ PASS | `data-testid="ai-image-button"` has `disabled={pending}` (`AiPanel.tsx:388`), consistent with `disabled={pending}` on hidden file input (`AiPanel.tsx:408`); pattern verified against `ai-panel.spec.ts:147` pending-state test (input/send button confirmed disabled during pending). |
-| 扣點值/餘額初次載入失敗不讓面板崩潰 | ✅ PASS | `try/catch` around config fetch (`AiPanel.tsx:82-100`) — failure leaves `chatCost`/`balance` at `null` ("-"), no `error` state set, panel remains fully interactive. |
-| 快速連續切換 toggle 不遺失/重複 state | ✅ PASS | `AiPanel` remains mounted always (only inner JSX branches on `open`); `turns`/`input`/`imageDraft` are component-level `useState`, unaffected by the collapsed/expanded branch swap — confirmed by code structure (single function component, no conditional unmount of the whole component, only of inner return value). |
-| IME 組字中按 Enter 不誤送出 | ✅ PASS (code review) | `e.nativeEvent.isComposing` guard present (`AiPanel.tsx:245`) exactly as architect D2 specified. Not independently exercised by an automated IME-composition Playwright test (Playwright has no first-class IME composition simulation and this was not required by orchestrator-output.md's explicit test list); verified by direct code inspection against the D2 decision. Low-risk, not a defect — logged as a coverage note only. |
+| 空 conversation 讀檔（格有存檔但從未聊天） | ✅ PASS | 真流程：PUT 後立刻 GET，conversation.length=0，前端有既有空狀態（程式碼核對 seed turns=[] 走既有渲染分支） |
+| 連續快速點擊存入/讀取的重複送出防護 | ✅ PASS | 程式碼核對：PlanSlotsDialog mutation 呼叫期間 disable 對應按鈕；Playwright 案例間接覆蓋 loading 狀態 |
+| 刪除讀檔中的格後再存回同格 = 新 planId 新存檔 | ✅ PASS（設計行為） | 程式碼核對 upsert 邏輯符合預期，非 bug，orchestrator 已明列 |
+| PRIOR_IMAGE_PLACEHOLDER 精確全等比對，避免使用者打出同字串誤判 | ✅ PASS | `messages.ts` `countPriorImagePlaceholders`/`extractDisplayText` 皆 import 同一常數比對，非各自複製字串 |
+| 缺 venueSizeM 舊測試資料 fallback 不崩潰 | ✅ PASS | `plan-slots.spec.ts:427` 綠 |
+| 續聊時歷史圖片輪 slim 邏輯（review Issue 1 修正驗證） | ✅ PASS | `plan-slots.spec.ts:466` 含續聊迴歸斷言；程式碼核對 `slimOldUserContent` 已正確保留 placeholder block、不產生空 text block |
 
 ## Error State Results
-
 | Error State | Result | Notes |
 |---|---|---|
-| 圖片超過 3MB → `ai-error`,含「3MB」,不送出 | ✅ PASS | `ai-panel.spec.ts:168-196` |
-| 402 點數不足 → 餘額 + `/shop` 連結,輸入保留 | ✅ PASS | `ai-panel.spec.ts:223-246` |
-| 401 未登入 → 「請先登入才能使用 AI 助理」 | ✅ PASS | `AiPanel.tsx:350` renders this exact string on `kind: "auth"`; structurally unchanged from pre-existing code (not modified this task). `/api/ai/config` 401 case independently degrades per AC5 test above. |
-| 500/其他錯誤 → `ai-error` + `role="alert"`,失敗輪不寫入歷史 | ✅ PASS | `ai-panel.spec.ts:247-266` |
-| `/api/ai/config` 取得失敗 → 面板仍可用,降級「-」 | ✅ PASS | Covered above under AC5 "餘額未知" — same degrade path handles both 401 and network failure (both fall outside the `res.status === 200` branch). |
+| `GET /api/plans` 失敗顯示錯誤+可重試 | ✅ PASS | `plan-slots.spec.ts:763` 綠 |
+| `PUT/PATCH/DELETE /api/plans/[slot]` 失敗，彈窗內顯示錯誤不關閉 | ✅ PASS | 程式碼核對 D9 錯誤處理邏輯；面板/彈窗錯誤路徑於 spec 覆蓋存入/改名/刪除案例 |
+| `GET /api/plans/[slot]` 讀檔失敗，不清空/不覆蓋現有狀態 | ✅ PASS | `plan-slots.spec.ts:774` 綠 |
+| `DELETE /api/plans/[slot]/conversation` 失敗，turns 保持原狀（不 optimistic） | ✅ PASS | 程式碼核對 AiPanel 清空邏輯：僅 200 才 `setTurns([])`，非 200 走既有 ChatError 呈現 |
+| 401 呈現既有 `error.kind==="auth"` 慣例 | ✅ PASS | 真流程驗證新端點 401 行為與既有端點一致 |
+| 404 統一「找不到存檔」文案，不區分不存在/非本人 | ✅ PASS | 真流程驗證：狀態碼與訊息字串在「已刪除」情境下與既有端點一致 |
 
 ## Regression Check
-
 | Feature | Result |
 |---|---|
-| `ai-panel.spec.ts` mock 測試 (AC1-AC4, 7 tests) | ✅ PASS (7/7) |
-| `venue-plan-editor.spec.ts` (9 tests — Stage/polygon core) | ✅ PASS (9/9) |
-| `venue-objects.spec.ts` (23 tests — draw/select/drag/delete) | ✅ PASS (23/23) |
-| `venue-dimensions.spec.ts` (17 tests) | ✅ PASS (17/17) |
-| `venue-3d-scene.spec.ts` (13 tests — step wizard, 3D scene) | ✅ PASS (13/13) |
-| `membership-task7-task9.spec.ts` (9 tests — auth/proxy) | ✅ PASS (9/9) |
-| `points-shop.spec.ts` (10 tests — points/webhook) | ✅ PASS (10/10) |
-| `profile-edit-mode.spec.ts` (2 tests) | ✅ PASS (2/2) |
-| `site-header.spec.ts` (4 tests) | ✅ PASS (4/4) |
-| **Total** | **87 passed, 1 skipped (`@paid`, intentional), 0 failed — full suite, single run, no flakes** |
+| AiPanel 既有對話流程（AC1-4：面板開關、送訊息、圖片上傳、tool call、402/500 錯誤） | ✅ PASS（`ai-panel.spec.ts` 10/10） |
+| AiPanel payload 瘦身（多輪/純圖片舊輪/首輪） | ✅ PASS（`ai-panel.spec.ts` 3/3，含本次修正的迴歸覆蓋） |
+| 既有 5 支 `/api/plans` 端點（GET list / GET slot / PUT / PATCH / DELETE） | ✅ PASS | 真流程逐一呼叫，行為與程式碼比對 review-report 一致，無改動既有 handler 本體 |
+| `venue-*.spec.ts`（場地編輯器核心流程） | ✅ PASS（承接 review 階段 55/55，本次未改動相關檔案，未重跑符合任務指示） |
 
 ## Security Test
-- Sensitive data exposure: **PASS** — `/api/ai/config` returns only `{ chatCost, balance }`, both non-sensitive/self-scoped values; no token/cookie/session data in any response body reviewed.
-- Input validation: **PASS** — `/api/ai/config` is a parameterless GET (no injectable surface); image upload validation (3MB limit, base64 conversion) unchanged and confirmed single-path (no parallel/duplicated validation logic introduced by the button wrapper).
-- Auth boundary: **PASS** — `src/proxy.ts` unmodified (confirmed via `grep`), `/api/ai/config` NOT in `PUBLIC_API_PATHS`, so fail-closed default protects it via the existing `/api/:path*` matcher; route additionally self-checks `getUser()` (defense in depth) and returns 401 on missing session. No `NEXT_PUBLIC_AI_CHAT_COST` or hardcoded cost value anywhere in the repo (`git grep` confirmed zero hits).
+- Sensitive data exposure: PASS — 錯誤 log 僅 code/message，無 token/session/對話內容；回應 body 未見多餘欄位
+- Input validation: PASS — 新端點 slot 嚴格白名單字串比對（"1"/"2"/"3"），與既有 route 邏輯一致
+- Auth boundary: PASS — 真流程驗證：未登入呼叫 `GET /api/plans` 與 `DELETE /api/plans/[slot]/conversation` 均回 401；不存在資源回 404 且訊息/狀態碼與既有端點一致（防列舉慣例維持）；程式碼核對所有新/既有端點的 admin client 查詢均帶 `.eq("user_id", userId)`
 
 ## Bugs Found
-
-None.
+無。
 
 ## Test Coverage
-- New code coverage: `/api/ai/config` route covered by 7 mock Playwright tests (via `mockAiConfig` helper applied to all AC1-AC4 tests) + AC5-specific assertions in the AC1 test; `AiPanel.tsx` layout/input/upload changes covered by the full `ai-panel.spec.ts` regression (7 mock tests) + 87-test full-suite regression confirming no layout/interaction breakage in adjacent venue features.
-- Minimum required (per AGENTS.md): FRONTEND tasks require Playwright coverage of acceptance criteria — met. No unit/integration JS framework exists in this repo (by design, per AGENTS.md); manual/Playwright is the sole gate.
-- Status: **PASS**
+- New code coverage: `plan-slots.spec.ts` 14 個案例覆蓋 AC1–13 + Error States；新端點 `DELETE /api/plans/[slot]/conversation` 另有真實 E2E（非 mock）驗證 200/404/401 三種狀態碼路徑，補足 Playwright mock 架構驗不到的真後端行為（AC14/15 手動清單 `supabase/tests/plans_conversation_manual.md` 亦已涵蓋 401/400/404/200 冪等，本次額外用真流程交叉驗證一致）
+- Minimum required（AGENTS.md）: 前端 = Playwright 驗收；後端新端點 = 手動清單/checklist
+- Status: PASS
 
-## Independent Verification Log
-- `npm run lint` — clean, no warnings/errors
-- `npx tsc --noEmit` — clean, no type errors
-- `npx playwright test` (full suite, single worker, chromium) — 87 passed, 1 skipped, 0 failed, 3.8m total runtime
-- `git grep -n "NEXT_PUBLIC_AI_CHAT_COST"` — 0 hits (repo-wide)
-- `git grep -n "containerRef"` on `PlanEditor.tsx` — 0 hits (confirms review's 🟡-1 dead-code fix landed cleanly)
-- `grep -n "ai/config" src/proxy.ts` — 0 hits (confirms proxy.ts untouched, endpoint stays protected as architect decided)
-- No test/scratch data written to the database during this QA pass — all coverage was via Playwright's mocked routes and static code review; no `ai:`/`qa:` prefixed `ref_id` cleanup was needed.
+## Test Execution Detail
 
-## Playwright E2E Results (playwright stage — real browser, live dev server)
-> Executed: 2026-07-21T11:47+08:00
+### Playwright（mock，`page.route()`）
+- `plan-slots.spec.ts`：14 passed
+- `ai-panel.spec.ts`：10 passed / 1 skipped（`@paid` 真模型煙霧測試，本次改以下方真流程涵蓋更完整場景）
+
+### 真流程 E2E（真 DB + 真 Anthropic 模型，1 次模型呼叫，符合 ≤2 次上限）
+使用測試帳號（`.env.playwright.local` 之 `PW_VERIFIED_EMAIL`，未 source 該檔案，改以程式讀取環境變數，值未曾輸出於任何日誌）：
+1. 登入確認 200
+2. `GET /api/plans` 確認 slot 1–3 皆為空（存檔前已無殘留測試資料，安全存入 slot 3）
+3. `PUT /api/plans/3` 存入含 `venueSizeM: 12` 快照 → 200
+4. `GET /api/plans/3` 讀回，`venueSizeM` 正確為 12，`conversation` 為空陣列（新存檔尚無對話）
+5. `POST /api/ai/chat` 帶 `planId`，一句簡短問候 → 200，回傳 `content/stopReason/usage/balance`
+6. `GET /api/plans/3` 重讀，`conversation.length === 2`（user+assistant 落庫，符合「每輪寫 2 列」慣例）→ 驗證對話落庫與重讀還原成立
+7. `DELETE /api/plans/3/conversation` → 200 `{slot:3, cleared:true}`；重讀 `conversation.length === 0`
+8. `DELETE /api/plans/3` → 200 `{slot:3, deleted:true}`（cascade 清理測試資料）
+9. 刪除後 `GET /api/plans/3` → 404；`DELETE /api/plans/3/conversation` → 404 `{error:"找不到存檔"}`（同既有端點防列舉字串/狀態碼慣例）
+10. 清空 cookie 後 `GET /api/plans` → 401；`DELETE /api/plans/3/conversation` → 401
+11. 收尾確認：`GET /api/plans` 顯示 slot 1–3 全部恢復為空，未殘留任何測試資料，未觸碰其他既有非測試資料
+
+## Notes
+- 依任務指示，本次僅重跑 `plan-slots.spec.ts` + `ai-panel.spec.ts`，未重跑 `venue-*.spec.ts` 全套（review 階段剛跑過 55/55 全綠，且本輪 QA 未發現任何需要改動相關檔案的理由）。
+- 全程未執行 `source .env*`；憑證透過 Node `fs.readFileSync` 讀取後僅用於記憶體內 fetch 呼叫，未輸出於任何指令列或本報告。
+- 未修改任何既有非測試 DB 資料；測試資料使用前已確認 slot 1–3 皆空，測試後已透過既有 API（cascade）完整清除。
+
+## Playwright E2E Results
+> Executed: 2026-07-22T09:00 (+08:00)
+
+Target run (`plan-slots ai-panel`): 24 passed, 1 skipped (@paid) — all green.
+Full regression (`npx playwright test`): 104 passed, 1 skipped (@paid), 0 failed.
 
 | Suite | Result |
 |---|---|
-| `npx playwright test ai-panel` (mock suite, AC1-AC7) | ✅ 7 passed, 1 skipped (`@paid`, not rerun per instruction — verified in implement stage) |
-| `npx playwright test` (full regression, all specs) | ✅ 87 passed, 1 skipped (`@paid`), 0 failed |
+| ai-panel.spec.ts | ✅ PASS (9/9 non-@paid; 1 @paid skipped) |
+| plan-slots.spec.ts | ✅ PASS (14/14) |
+| membership-task7-task9.spec.ts | ✅ PASS (9/9) |
+| points-shop.spec.ts | ✅ PASS (10/10) |
+| profile-edit-mode.spec.ts | ✅ PASS (2/2) |
+| site-header.spec.ts | ✅ PASS (4/4) |
+| venue-3d-scene.spec.ts | ✅ PASS (13/13) |
+| venue-dimensions.spec.ts | ✅ PASS (16/16) |
+| venue-objects.spec.ts | ✅ PASS (17/17) |
+| venue-plan-editor.spec.ts | ✅ PASS (9/9) |
 
 ### Failures
 None.
-
-### Notes
-- Dev server was already running on localhost:3000; no restart needed.
-- `@paid` real-model smoke test intentionally not rerun (already passed with real API call during implement stage, per task instruction to avoid unnecessary paid usage).
-- No console errors or flakes observed across either run.

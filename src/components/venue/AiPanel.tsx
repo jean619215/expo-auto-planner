@@ -17,9 +17,22 @@ import {
   type AiAction,
   type AiActionResult,
 } from "@/lib/ai-panel/actions";
+import { toApiMessages, CONFIG_APPENDIX_HEADER } from "@/lib/ai-panel/messages";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 // 單張圖片上限(AC2):超過拒絕上傳,不送出。
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
+// 100 輪軟上限(architect-plan.md D7):一「輪」= 一組 user+assistant 配對。
+const TURN_LIMIT = 100;
 
 type ContentBlock = Anthropic.ContentBlockParam;
 
@@ -30,18 +43,28 @@ export interface AiPanelPlanSnapshot {
   furniture: FurnitureItem[];
 }
 
-interface AiPanelProps {
-  plan: AiPanelPlanSnapshot;
-  applyActions: (actions: AiAction[]) => AiActionResult[];
-}
-
-interface ChatTurn {
+export interface ChatTurn {
   role: "user" | "assistant";
   content: ContentBlock[];
   /** user 回合的原始輸入(不含附帶的目前配置 JSON),渲染用。 */
   displayText?: string;
   /** assistant 回合套用 tool call 後的動作摘要(可能多行,一 action 一行)。 */
   actionSummary?: string;
+  /** user 回合:還原自落庫歷史的圖片佔位數(僅讀檔還原的訊息會帶,見 D7)。 */
+  priorImageCount?: number;
+}
+
+interface ConversationSeed {
+  seq: number;
+  turns: ChatTurn[];
+}
+
+interface AiPanelProps {
+  plan: AiPanelPlanSnapshot;
+  applyActions: (actions: AiAction[]) => AiActionResult[];
+  planId: string | null;
+  slot: number | null;
+  conversationSeed: ConversationSeed | null;
 }
 
 interface ImageDraft {
@@ -62,7 +85,13 @@ function extractText(content: ContentBlock[]): string {
     .join("\n");
 }
 
-export default function AiPanel({ plan, applyActions }: AiPanelProps) {
+export default function AiPanel({
+  plan,
+  applyActions,
+  planId,
+  slot,
+  conversationSeed,
+}: AiPanelProps) {
   const [open, setOpen] = useState(false);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   // 尚未回傳給模型的 tool_result blocks(等使用者下一輪發話時併入)。
@@ -76,6 +105,21 @@ export default function AiPanel({ plan, applyActions }: AiPanelProps) {
   const [chatCost, setChatCost] = useState<number | null>(null);
   const [imageDraft, setImageDraft] = useState<ImageDraft | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const lastSeedSeqRef = useRef<number | null>(null);
+
+  // 讀檔還原對話(architect-plan.md D2):不用 key remount(會重置 open/
+  // config fetch),改用受控 seed — conversationSeed.seq 變化時整批換掉
+  // turns。seq 為遞增計數器,連續讀同一格兩次也會觸發。
+  useEffect(() => {
+    if (!conversationSeed) return;
+    if (lastSeedSeqRef.current === conversationSeed.seq) return;
+    lastSeedSeqRef.current = conversationSeed.seq;
+    setTurns(conversationSeed.turns);
+    setPendingToolResults([]);
+    setError(null);
+  }, [conversationSeed]);
 
   // 面板展開即抓取扣點值 + 初始餘額(AC5)。獨立降級:失敗時各自維持
   // null(顯示 "-"),不擋面板其餘功能、不設 error。
@@ -150,7 +194,7 @@ export default function AiPanel({ plan, applyActions }: AiPanelProps) {
     });
     const textBlock: Anthropic.TextBlockParam = {
       type: "text",
-      text: `${trimmed}\n\n[目前配置]\n${configJson}`,
+      text: `${trimmed}\n\n${CONFIG_APPENDIX_HEADER}\n${configJson}`,
     };
 
     const content: ContentBlock[] = [...pendingToolResults];
@@ -180,10 +224,8 @@ export default function AiPanel({ plan, applyActions }: AiPanelProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          messages: nextTurns.map(({ role, content: c }) => ({
-            role,
-            content: c,
-          })),
+          messages: toApiMessages(nextTurns),
+          ...(planId ? { planId } : {}),
         }),
       });
       const data = await res.json().catch(() => null);
@@ -240,6 +282,36 @@ export default function AiPanel({ plan, applyActions }: AiPanelProps) {
     }
   }
 
+  // 清空對話(architect-plan.md D7):非 optimistic — turns 只在 200 成功
+  // 才清空,失敗保持原狀,不影響場地配置(polygon/walls/columns/furniture)。
+  async function handleClearConversation() {
+    if (slot === null || clearing) return;
+    setClearing(true);
+    try {
+      const res = await fetch(`/api/plans/${slot}/conversation`, {
+        method: "DELETE",
+      });
+      const data = await res.json().catch(() => null);
+      if (res.status === 200) {
+        setTurns([]);
+        setPendingToolResults([]);
+        setClearConfirmOpen(false);
+      } else if (res.status === 401) {
+        setError({ kind: "auth" });
+      } else {
+        setError({
+          kind: "generic",
+          message:
+            typeof data?.error === "string" ? data.error : "清空對話失敗,請稍後再試",
+        });
+      }
+    } catch {
+      setError({ kind: "generic", message: "連線失敗,請稍後再試" });
+    } finally {
+      setClearing(false);
+    }
+  }
+
   function handleInputKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     // Shift+Enter 換行;IME 組字中(注音/拼音選字)按 Enter 一律放行,不送出。
     if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
@@ -279,16 +351,29 @@ export default function AiPanel({ plan, applyActions }: AiPanelProps) {
             點)
           </p>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          data-testid="ai-panel-toggle"
-          aria-expanded={open}
-          onClick={() => setOpen(false)}
-        >
-          收合
-        </Button>
+        <div className="flex shrink-0 gap-2">
+          {planId !== null && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              data-testid="ai-clear-conversation-button"
+              onClick={() => setClearConfirmOpen(true)}
+            >
+              清空對話
+            </Button>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-testid="ai-panel-toggle"
+            aria-expanded={open}
+            onClick={() => setOpen(false)}
+          >
+            收合
+          </Button>
+        </div>
       </div>
 
       <div
@@ -315,6 +400,21 @@ export default function AiPanel({ plan, applyActions }: AiPanelProps) {
                 ? turn.displayText
                 : extractText(turn.content)}
             </p>
+            {turn.role === "user" &&
+              !!turn.priorImageCount &&
+              turn.priorImageCount > 0 && (
+                <span className="flex flex-wrap justify-end gap-1">
+                  {Array.from({ length: turn.priorImageCount }).map((_, j) => (
+                    <span
+                      key={j}
+                      data-testid="ai-history-image-placeholder"
+                      className="inline-block rounded bg-muted px-1.5 py-0.5 text-xs"
+                    >
+                      📷 參考圖
+                    </span>
+                  ))}
+                </span>
+              )}
             {turn.actionSummary && (
               <p
                 data-testid="ai-action-summary"
@@ -326,6 +426,15 @@ export default function AiPanel({ plan, applyActions }: AiPanelProps) {
           </div>
         ))}
       </div>
+
+      {Math.floor(turns.length / 2) >= TURN_LIMIT && (
+        <p
+          data-testid="ai-turn-limit-hint"
+          className="text-xs text-muted-foreground"
+        >
+          對話已達 100 輪,建議清空對話後重新開始,以確保 AI 回應品質
+        </p>
+      )}
 
       {pending && (
         <p data-testid="ai-loading" className="text-xs text-muted-foreground">
@@ -409,6 +518,33 @@ export default function AiPanel({ plan, applyActions }: AiPanelProps) {
         onChange={handleImageChange}
         className="hidden"
       />
+      <AlertDialog
+        open={clearConfirmOpen}
+        onOpenChange={(next) => {
+          if (!next) setClearConfirmOpen(false);
+        }}
+      >
+        <AlertDialogContent data-testid="ai-clear-conversation-confirm-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>清空對話紀錄？</AlertDialogTitle>
+            <AlertDialogDescription>
+              確定要清空這個存檔格的對話紀錄嗎？此動作無法復原,場地配置不受影響。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="ai-clear-conversation-confirm-cancel">
+              取消
+            </AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="ai-clear-conversation-confirm-accept"
+              disabled={clearing}
+              onClick={() => void handleClearConversation()}
+            >
+              確定清空
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

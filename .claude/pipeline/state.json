@@ -1,9 +1,10 @@
 {
-  "story_file": "stories/ai-panel-bugfix.md",
-  "story_title": "AI 助理面板 bug 修復與 UI 改版",
-  "task_index": 0,
-  "current_task": "[FRONTEND] AI 助理面板改版:右側可收合側欄、描述區去外框、輸入框改大 textarea、圖片上傳改按鈕、點數餘額+每次扣點顯示(扣點值由後端提供)、@paid 煙霧測試斷言強化;Playwright 驗收(更新 AiPanelPage page object)",
+  "story_file": "stories/venue-save-slots.md",
+  "story_title": "場地儲存檔與 AI 對話持久化",
+  "task_index": 2,
+  "current_task": "[FRONTEND] 存檔 UI(三格面板:存/讀/改名/刪除/覆蓋與讀檔確認)+ AiPanel 續聊載入、清空對話、100 輪軟上限提示、歷史圖片占位 UI;Playwright 驗收(page object 模式)",
   "task_type": "FRONTEND",
+  "stage": "complete",
   "iteration": {
     "review": 1,
     "qa": 1
@@ -17,11 +18,10 @@
     "qa": "completed",
     "playwright": "completed"
   },
-  "stage": "complete",
   "flags": {
     "review_critical_pending": false,
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "last_updated": "2026-07-21T11:47:31+08:00"
+  "last_updated": "2026-07-22T09:00:46+08:00"
 }

@@ -6,6 +6,7 @@ import type Konva from "konva";
 import { Ruler } from "lucide-react";
 import {
   DEFAULT_FLOOR,
+  EMPTY_PLAN_BASELINE,
   GRID_MAJOR_M,
   GRID_MINOR_M,
   MIN_FLOOR_VERTICES,
@@ -26,6 +27,7 @@ import {
   pxToMeters,
   removeVertex,
   resizeColumnCorner,
+  serializePlanSnapshot,
   snapPoint,
   translateColumn,
   translateWall,
@@ -33,6 +35,7 @@ import {
   type Column,
   type FloorPolygon,
   type PlanPoint,
+  type PlanSnapshot,
   type WallSegment,
 } from "@/lib/venue/plan";
 import {
@@ -45,7 +48,13 @@ import type {
   AiActionResult,
   AiItemType,
 } from "@/lib/ai-panel/actions";
+import { fromStoredConversation } from "@/lib/ai-panel/messages";
+import type { ChatTurn } from "./AiPanel";
 import AiPanel from "./AiPanel";
+import PlanSlotsDialog, {
+  type LoadedPlan,
+  type Slot,
+} from "./PlanSlotsDialog";
 import PlanToolbar, { type EditorMode } from "./PlanToolbar";
 import VenueSceneLoader from "./VenueSceneLoader";
 import { Button } from "@/components/ui/button";
@@ -209,6 +218,16 @@ export default function PlanEditor() {
   const [pendingSizeM, setPendingSizeM] = useState<number | null>(null);
   const [sizeConfirmOpen, setSizeConfirmOpen] = useState(false);
 
+  // 存檔 UI(Task 3)—— state 歸屬見 architect-plan.md D2。
+  const [slotsDialogOpen, setSlotsDialogOpen] = useState(false);
+  const [currentSlot, setCurrentSlot] = useState<Slot | null>(null);
+  const [currentPlanId, setCurrentPlanId] = useState<string | null>(null);
+  const [savedBaseline, setSavedBaseline] = useState<string | null>(null);
+  const [conversationSeed, setConversationSeed] = useState<{
+    seq: number;
+    turns: ChatTurn[];
+  } | null>(null);
+
   useEffect(() => {
     const column = editorColumnRef.current;
     if (!column || step !== "edit") return;
@@ -273,6 +292,79 @@ export default function PlanEditor() {
     }
     setPendingSizeM(null);
     setSizeConfirmOpen(false);
+  }
+
+  // --- 存檔 UI(Task 3):快照 / dirty 判定 / 讀檔套用 -----------------------
+
+  function getSnapshot(): PlanSnapshot {
+    return { polygon, walls, columns, furniture, venueSizeM };
+  }
+
+  // 序列化比對,不做逐操作 dirty flag(取捨見 architect-plan.md D5)。僅在
+  // 讀檔前呼叫;存檔不檢查。
+  function isDirty(): boolean {
+    return serializePlanSnapshot(getSnapshot()) !== (savedBaseline ?? EMPTY_PLAN_BASELINE);
+  }
+
+  // 讀檔套用(architect-plan.md D4)。呼叫時機為 PlanSlotsDialog 的
+  // GET /api/plans/[slot] 200 之後;非 200 情境該元件不會呼叫此函式,原地
+  // 狀態不丟。
+  function applyLoadedPlan(data: LoadedPlan) {
+    const rawPlan = data.plan as {
+      polygon?: FloorPolygon;
+      walls?: WallSegment[];
+      columns?: Column[];
+      furniture?: FurnitureItem[];
+      venueSizeM?: unknown;
+    };
+    const sizeM =
+      typeof rawPlan.venueSizeM === "number"
+        ? Math.min(MAX_VENUE_SIZE_M, Math.max(MIN_VENUE_SIZE_M, rawPlan.venueSizeM))
+        : VENUE_SIZE_M;
+    const loadedPolygon = rawPlan.polygon ?? DEFAULT_FLOOR;
+    const loadedWalls = rawPlan.walls ?? [];
+    const loadedColumns = rawPlan.columns ?? [];
+    const loadedFurniture = rawPlan.furniture ?? [];
+
+    setVenueSizeM(sizeM);
+    setSizeInput(String(sizeM));
+    setPolygon(loadedPolygon);
+    setWalls(loadedWalls);
+    setColumns(loadedColumns);
+    setFurniture(loadedFurniture);
+    setSelectedObject(null);
+    setSelectedVertex(null);
+
+    setCurrentSlot(data.slot);
+    setCurrentPlanId(data.planId);
+    setConversationSeed((prev) => ({
+      seq: (prev?.seq ?? 0) + 1,
+      turns: fromStoredConversation(data.conversation),
+    }));
+    setSavedBaseline(
+      serializePlanSnapshot({
+        polygon: loadedPolygon,
+        walls: loadedWalls,
+        columns: loadedColumns,
+        furniture: loadedFurniture,
+        venueSizeM: sizeM,
+      }),
+    );
+  }
+
+  function handleSlotSaved(slot: Slot, planId: string) {
+    setCurrentSlot(slot);
+    setCurrentPlanId(planId);
+    setSavedBaseline(serializePlanSnapshot(getSnapshot()));
+  }
+
+  function handleSlotDeleted(slot: Slot) {
+    // 刪除的正是目前讀檔中的格:清空 currentSlot/currentPlanId,但不動畫布
+    // 或 AiPanel turns(architect-plan.md D7)。
+    if (slot === currentSlot) {
+      setCurrentSlot(null);
+      setCurrentPlanId(null);
+    }
   }
 
   function handleVertexDragMove(
@@ -854,6 +946,8 @@ export default function PlanEditor() {
       data-scene-generated={sceneSnapshot !== null}
       data-generation={generation}
       data-step={step}
+      data-current-slot={currentSlot ?? ""}
+      data-current-plan-id={currentPlanId ?? ""}
       className="w-full outline-none"
     >
       <StepProgress current={step} />
@@ -924,6 +1018,16 @@ export default function PlanEditor() {
                   場地尺寸
                 </Button>
               )}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                data-testid="plan-slots-button"
+                onClick={() => setSlotsDialogOpen(true)}
+                className="h-[34px]"
+              >
+                我的存檔
+              </Button>
               <Button
                 type="button"
                 data-testid="next-step-button"
@@ -1429,6 +1533,9 @@ export default function PlanEditor() {
           <AiPanel
             plan={{ polygon, walls, columns, furniture }}
             applyActions={applyActions}
+            planId={currentPlanId}
+            slot={currentSlot}
+            conversationSeed={conversationSeed}
           />
         </div>
       )}
@@ -1475,6 +1582,16 @@ export default function PlanEditor() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <PlanSlotsDialog
+        open={slotsDialogOpen}
+        onOpenChange={setSlotsDialogOpen}
+        getSnapshot={getSnapshot}
+        isDirty={isDirty}
+        currentSlot={currentSlot}
+        onLoaded={applyLoadedPlan}
+        onSaved={handleSlotSaved}
+        onDeleted={handleSlotDeleted}
+      />
     </div>
   );
 }

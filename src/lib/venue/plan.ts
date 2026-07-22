@@ -2,6 +2,14 @@
 // No React, no Konva, no DOM — all state here is expressed in meters and
 // is directly reusable by the future 3D whitebox scene builder.
 
+// Type-only import from ./furniture (which itself imports from this module)
+// — safe under isolatedModules: `import type` is fully erased at compile
+// time, so there is no runtime circular dependency, only a type-level one
+// TS resolves structurally. Kept here (rather than duplicating the shape,
+// or relocating PlanSnapshot to a components-level file) per
+// architect-plan.md D3: single source of truth for FurnitureItem.
+import type { FurnitureItem } from "./furniture";
+
 export interface PlanPoint {
   x: number;
   y: number;
@@ -384,3 +392,34 @@ export function moveWallEndpoint(
   }
   return { id: wall.id, start: newStart, end: newEnd };
 }
+
+// --- 存檔快照(Task 3:存檔 UI) --------------------------------------------
+
+export interface PlanSnapshot {
+  polygon: FloorPolygon;
+  walls: WallSegment[];
+  columns: Column[];
+  furniture: FurnitureItem[];
+  venueSizeM: number;
+}
+
+// 固定欄位順序 stringify — 快照物件永遠以下面的字面量順序組裝,不會出現
+// JSON key 順序不穩定的風險(見 architect-plan.md Architecture Notes)。
+export function serializePlanSnapshot(snapshot: PlanSnapshot): string {
+  return JSON.stringify({
+    polygon: snapshot.polygon,
+    walls: snapshot.walls,
+    columns: snapshot.columns,
+    furniture: snapshot.furniture,
+    venueSizeM: snapshot.venueSizeM,
+  });
+}
+
+// 未存讀過(savedBaseline === null)時的 dirty 判定基準:初始空場地快照。
+export const EMPTY_PLAN_BASELINE = serializePlanSnapshot({
+  polygon: createDefaultFloor(VENUE_SIZE_M),
+  walls: [],
+  columns: [],
+  furniture: [],
+  venueSizeM: VENUE_SIZE_M,
+});

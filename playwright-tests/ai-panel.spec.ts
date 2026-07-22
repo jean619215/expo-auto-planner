@@ -262,6 +262,174 @@ test.describe("AI 助理面板 - AC4 錯誤與點數狀態", () => {
   });
 });
 
+test.describe("AI 助理面板 - payload 瘦身", () => {
+  test("多輪:舊輪去附錄與圖片、tool_result 原樣、最新輪保留附錄", async ({
+    page,
+  }) => {
+    await mockAiConfig(page);
+
+    const captured: Record<string, unknown>[] = [];
+    await page.route("**/api/ai/chat", async (route) => {
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      captured.push(body);
+      const idx = captured.length - 1;
+      const resp = [GENERATE_PLAN_FIXTURE, TEXT_REPLY_FIXTURE][
+        Math.min(idx, 1)
+      ];
+      await route.fulfill({
+        status: resp.status,
+        contentType: "application/json",
+        body: JSON.stringify(resp.body),
+      });
+    });
+
+    const editor = new PlanEditorPage(page);
+    const ai = new AiPanelPage(page);
+    await editor.navigate();
+    await ai.open();
+
+    const firstText = "幫我用預設方案產生一個場地";
+    await ai.uploadImage({
+      name: "ref.png",
+      mimeType: "image/png",
+      buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    });
+    await ai.sendMessage(firstText);
+    await expect(ai.actionSummary).toContainText("已產生配置");
+
+    await ai.sendMessage("再幫我調整一下");
+    await expect(ai.messages).toContainText("你好,我可以幫你規劃場地");
+
+    expect(captured.length).toBe(2);
+    const second = captured[1] as {
+      messages: {
+        role: string;
+        content: Array<Record<string, unknown>>;
+      }[];
+    };
+
+    expect(second.messages.length).toBe(3);
+
+    const oldUser = second.messages[0];
+    expect(oldUser.role).toBe("user");
+    const images = oldUser.content.filter((b) => b.type === "image");
+    expect(images.length).toBe(0);
+    const placeholderBlocks = oldUser.content.filter(
+      (b) => b.type === "text" && b.text === "[使用者先前提供了參考圖]",
+    );
+    expect(placeholderBlocks.length).toBe(1);
+    const originalTextBlocks = oldUser.content.filter(
+      (b) => b.type === "text" && b.text === firstText,
+    );
+    expect(originalTextBlocks.length).toBe(1);
+    expect(JSON.stringify(oldUser.content)).not.toContain("[目前配置]");
+
+    const oldAssistant = second.messages[1];
+    expect(oldAssistant.role).toBe("assistant");
+    const fixtureBody = GENERATE_PLAN_FIXTURE.body as { content: unknown };
+    expect(oldAssistant.content).toEqual(fixtureBody.content);
+
+    const latestUser = second.messages[2];
+    expect(latestUser.role).toBe("user");
+    const toolResults = latestUser.content.filter(
+      (b) => b.type === "tool_result",
+    );
+    expect(toolResults.length).toBe(1);
+    expect(toolResults[0].tool_use_id).toBe("toolu_generate_1");
+    expect(toolResults[0].is_error).toBe(false);
+    const latestTextBlocks = latestUser.content.filter(
+      (b) => b.type === "text",
+    ) as { text: string }[];
+    expect(latestTextBlocks.length).toBe(1);
+    expect(latestTextBlocks[0].text).toContain("[目前配置]");
+    expect(latestTextBlocks[0].text).toContain("再幫我調整一下");
+
+    // 畫面渲染不受瘦身影響:第 1 輪的 displayText 仍完整顯示。
+    await expect(ai.messages).toContainText(firstText);
+  });
+
+  test("純圖片舊輪 → 單一 placeholder block", async ({ page }) => {
+    await mockAiConfig(page);
+
+    const captured: Record<string, unknown>[] = [];
+    await page.route("**/api/ai/chat", async (route) => {
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      captured.push(body);
+      await route.fulfill({
+        status: TEXT_REPLY_FIXTURE.status,
+        contentType: "application/json",
+        body: JSON.stringify(TEXT_REPLY_FIXTURE.body),
+      });
+    });
+
+    const editor = new PlanEditorPage(page);
+    const ai = new AiPanelPage(page);
+    await editor.navigate();
+    await ai.open();
+
+    await ai.uploadImage({
+      name: "ref2.png",
+      mimeType: "image/png",
+      buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    });
+    await ai.sendButton.click();
+    await expect(ai.messages).toContainText("你好,我可以幫你規劃場地");
+
+    await ai.sendMessage("文字後續訊息");
+    await expect(ai.balance).toHaveText("90");
+
+    expect(captured.length).toBe(2);
+    const second = captured[1] as {
+      messages: { role: string; content: unknown[] }[];
+    };
+    expect(second.messages[0].content).toEqual([
+      { type: "text", text: "[使用者先前提供了參考圖]" },
+    ]);
+  });
+
+  test("首輪無歷史 → payload 與現況一致", async ({ page }) => {
+    await mockAiConfig(page);
+
+    const captured: Record<string, unknown>[] = [];
+    await page.route("**/api/ai/chat", async (route) => {
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      captured.push(body);
+      await route.fulfill({
+        status: TEXT_REPLY_FIXTURE.status,
+        contentType: "application/json",
+        body: JSON.stringify(TEXT_REPLY_FIXTURE.body),
+      });
+    });
+
+    const editor = new PlanEditorPage(page);
+    const ai = new AiPanelPage(page);
+    await editor.navigate();
+    await ai.open();
+
+    const firstText = "第一輪訊息";
+    await ai.uploadImage({
+      name: "ref3.png",
+      mimeType: "image/png",
+      buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    });
+    await ai.sendMessage(firstText);
+    await expect(ai.messages).toContainText("你好,我可以幫你規劃場地");
+
+    expect(captured.length).toBe(1);
+    const first = captured[0] as {
+      messages: { role: string; content: Array<Record<string, unknown>> }[];
+    };
+    expect(first.messages.length).toBe(1);
+    const content = first.messages[0].content;
+    expect(content[0].type).toBe("image");
+    const textBlock = content.find((b) => b.type === "text") as {
+      text: string;
+    };
+    expect(textBlock.text).toContain("[目前配置]");
+    expect(textBlock.text).toContain(firstText);
+  });
+});
+
 // 真模型煙霧測試:預設 skip,需手動設定 PW_PAID_AI=1 才會執行(會花真錢,
 // 見 orchestrator-output.md Assumption 3 — 不進 CI 門檻)。
 test.describe("AI 助理面板 - 真模型煙霧測試 @paid", () => {
