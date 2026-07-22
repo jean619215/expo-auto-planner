@@ -3,19 +3,19 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Circle, Layer, Line, Rect, Stage, Text } from "react-konva";
 import type Konva from "konva";
-import { Ruler } from "lucide-react";
+import { ZoomIn, ZoomOut, Maximize } from "lucide-react";
 import {
   DEFAULT_FLOOR,
   EMPTY_PLAN_BASELINE,
   GRID_MAJOR_M,
   GRID_MINOR_M,
   MIN_FLOOR_VERTICES,
+  PLAN_AREA_SIZE_M,
   VENUE_SIZE_M,
   WALL_THICKNESS_M,
   clampColumnCenter,
   computePxPerMeter,
   createColumn,
-  createDefaultFloor,
   createObjectId,
   createWall,
   findClosestEdge,
@@ -55,26 +55,19 @@ import PlanSlotsDialog, {
   type LoadedPlan,
   type Slot,
 } from "./PlanSlotsDialog";
-import PlanToolbar, { type EditorMode } from "./PlanToolbar";
+import PlanToolbar, { segmentClassName, type EditorMode } from "./PlanToolbar";
 import VenueSceneLoader from "./VenueSceneLoader";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 
 const MIN_STAGE_PX = 320;
 const MAX_STAGE_PX = 800;
-const MIN_VENUE_SIZE_M = 10;
-const MAX_VENUE_SIZE_M = 200;
+// 預設視圖 fit 尺寸(= VENUE_SIZE_M,與現行預設視覺逐像素一致的關鍵)。
+const DEFAULT_VIEW_SIZE_M = VENUE_SIZE_M;
+// zoom out 到底恰好完整容納 PLAN_AREA_SIZE_M(200)。
+const MIN_SCALE = DEFAULT_VIEW_SIZE_M / PLAN_AREA_SIZE_M;
+const MAX_SCALE = 4;
+const WHEEL_SCALE_FACTOR = 1.06;
+const BUTTON_SCALE_FACTOR = 1.25;
 
 type SelectedObject = {
   type: "wall" | "column" | "furniture";
@@ -167,7 +160,12 @@ export default function PlanEditor() {
   // 側欄展開時 Stage 不會跟著縮,造成水平溢出。
   const editorColumnRef = useRef<HTMLDivElement | null>(null);
   const [stagePx, setStagePx] = useState(MIN_STAGE_PX);
-  const [venueSizeM, setVenueSizeM] = useState(VENUE_SIZE_M);
+  // Stage 顯示層 transform(zoom/pan)— 純顯示,不落存檔、不進 plan.ts
+  // 任何運算。與 pxPerMeter(公尺→世界像素)是相乘的兩層,互不覆蓋。
+  const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
+  // mousedown 命中判定(是否命中 Stage 本身 = 真正空白處)供 onDragStart
+  // 判斷是否放行 Stage 的 pan drag。
+  const panBlockedRef = useRef(false);
   const [polygon, setPolygon] = useState<FloorPolygon>(DEFAULT_FLOOR);
   const [selectedVertex, setSelectedVertex] = useState<number | null>(null);
 
@@ -213,11 +211,6 @@ export default function PlanEditor() {
   const [generation, setGeneration] = useState(0);
   const [step, setStep] = useState<WizardStep>("edit");
 
-  const [sizeEditorOpen, setSizeEditorOpen] = useState(false);
-  const [sizeInput, setSizeInput] = useState(String(VENUE_SIZE_M));
-  const [pendingSizeM, setPendingSizeM] = useState<number | null>(null);
-  const [sizeConfirmOpen, setSizeConfirmOpen] = useState(false);
-
   // 存檔 UI(Task 3)—— state 歸屬見 architect-plan.md D2。
   const [slotsDialogOpen, setSlotsDialogOpen] = useState(false);
   const [currentSlot, setCurrentSlot] = useState<Slot | null>(null);
@@ -244,60 +237,63 @@ export default function PlanEditor() {
     return () => observer.disconnect();
   }, [step]);
 
-  const pxPerMeter = computePxPerMeter(stagePx, venueSizeM);
-  const gridLines = buildGridLines(pxPerMeter, venueSizeM);
+  // 數值同現行預設(DEFAULT_VIEW_SIZE_M = VENUE_SIZE_M)— 預設視覺不變的
+  // 關鍵:zoom/pan 是後面 Stage transform 這一層,與此無關。
+  const pxPerMeter = computePxPerMeter(stagePx, DEFAULT_VIEW_SIZE_M);
+  const gridLines = buildGridLines(pxPerMeter, PLAN_AREA_SIZE_M);
 
-  function openSizeEditor() {
-    setSizeInput(String(venueSizeM));
-    setSizeEditorOpen(true);
+  // Konva 官方滾輪錨點縮放食譜:以 anchor(螢幕座標系下的一點)為中心縮放,
+  // 該點縮放前後的螢幕位置不變。newScale 靜默 clamp 到 [MIN_SCALE,
+  // MAX_SCALE];NaN/超界一律靜默收斂,不拋錯不重置整個 Stage。
+  function zoomTo(rawScale: number, anchor: { x: number; y: number }) {
+    const oldScale = view.scale;
+    const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, rawScale));
+    if (!Number.isFinite(newScale) || newScale === oldScale) return;
+    const worldPoint = {
+      x: (anchor.x - view.x) / oldScale,
+      y: (anchor.y - view.y) / oldScale,
+    };
+    setView({
+      scale: newScale,
+      x: anchor.x - worldPoint.x * newScale,
+      y: anchor.y - worldPoint.y * newScale,
+    });
   }
 
-  function applyVenueSize(nextSizeM: number) {
-    setVenueSizeM(nextSizeM);
-    setPolygon(createDefaultFloor(nextSizeM));
-    setWalls([]);
-    setColumns([]);
-    setFurniture([]);
-    setSelectedObject(null);
-    setSelectedVertex(null);
-  }
-
-  function handleSizeConfirm() {
-    const next = Math.round(Number(sizeInput));
-    if (!Number.isFinite(next)) return;
-    const clamped = Math.min(
-      MAX_VENUE_SIZE_M,
-      Math.max(MIN_VENUE_SIZE_M, next),
+  function handleWheel(e: Konva.KonvaEventObject<WheelEvent>) {
+    e.evt.preventDefault();
+    const stage = e.target.getStage();
+    // 刻意用螢幕座標版 getPointerPosition()(不是
+    // getRelativePointerPosition())— 錨點公式在螢幕座標系運算,是全檔
+    // 唯一保留處(其餘互動一律遷移到 getRelativePointerPosition())。
+    const pointer = stage?.getPointerPosition();
+    if (!pointer) return;
+    zoomTo(
+      e.evt.deltaY > 0 ? view.scale / WHEEL_SCALE_FACTOR : view.scale * WHEEL_SCALE_FACTOR,
+      pointer,
     );
-    if (clamped === venueSizeM) {
-      setSizeEditorOpen(false);
-      return;
-    }
-    const isEmpty =
-      walls.length === 0 && columns.length === 0 && furniture.length === 0;
-    // 空場地無改動可失,直接套用,不跳警告彈窗。
-    if (isEmpty) {
-      applyVenueSize(clamped);
-      setSizeEditorOpen(false);
-      return;
-    }
-    setPendingSizeM(clamped);
-    setSizeEditorOpen(false);
-    setSizeConfirmOpen(true);
   }
 
-  function handleSizeConfirmAccept() {
-    if (pendingSizeM !== null) {
-      applyVenueSize(pendingSizeM);
+  function resetView() {
+    setView({ scale: 1, x: 0, y: 0 });
+  }
+
+  function handleStageDragStart(e: Konva.KonvaEventObject<DragEvent>) {
+    const stage = e.target.getStage();
+    if (e.target === stage && panBlockedRef.current) {
+      stage?.stopDrag();
     }
-    setPendingSizeM(null);
-    setSizeConfirmOpen(false);
+  }
+
+  function handleStageDragEnd(e: Konva.KonvaEventObject<DragEvent>) {
+    if (e.target !== e.target.getStage()) return;
+    setView((v) => ({ ...v, x: e.target.x(), y: e.target.y() }));
   }
 
   // --- 存檔 UI(Task 3):快照 / dirty 判定 / 讀檔套用 -----------------------
 
   function getSnapshot(): PlanSnapshot {
-    return { polygon, walls, columns, furniture, venueSizeM };
+    return { polygon, walls, columns, furniture, venueSizeM: PLAN_AREA_SIZE_M };
   }
 
   // 序列化比對,不做逐操作 dirty flag(取捨見 architect-plan.md D5)。僅在
@@ -310,24 +306,20 @@ export default function PlanEditor() {
   // GET /api/plans/[slot] 200 之後;非 200 情境該元件不會呼叫此函式,原地
   // 狀態不丟。
   function applyLoadedPlan(data: LoadedPlan) {
+    // rawPlan.venueSizeM(舊存檔任意值:40/50/>200/缺欄位)一律忽略 — 前端
+    // 固定以 PLAN_AREA_SIZE_M(200)為運算上限,天然涵蓋「舊檔相容 +
+    // 缺欄位 fallback 不崩潰」,無需 fallback 分支。
     const rawPlan = data.plan as {
       polygon?: FloorPolygon;
       walls?: WallSegment[];
       columns?: Column[];
       furniture?: FurnitureItem[];
-      venueSizeM?: unknown;
     };
-    const sizeM =
-      typeof rawPlan.venueSizeM === "number"
-        ? Math.min(MAX_VENUE_SIZE_M, Math.max(MIN_VENUE_SIZE_M, rawPlan.venueSizeM))
-        : VENUE_SIZE_M;
     const loadedPolygon = rawPlan.polygon ?? DEFAULT_FLOOR;
     const loadedWalls = rawPlan.walls ?? [];
     const loadedColumns = rawPlan.columns ?? [];
     const loadedFurniture = rawPlan.furniture ?? [];
 
-    setVenueSizeM(sizeM);
-    setSizeInput(String(sizeM));
     setPolygon(loadedPolygon);
     setWalls(loadedWalls);
     setColumns(loadedColumns);
@@ -347,7 +339,7 @@ export default function PlanEditor() {
         walls: loadedWalls,
         columns: loadedColumns,
         furniture: loadedFurniture,
-        venueSizeM: sizeM,
+        venueSizeM: PLAN_AREA_SIZE_M,
       }),
     );
   }
@@ -373,7 +365,7 @@ export default function PlanEditor() {
   ) {
     const node = e.target;
     const meterPoint = pxToMeters({ x: node.x(), y: node.y() }, pxPerMeter);
-    const next = moveVertex(polygon, index, meterPoint, venueSizeM);
+    const next = moveVertex(polygon, index, meterPoint, PLAN_AREA_SIZE_M);
     setPolygon(next);
     const snappedPx = metersToPx(next[index], pxPerMeter);
     node.position(snappedPx);
@@ -385,7 +377,7 @@ export default function PlanEditor() {
   ) {
     const node = e.target;
     const meterPoint = pxToMeters({ x: node.x(), y: node.y() }, pxPerMeter);
-    const next = moveVertex(polygon, index, meterPoint, venueSizeM);
+    const next = moveVertex(polygon, index, meterPoint, PLAN_AREA_SIZE_M);
     setPolygon(next);
     const snappedPx = metersToPx(next[index], pxPerMeter);
     node.position(snappedPx);
@@ -393,14 +385,14 @@ export default function PlanEditor() {
 
   function handleEdgeDblClick(e: Konva.KonvaEventObject<MouseEvent>) {
     const stage = e.target.getStage();
-    const pointer = stage?.getPointerPosition();
+    const pointer = stage?.getRelativePointerPosition();
     if (!pointer) return;
 
     const meterPoint: PlanPoint = pxToMeters(pointer, pxPerMeter);
     const { edgeIndex, distance } = findClosestEdge(polygon, meterPoint);
     // 只有點在邊附近 (0.5m 內) 才插入頂點 — 點在多邊形內部深處不動作。
     if (distance > 0.5) return;
-    const next = insertVertexOnEdge(polygon, edgeIndex, meterPoint, venueSizeM);
+    const next = insertVertexOnEdge(polygon, edgeIndex, meterPoint, PLAN_AREA_SIZE_M);
     setPolygon(next);
   }
 
@@ -500,12 +492,16 @@ export default function PlanEditor() {
     e: Konva.KonvaEventObject<MouseEvent | TouchEvent>,
   ) {
     const stage = e.target.getStage();
-    const pointer = stage?.getPointerPosition();
+    // pan 區隔機制的命中判定:記錄本次 mousedown 是否命中 Stage 本身
+    // (真正空白處)。子節點(地板/物件/頂點/把手)命中時 e.target !== stage,
+    // 之後 onDragStart 會依此攔掉「按在非空白處卻拖動 Stage」的 pan。
+    panBlockedRef.current = e.target !== stage;
+    const pointer = stage?.getRelativePointerPosition();
     if (!pointer) return;
     const meterPoint = pxToMeters(pointer, pxPerMeter);
 
     if (mode === "wall") {
-      const snapped = snapPoint(meterPoint, venueSizeM);
+      const snapped = snapPoint(meterPoint, PLAN_AREA_SIZE_M);
       setDraftWall({ start: snapped, end: snapped });
       return;
     }
@@ -520,10 +516,10 @@ export default function PlanEditor() {
   ) {
     if (mode !== "wall" || !draftWall) return;
     const stage = e.target.getStage();
-    const pointer = stage?.getPointerPosition();
+    const pointer = stage?.getRelativePointerPosition();
     if (!pointer) return;
     const meterPoint = pxToMeters(pointer, pxPerMeter);
-    const snapped = snapPoint(meterPoint, venueSizeM);
+    const snapped = snapPoint(meterPoint, PLAN_AREA_SIZE_M);
     setDraftWall({ start: draftWall.start, end: snapped });
   }
 
@@ -532,7 +528,7 @@ export default function PlanEditor() {
   ) {
     if (mode === "wall") {
       if (draftWall) {
-        const wall = createWall(draftWall.start, draftWall.end, venueSizeM);
+        const wall = createWall(draftWall.start, draftWall.end, PLAN_AREA_SIZE_M);
         if (wall) {
           setWalls((prev) => [...prev, wall]);
           setSelectedObject({ type: "wall", id: wall.id });
@@ -547,10 +543,10 @@ export default function PlanEditor() {
 
     if (mode === "column") {
       const stage = e.target.getStage();
-      const pointer = stage?.getPointerPosition();
+      const pointer = stage?.getRelativePointerPosition();
       if (!pointer) return;
       const meterPoint = pxToMeters(pointer, pxPerMeter);
-      const column = createColumn(meterPoint, venueSizeM);
+      const column = createColumn(meterPoint, PLAN_AREA_SIZE_M);
       setColumns((prev) => [...prev, column]);
       setSelectedObject({ type: "column", id: column.id });
       setSelectedVertex(null);
@@ -567,7 +563,7 @@ export default function PlanEditor() {
     const originPx = metersToPx(wall.start, pxPerMeter);
     const deltaPx = { x: node.x() - originPx.x, y: node.y() - originPx.y };
     const deltaM = pxToMeters(deltaPx, pxPerMeter);
-    const updated = translateWall(wall, deltaM, venueSizeM);
+    const updated = translateWall(wall, deltaM, PLAN_AREA_SIZE_M);
     setWalls((prev) => prev.map((w) => (w.id === wall.id ? updated : w)));
     const snappedPx = metersToPx(updated.start, pxPerMeter);
     node.position(snappedPx);
@@ -581,7 +577,7 @@ export default function PlanEditor() {
     const originPx = metersToPx(column.center, pxPerMeter);
     const deltaPx = { x: node.x() - originPx.x, y: node.y() - originPx.y };
     const deltaM = pxToMeters(deltaPx, pxPerMeter);
-    const updated = translateColumn(column, deltaM, venueSizeM);
+    const updated = translateColumn(column, deltaM, PLAN_AREA_SIZE_M);
     setColumns((prev) => prev.map((c) => (c.id === column.id ? updated : c)));
     const snappedPx = metersToPx(updated.center, pxPerMeter);
     node.position(snappedPx);
@@ -594,7 +590,7 @@ export default function PlanEditor() {
   ) {
     const node = e.target;
     const meterPoint = pxToMeters({ x: node.x(), y: node.y() }, pxPerMeter);
-    const updated = moveWallEndpoint(wall, which, meterPoint, venueSizeM);
+    const updated = moveWallEndpoint(wall, which, meterPoint, PLAN_AREA_SIZE_M);
     setWalls((prev) => prev.map((w) => (w.id === wall.id ? updated : w)));
     const snappedPx = metersToPx(updated[which], pxPerMeter);
     node.position(snappedPx);
@@ -607,7 +603,7 @@ export default function PlanEditor() {
   ) {
     const node = e.target;
     const meterPoint = pxToMeters({ x: node.x(), y: node.y() }, pxPerMeter);
-    const updated = resizeColumnCorner(column, corner, meterPoint, venueSizeM);
+    const updated = resizeColumnCorner(column, corner, meterPoint, PLAN_AREA_SIZE_M);
     setColumns((prev) => prev.map((c) => (c.id === column.id ? updated : c)));
     const cornerMeter = {
       x: updated.center.x + (corner.x * updated.w) / 2,
@@ -649,7 +645,7 @@ export default function PlanEditor() {
       switch (action.type) {
         case "generate_plan": {
           const floorPoints = action.input.floor.map((p) =>
-            snapPoint(p, venueSizeM),
+            snapPoint(p, PLAN_AREA_SIZE_M),
           );
           if (floorPoints.length < MIN_FLOOR_VERTICES) {
             results.push({
@@ -660,15 +656,15 @@ export default function PlanEditor() {
             break;
           }
           const generatedWalls = action.input.walls
-            .map((w) => createWall(w.start, w.end, venueSizeM))
+            .map((w) => createWall(w.start, w.end, PLAN_AREA_SIZE_M))
             .filter((w): w is WallSegment => w !== null);
           const generatedColumns: Column[] = action.input.columns.map((c) => ({
             id: createObjectId(),
             center: clampColumnCenter(
-              snapPoint(c.center, venueSizeM),
+              snapPoint(c.center, PLAN_AREA_SIZE_M),
               c.w,
               c.h,
-              venueSizeM,
+              PLAN_AREA_SIZE_M,
             ),
             w: c.w,
             h: c.h,
@@ -680,10 +676,10 @@ export default function PlanEditor() {
                 id: createObjectId(),
                 kind: f.kind,
                 center: clampColumnCenter(
-                  snapPoint(f.center, venueSizeM),
+                  snapPoint(f.center, PLAN_AREA_SIZE_M),
                   defaults.w,
                   defaults.h,
-                  venueSizeM,
+                  PLAN_AREA_SIZE_M,
                 ),
                 w: defaults.w,
                 h: defaults.h,
@@ -717,10 +713,10 @@ export default function PlanEditor() {
             id: createObjectId(),
             kind: action.input.kind,
             center: clampColumnCenter(
-              snapPoint(action.input.center, venueSizeM),
+              snapPoint(action.input.center, PLAN_AREA_SIZE_M),
               defaults.w,
               defaults.h,
-              venueSizeM,
+              PLAN_AREA_SIZE_M,
             ),
             w: defaults.w,
             h: defaults.h,
@@ -753,7 +749,7 @@ export default function PlanEditor() {
             const updated = translateWall(
               wall,
               { x: center.x - mid.x, y: center.y - mid.y },
-              venueSizeM,
+              PLAN_AREA_SIZE_M,
             );
             nextWalls = nextWalls.map((w, i) => (i === index ? updated : w));
           } else if (itemType === "column") {
@@ -769,7 +765,7 @@ export default function PlanEditor() {
             const updated = translateColumn(
               col,
               { x: center.x - col.center.x, y: center.y - col.center.y },
-              venueSizeM,
+              PLAN_AREA_SIZE_M,
             );
             nextColumns = nextColumns.map((c, i) =>
               i === index ? updated : c,
@@ -787,7 +783,7 @@ export default function PlanEditor() {
             const updated = translateFurniture(
               item,
               { x: center.x - item.center.x, y: center.y - item.center.y },
-              venueSizeM,
+              PLAN_AREA_SIZE_M,
             );
             nextFurniture = nextFurniture.map((f, i) =>
               i === index ? updated : f,
@@ -842,7 +838,7 @@ export default function PlanEditor() {
         }
         case "resize_floor": {
           const points = action.input.points.map((p) =>
-            snapPoint(p, venueSizeM),
+            snapPoint(p, PLAN_AREA_SIZE_M),
           );
           if (points.length < MIN_FLOOR_VERTICES) {
             results.push({
@@ -948,6 +944,9 @@ export default function PlanEditor() {
       data-step={step}
       data-current-slot={currentSlot ?? ""}
       data-current-plan-id={currentPlanId ?? ""}
+      data-stage-scale={view.scale}
+      data-stage-x={view.x}
+      data-stage-y={view.y}
       className="w-full outline-none"
     >
       <StepProgress current={step} />
@@ -966,58 +965,51 @@ export default function PlanEditor() {
                 canDelete={selectedObject !== null}
                 onDelete={deleteSelectedObject}
               />
-              {sizeEditorOpen ? (
-                <div
-                  data-testid="venue-size-editor"
-                  className="inline-flex h-[34px] items-center gap-1.5 rounded-md border-[1.5px] border-blueprint bg-card px-2"
-                >
-                  <Label
-                    htmlFor="venue-size-input"
-                    className="shrink-0 text-sm text-blueprint"
-                  >
-                    邊長(公尺)
-                  </Label>
-                  <Input
-                    id="venue-size-input"
-                    data-testid="venue-size-input"
-                    type="number"
-                    min={MIN_VENUE_SIZE_M}
-                    max={MAX_VENUE_SIZE_M}
-                    value={sizeInput}
-                    onChange={(e) => setSizeInput(e.target.value)}
-                    className="h-6 w-20"
-                  />
-                  <Button
-                    type="button"
-                    size="sm"
-                    data-testid="venue-size-confirm-button"
-                    onClick={handleSizeConfirm}
-                  >
-                    確認
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    data-testid="venue-size-cancel-button"
-                    onClick={() => setSizeEditorOpen(false)}
-                  >
-                    取消
-                  </Button>
-                </div>
-              ) : (
-                <Button
+              <div
+                className="inline-flex h-[34px] overflow-hidden rounded-md border-[1.5px] border-blueprint bg-card"
+                role="group"
+              >
+                <button
                   type="button"
-                  size="sm"
-                  variant="outline"
-                  data-testid="venue-size-button"
-                  onClick={openSizeEditor}
-                  className="h-[34px]"
+                  data-testid="zoom-out-button"
+                  onClick={() =>
+                    zoomTo(view.scale / BUTTON_SCALE_FACTOR, {
+                      x: stagePx / 2,
+                      y: stagePx / 2,
+                    })
+                  }
+                  className={segmentClassName}
                 >
-                  <Ruler />
-                  場地尺寸
-                </Button>
-              )}
+                  <ZoomOut />
+                </button>
+                <span
+                  data-testid="zoom-level"
+                  className={segmentClassName + " tabular-nums"}
+                >
+                  {Math.round(view.scale * 100)}%
+                </span>
+                <button
+                  type="button"
+                  data-testid="zoom-in-button"
+                  onClick={() =>
+                    zoomTo(view.scale * BUTTON_SCALE_FACTOR, {
+                      x: stagePx / 2,
+                      y: stagePx / 2,
+                    })
+                  }
+                  className={segmentClassName}
+                >
+                  <ZoomIn />
+                </button>
+                <button
+                  type="button"
+                  data-testid="zoom-reset-button"
+                  onClick={resetView}
+                  className={segmentClassName}
+                >
+                  <Maximize />
+                </button>
+              </div>
               <Button
                 type="button"
                 size="sm"
@@ -1040,6 +1032,14 @@ export default function PlanEditor() {
             <Stage
               width={stagePx}
               height={stagePx}
+              scaleX={view.scale}
+              scaleY={view.scale}
+              x={view.x}
+              y={view.y}
+              draggable={mode === "select"}
+              onWheel={handleWheel}
+              onDragStart={handleStageDragStart}
+              onDragEnd={handleStageDragEnd}
               onMouseDown={handleStageMouseDown}
               onMouseMove={handleStageMouseMove}
               onMouseUp={handleStageMouseUp}
@@ -1051,8 +1051,8 @@ export default function PlanEditor() {
                 <Rect
                   x={0}
                   y={0}
-                  width={stagePx}
-                  height={stagePx}
+                  width={PLAN_AREA_SIZE_M * pxPerMeter}
+                  height={PLAN_AREA_SIZE_M * pxPerMeter}
                   fill="#fafaf9"
                   stroke="#a8a29e"
                   strokeWidth={1}
@@ -1068,7 +1068,7 @@ export default function PlanEditor() {
               </Layer>
               <Layer listening={false}>
                 {Array.from(
-                  { length: venueSizeM / GRID_MAJOR_M + 1 },
+                  { length: PLAN_AREA_SIZE_M / GRID_MAJOR_M + 1 },
                   (_, i) => i * GRID_MAJOR_M,
                 ).map((m) => (
                   <Text
@@ -1081,7 +1081,7 @@ export default function PlanEditor() {
                   />
                 ))}
                 {Array.from(
-                  { length: venueSizeM / GRID_MAJOR_M + 1 },
+                  { length: PLAN_AREA_SIZE_M / GRID_MAJOR_M + 1 },
                   (_, i) => i * GRID_MAJOR_M,
                 ).map((m) => (
                   <Text
@@ -1556,32 +1556,12 @@ export default function PlanEditor() {
             walls={sceneSnapshot.walls}
             columns={sceneSnapshot.columns}
             furniture={sceneSnapshot.furniture}
-            venueSizeM={venueSizeM}
+            venueSizeM={PLAN_AREA_SIZE_M}
+            viewFitSizeM={VENUE_SIZE_M}
             onSceneChange={handleSceneChange}
           />
         </div>
       )}
-      <AlertDialog open={sizeConfirmOpen} onOpenChange={setSizeConfirmOpen}>
-        <AlertDialogContent data-testid="venue-size-confirm-dialog">
-          <AlertDialogHeader>
-            <AlertDialogTitle>變更場地尺寸？</AlertDialogTitle>
-            <AlertDialogDescription>
-              變更場地尺寸將清除目前所有牆壁、柱子與家具配置，確定要繼續嗎？
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel data-testid="venue-size-confirm-cancel">
-              取消
-            </AlertDialogCancel>
-            <AlertDialogAction
-              data-testid="venue-size-confirm-accept"
-              onClick={handleSizeConfirmAccept}
-            >
-              確定變更
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
       <PlanSlotsDialog
         open={slotsDialogOpen}
         onOpenChange={setSlotsDialogOpen}

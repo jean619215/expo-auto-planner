@@ -19,6 +19,7 @@ interface VenueSceneLoaderProps {
   columns: Column[];
   furniture: FurnitureItem[];
   venueSizeM?: number;
+  viewFitSizeM?: number;
   onSceneChange?: (next: {
     walls: WallSegment[];
     columns: Column[];
@@ -32,6 +33,7 @@ export default function VenueSceneLoader({
   columns,
   furniture,
   venueSizeM,
+  viewFitSizeM,
   onSceneChange,
 }: VenueSceneLoaderProps) {
   return (
@@ -41,6 +43,7 @@ export default function VenueSceneLoader({
       columns={columns}
       furniture={furniture}
       venueSizeM={venueSizeM}
+      viewFitSizeM={viewFitSizeM}
       onSceneChange={onSceneChange}
     />
   );

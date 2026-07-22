@@ -9,7 +9,16 @@ export interface AiPoint {
   y: number;
 }
 
-export type FurnitureKind = "table" | "chair" | "cabinet";
+export type FurnitureKind =
+  | "table"
+  | "chair"
+  | "cabinet"
+  | "counter"
+  | "bannerStand"
+  | "sofa"
+  | "podium"
+  | "plant"
+  | "display";
 export type AiItemType = "wall" | "column" | "furniture";
 
 export interface GeneratePlanInput {

@@ -11,7 +11,16 @@ import {
   type PlanPoint,
 } from "./plan";
 
-export type FurnitureKind = "table" | "chair" | "cabinet";
+export type FurnitureKind =
+  | "table"
+  | "chair"
+  | "cabinet"
+  | "counter"
+  | "bannerStand"
+  | "sofa"
+  | "podium"
+  | "plant"
+  | "display";
 
 export interface FurnitureItem {
   id: string;
@@ -29,6 +38,12 @@ export const FURNITURE_DEFAULTS: Record<
   table: { w: 1.2, h: 0.7, label: "桌子", color: "#8a6d3b", height3d: 0.75 },
   chair: { w: 0.45, h: 0.45, label: "椅子", color: "#5b7a9d", height3d: 0.9 },
   cabinet: { w: 0.6, h: 1.2, label: "櫃子", color: "#6b5b95", height3d: 1.8 },
+  counter: { w: 1.0, h: 0.5, label: "接待櫃檯", color: "#a0724d", height3d: 1.1 },
+  bannerStand: { w: 0.8, h: 0.3, label: "展示架", color: "#c2452f", height3d: 2.0 },
+  sofa: { w: 1.8, h: 0.8, label: "沙發", color: "#4a7a6d", height3d: 0.8 },
+  podium: { w: 0.6, h: 0.5, label: "講台", color: "#3e5c76", height3d: 1.1 },
+  plant: { w: 0.5, h: 0.5, label: "植栽", color: "#4f8a3d", height3d: 1.2 },
+  display: { w: 1.0, h: 0.5, label: "展示櫃", color: "#7a5c94", height3d: 1.6 },
 };
 
 function normalizeDeg(deg: number): number {

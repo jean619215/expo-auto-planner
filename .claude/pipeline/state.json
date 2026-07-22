@@ -1,8 +1,8 @@
 {
-  "story_file": "stories/venue-save-slots.md",
-  "story_title": "場地儲存檔與 AI 對話持久化",
-  "task_index": 2,
-  "current_task": "[FRONTEND] 存檔 UI(三格面板:存/讀/改名/刪除/覆蓋與讀檔確認)+ AiPanel 續聊載入、清空對話、100 輪軟上限提示、歷史圖片占位 UI;Playwright 驗收(page object 模式)",
+  "story_file": "stories/plan-editor-ux.md",
+  "story_title": "PlanEditor 操作體驗改善(zoom/pan + AI 面板常駐)",
+  "task_index": 0,
+  "current_task": "[FRONTEND] 2D 畫布 zoom/pan:Konva Stage scale/position + 滾輪/按鈕/重置 UI、指標座標全面遷移 getRelativePointerPosition、移除場地尺寸編輯器與確認彈窗、可規劃範圍固定 200x200(預設視圖 fit 中央 50x50)、AI 系統提示尺寸描述批次更新;Playwright 驗收(縮放狀態下互動座標正確 + 迴歸)",
   "task_type": "FRONTEND",
   "stage": "complete",
   "iteration": {
@@ -23,5 +23,5 @@
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "last_updated": "2026-07-22T09:00:46+08:00"
+  "last_updated": "2026-07-22T23:35:00Z"
 }

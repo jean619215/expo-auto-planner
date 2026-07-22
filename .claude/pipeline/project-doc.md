@@ -80,6 +80,12 @@ Next.js API routes (backend logic co-located with frontend). Implemented: `/api/
 - 系統提示行為規則(6a8d32e):generate_plan 前先摘要需求取得確認(增量修改不設閘門);失敗 tool_result 須說明原因+替代方案;回應去寒暄。
 - Playwright:`ai-panel.spec.ts` mock `/api/ai/chat`(page.route fixtures,不花錢),含 payload 攔截斷言(postDataJSON 驗證瘦身形狀);真模型煙霧 `@paid` 預設 skip(`PW_PAID_AI` 開啟),斷言鎖 waitForResponse 200 + ai-assistant-text。
 
+### 場地儲存檔 (Save Slots)
+- `venue_plans` 表:每人 3 格(slot 1–3,`check` + `unique(user_id,slot)` DB 硬上限),plan 為 jsonb 整包快照。RLS select-own;寫入僅 service_role(明確 revoke)。
+- API:`GET /api/plans`(固定 3 格概況)、`/api/plans/[slot]` GET(含 conversation+planId)/PUT(upsert,name 省略=保留原名)/PATCH(改名)/DELETE、`DELETE /api/plans/[slot]/conversation`(清空對話)。全受保護;admin client 查詢一律帶 user_id 過濾;跨用戶 404 不洩漏。Next.js 16 動態段 `ctx.params` 為 Promise 需 await。
+- 對話持久化:`ai_conversations`(plan_id unique FK cascade,1:1)+ `ai_messages`(identity bigint 保序,content 存 API 原生 blocks)。RLS 經 join venue_plans;chat API 增收 planId(所有權 404 先於扣點),回應後增量落庫(圖片換佔位符),落庫失敗僅 log 不影響回應。
+- 前端:`PlanSlotsDialog`(三格存/讀/改名/刪,AlertDialog 確認,serialize 比對 dirty);AiPanel `conversationSeed` props 續聊載入(不 key 重掛)、清空對話、100 輪軟上限;`messages.ts` `fromStoredConversation()` 還原 ChatTurn(佔位符保留,防續聊瘦身二次破壞)。
+
 ### 金流 (Payments)
 - `PaymentProvider` adapter (`src/lib/points/provider.ts`):`createCheckout` 回 redirectUrl、`verifyWebhook` 驗簽。Phase 1 僅 MockProvider(HMAC-SHA256 + timingSafeEqual);之後換綠界只需新增 EcpayProvider,購買/發點流程不動。
 - Webhook `/api/points/webhook/mock` 在 proxy.ts PUBLIC_API_PATHS 上;冪等由 `ref_id = order:{order_id}` unique constraint 承擔。
@@ -113,4 +119,4 @@ Next.js API routes (backend logic co-located with frontend). Implemented: `/api/
 - playwright-tests/points-shop.spec.ts, playwright-tests/pages/ShopPage.ts (new)
 
 ## Last Scanned
-2026-07-22T01:42:00+08:00(delta:6a8d32e 系統提示行為規則 + 62c95fe payload 瘦身)
+2026-07-22T21:32:00+08:00(delta:6029fff/b709620/497373b 場地儲存檔 story 全套)

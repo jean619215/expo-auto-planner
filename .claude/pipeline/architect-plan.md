@@ -1,229 +1,208 @@
-# Architect Plan — 存檔 UI 三格面板 + AiPanel 續聊/清空對話/軟上限/歷史圖片占位
+# Architect Plan — 2D 畫布 zoom/pan(移除場地尺寸編輯,固定 200x200)
 
-> Story: 場地儲存檔與 AI 對話持久化 | Task type: FRONTEND(含一支已核可的小型後端端點) | Generated: 2026-07-22T10:30:00+08:00
+> Story: PlanEditor 操作體驗改善(zoom/pan + AI 面板常駐) | Task type: FRONTEND | Generated: 2026-07-22T22:15:00+08:00
 
 ## Overview
 
-在 `PlanEditor` 的 edit 工具列新增「我的存檔」入口,開啟三格存檔 Dialog(存/讀/改名/刪除/覆蓋確認);讀檔把 plan 快照套回編輯器 state、把落庫 conversation 還原成 AiPanel turns 並續聊帶 `planId`;AiPanel 加清空對話(走新端點 `DELETE /api/plans/[slot]/conversation`)、100 輪軟上限提示與歷史圖片占位 UI。Playwright 全程 `page.route()` mock 驗收。
+在 Konva Stage 層加一組純顯示用 view transform(scale/x/y),所有指標互動改走 `getRelativePointerPosition()`;元件層的可變 `venueSizeM` state 整組換成固定常數 200,移除場地尺寸編輯 UI;AI system prompt 與 tools schema 的尺寸描述在同一 commit 批次改為 200。
 
 ## Task Type Confirmed
 
-FRONTEND — 與 orchestrator-output.md 一致。內含的 `DELETE /api/plans/[slot]/conversation` 已由 orchestrator 明列為本任務唯一允許的後端新增(§8),複雜度與 `[slot]/route.ts` 既有 handler 同級,不需拆 task,不構成 escalation。
+FRONTEND — 技術分析與 orchestrator 判定一致:核心在 `PlanEditor.tsx` 畫布互動;`system.ts`/`tools.ts` 僅字串常數變更,不動 API 契約與後端邏輯。
 
-## Escalation Check(結論:不升級)
+## Escalation Check(結論:不需升級)
 
-- 無外部 API 契約變更(新端點為內部 `/api/*`,受 `src/proxy.ts` fail-closed 保護,免改 allowlist)。
-- 無 DB schema 變更(task 1/2 的表與 cascade FK 原樣沿用)。
-- 無 auth/安全模型變更(沿用 `requireUser()` + admin client `.eq("user_id")` 既有慣例)。
-- 複雜度在 story 範圍內;spec 資訊充分。
+- 外部 API 契約:`/api/plans/[slot]` PUT payload 的 `venueSizeM` 欄位型別/存在性不變,僅前端固定送 200 → 非契約變更。
+- DB schema / 既有資料:明確不遷移(Out of Scope),讀檔相容由前端固定 clamp 承擔 → 不觸發。
+- Auth / 安全模型:不涉及。
+- 複雜度:與 story 預估相符(主要工作量 = 座標遷移 + 測試基建重做,orchestrator 已預期)。
+- 資訊充分性:5 個 Assumption 均可依 AC 明文定案(Assumption 1「維持現行視覺、原點 (0,0) 不動」已是 spec 定案),無需人類先行裁決。
+
+## 兩層座標系職責分界(關鍵設計,對應 Edge Case「AiPanel 側欄 ResizeObserver」)
+
+```
+公尺座標 (plan.ts domain, 0–200)
+   │  × pxPerMeter = computePxPerMeter(stagePx, DEFAULT_VIEW_SIZE_M=50)   ← 第一層:世界像素
+   ▼      (隨 stagePx/ResizeObserver 變;與 zoom 完全無關;即現行 data-px-per-meter)
+世界像素(Layer 內部座標,node.x()/node.y() 所在座標系)
+   │  Stage transform: scaleX/scaleY = view.scale, x/y = view.x/view.y    ← 第二層:純顯示
+   ▼      (滾輪/按鈕/pan 只改這層;不落存檔、不進 plan.ts 任何運算)
+螢幕像素(stage.getPointerPosition() 回傳的座標系)
+```
+
+- `pxPerMeter` 的公式從 `computePxPerMeter(stagePx, venueSizeM)` 改為 `computePxPerMeter(stagePx, DEFAULT_VIEW_SIZE_M)`,`DEFAULT_VIEW_SIZE_M = VENUE_SIZE_M`(50)。數值與現行預設完全相同 → `view = {scale:1, x:0, y:0}` 時畫面與現行逐像素一致,滿足「預設視覺不變」AC,原點 (0,0) 仍在畫布左上角。
+- 側欄展開/收合 → stagePx 變 → 只動第一層;zoom → 只動第二層。兩層在 Stage props 相乘,無雙重換算、互不覆蓋。
+- `getRelativePointerPosition()` 恰好把第二層還原回世界像素,既有 `pxToMeters(p, pxPerMeter)` 呼叫鏈完全不變。
+
+## 定案的技術決策(Playwright 撰寫依據)
+
+| 項目 | 定案 |
+| --- | --- |
+| 可規劃範圍 | `PLAN_AREA_SIZE_M = 200`(新常數,加在 `plan.ts`;取代元件內 `MAX_VENUE_SIZE_M`/`MIN_VENUE_SIZE_M` 的角色) |
+| 倍率範圍 | `MIN_SCALE = 0.25`(= 50/200,zoom out 到底恰好完整容納 200x200,呼應 Edge Case)、`MAX_SCALE = 4` |
+| 滾輪步進 | `WHEEL_SCALE_FACTOR = 1.06`(每 wheel event 乘/除一次,deltaY > 0 縮小) |
+| 按鈕步進 | `BUTTON_SCALE_FACTOR = 1.25`,錨點 = 畫布中心 `(stagePx/2, stagePx/2)` |
+| 重置視圖 | `{scale: 1, x: 0, y: 0}`(即預設 fit 50x50 視圖) |
+| 倍率顯示 | `Math.round(view.scale * 100) + "%"`,`data-testid="zoom-level"` |
+| pan 區隔機制 | **Stage draggable(限 select 模式)+ mousedown 命中判斷**:`handleStageMouseDown` 記錄 `panBlockedRef.current = (e.target !== stage)`;Stage `onDragStart` 中若 `e.target === stage && panBlockedRef.current` 則 `stage.stopDrag()`。效果:真正空白處(mousedown 命中 Stage 本身)拖曳 = pan;地板面、物件、頂點、把手上拖曳 = 走各自既有邏輯、絕不 pan。wall/column 模式 `draggable={false}`,繪製手勢不受影響 |
+| 新 data attributes | wrapper 增加 `data-stage-scale` / `data-stage-x` / `data-stage-y`(比照現行 `data-px-per-meter` 模式,供 Playwright 換算 — Assumption 4 的測試 hook) |
+| 新 testids | `zoom-in-button` / `zoom-out-button` / `zoom-reset-button` / `zoom-level` |
+
+選 Stage draggable + 命中判斷而非空白鍵 modifier / 獨立平移工具:不新增模式、不佔鍵盤、用 Konva 原生 drag 最穩,且命中判斷可精確滿足 AC「物件上拖曳不觸發平移」的強語意(含未選取物件)。
 
 ## Files to Create
 
 | File path | Purpose |
-| --------- | ------- |
-| `src/components/venue/PlanSlotsDialog.tsx` | 三格存檔面板(Dialog)+ 覆蓋/讀檔/刪除確認彈窗 + 改名小 Dialog。所有 slot API 呼叫與列表 state 都在此元件內;透過 props 與 PlanEditor 溝通 |
-| `src/app/api/plans/[slot]/conversation/route.ts` | 新端點 `DELETE`:清空該格對話(刪整列 `ai_conversations`,cascade 帶走 `ai_messages`) |
-| `playwright-tests/pages/PlanSlotsPage.ts` | 存檔面板 page object(獨立檔案,不塞進 PlanEditorPage/AiPanelPage) |
-| `playwright-tests/plan-slots.spec.ts` | 本任務 Playwright 驗收 spec(存/讀/改名/刪除/dirty 確認/續聊/清空對話/軟上限/圖片占位) |
+| --- | --- |
+| `playwright-tests/venue-zoom-pan.spec.ts` | zoom/pan 新功能驗收 + 縮放/平移狀態下互動座標正確性 + 移除項不存在 + 固定 200 存讀檔行為 |
 
 ## Files to Modify
 
 | File path | What changes |
-| --------- | ------------ |
-| `src/components/venue/PlanEditor.tsx` | 新增「我的存檔」按鈕 + 掛載 `PlanSlotsDialog`;新增 `currentSlot`/`currentPlanId`/`savedBaseline`/`conversationSeed` state;讀檔套用函式 `applyLoadedPlan`;dirty 判定;把 `planId`/`slot`/`conversationSeed` 傳給 `AiPanel` |
-| `src/components/venue/AiPanel.tsx` | 新 props(`planId`、`slot`、`conversationSeed`);chat body 帶 `planId`;清空對話按鈕 + 確認彈窗 + DELETE 呼叫;100 輪軟上限提示;歷史圖片占位「📷 參考圖」渲染 |
-| `src/lib/ai-panel/messages.ts` | 新增純函式 `fromStoredConversation()`(落庫訊息 → 面板 turns 的反向還原:displayText 去附錄、標記歷史圖片占位)。維持 isomorphic,不引入 server-only/瀏覽器 API |
-| `src/lib/venue/plan.ts` | 新增 `PlanSnapshot` 型別 + `serializePlanSnapshot()` + 初始空場地 baseline 常數 |
-| `playwright-tests/pages/AiPanelPage.ts` | 補 locators:`clearButton`、`clearConfirmDialog`、`turnLimitHint`、`historyImagePlaceholder` |
-| `supabase/tests/`(既有 plans 手動清單檔;若無則新增 `plans_conversation_manual.md`) | 新端點手動驗證項目:401 / 400 / 404(跨使用者)/ 200 冪等 |
-
-## Key Design Decisions
-
-### D1. 元件與彈窗選型(沿用 shadcn 慣例)
-- 存檔面板本體:`@/components/ui/dialog` 的 `Dialog`(`data-testid="plan-slots-dialog"`),modal(shadcn 預設鎖背景互動)→ orchestrator edge case「開面板同時編輯畫布」自動消失,無需額外處理。
-- 四個確認彈窗(覆蓋 `plan-overwrite-confirm-dialog`、讀檔 dirty `plan-load-confirm-dialog`、刪除 `plan-delete-confirm-dialog`、清空對話 `ai-clear-conversation-confirm-dialog`)一律用 `AlertDialog`,比照既有 `venue-size-confirm-dialog` 的結構與 testid 慣例(`*-cancel` / `*-accept` 命名)。
-- 改名:小 `Dialog`(`plan-rename-dialog`)含 `Input` + 確認/取消;空字串前端擋(disable 確認鈕,不送 API)。
-- 前三個確認彈窗屬存檔面板職責,放在 `PlanSlotsDialog` 內;清空對話彈窗屬 AiPanel 職責,放在 `AiPanel` 內。
-
-### D2. state 歸屬與 planId 傳遞
-- `PlanEditor` 持有:`slotsDialogOpen`、`currentSlot: 1|2|3|null`、`currentPlanId: string|null`、`savedBaseline: string|null`、`conversationSeed: { seq: number; turns: ChatTurn[] } | null`。
-- `PlanSlotsDialog` props(單一職責:面板 UI + slot API;不直接碰編輯器 state):
-  - `open` / `onOpenChange`
-  - `getSnapshot(): PlanSnapshot` — 存檔時取目前整包快照
-  - `isDirty(): boolean` — 讀檔前檢查
-  - `currentSlot: number | null`
-  - `onLoaded(data: LoadedPlan): void` — 讀檔成功回拋(PlanEditor 套用)
-  - `onSaved(slot: Slot, planId: string): void` / `onDeleted(slot: Slot): void`
-- `AiPanel` props 擴充:`planId: string | null`、`slot: number | null`、`conversationSeed`。**不用 `key` remount**(remount 會重置 `open` 收合狀態與 config fetch);改用受控 seed:AiPanel 內 `useEffect` 監看 `conversationSeed?.seq`,變化時 `setTurns(seed.turns)`、`setPendingToolResults([])`、`setError(null)`。`seq` 為遞增計數器,連續讀同一格兩次也會觸發。
-
-### D3. Plan 快照 TS type(含 venueSizeM)
-於 `src/lib/venue/plan.ts` 定義並 export(spec/page object 也可 import):
-```ts
-export interface PlanSnapshot {
-  polygon: FloorPolygon;
-  walls: WallSegment[];
-  columns: Column[];
-  furniture: FurnitureItem[];
-  venueSizeM: number;
-}
-```
-(注意 `FurnitureItem` 在 `@/lib/venue/furniture` — 若 import 造成循環依賴,改放 `src/components/venue/` 層級的小型 types 檔或 PlanEditor 內 export,developer 視實際 import 圖擇一,不得複製型別定義。)
-存檔 PUT body = `{ plan: PlanSnapshot, name?: string }`。後端 `isValidPlanShape` 只驗 4 欄位、放行多餘欄位 — 不改後端。
-
-### D4. 讀檔資料流(`applyLoadedPlan`)
-`GET /api/plans/[slot]` 200 後,在 PlanEditor 依序:
-1. `const sizeM = typeof plan.venueSizeM === "number" ? clamp(plan.venueSizeM, MIN_VENUE_SIZE_M..MAX_VENUE_SIZE_M) : VENUE_SIZE_M`(舊測試資料缺欄位 fallback,edge case 明列)。
-2. `setVenueSizeM(sizeM)`、`setSizeInput(String(sizeM))`、`setPolygon(plan.polygon)`、`setWalls(plan.walls)`、`setColumns(plan.columns)`、`setFurniture(plan.furniture)`(整批覆蓋,同 `applyVenueSize` 精神但保留讀入內容、不重算預設地板)、`setSelectedObject(null)`、`setSelectedVertex(null)`。ref 同步交給既有 render-後 useEffect,毋須 eager 更新(applyActions 只會在之後的 chat 回應才讀 ref)。
-3. `setCurrentSlot(slot)`、`setCurrentPlanId(planId)`。
-4. `setConversationSeed({ seq: prev+1, turns: fromStoredConversation(conversation) })`。
-5. `setSavedBaseline(serializePlanSnapshot(讀入內容))`。
-6. 關閉 slots dialog。
-讀檔失敗(非 200):錯誤訊息顯示在面板內,**不執行以上任何一步**(原地狀態不丟)。
-
-### D5. Dirty 判定(取捨:序列化比對,不做逐操作 dirty flag)
-- dirty = `serializePlanSnapshot(目前) !== (savedBaseline ?? EMPTY_PLAN_BASELINE)`;`EMPTY_PLAN_BASELINE` = 初始空場地 `{ polygon: createDefaultFloor(VENUE_SIZE_M), walls: [], columns: [], furniture: [], venueSizeM: VENUE_SIZE_M }` 的序列化字串,module-level 算一次。
-- 取捨:逐操作 dirty flag 需在十多個 mutation handler(頂點/牆/柱/家具/AI actions/尺寸)各插一筆,侵入面大且易漏;序列化比對只在「點讀取」瞬間執行一次,物件量級小(百件內)成本可忽略,且天然涵蓋「改了又改回去 = not dirty」語意。僅讀檔前檢查,存檔不檢查(spec §5);既有尺寸彈窗/上一步下一步流程零改動。
-- 存檔成功、讀檔成功後各自重設 `savedBaseline`。
-
-### D6. conversation → ChatTurn 還原(`fromStoredConversation`)
-放 `src/lib/ai-panel/messages.ts`(與 `PRIOR_IMAGE_PLACEHOLDER`/`CONFIG_APPENDIX_HEADER` 同檔,單一事實來源;維持 isomorphic)。簽名:
-```ts
-export interface RestoredTurn {
-  role: "user" | "assistant";
-  content: Anthropic.ContentBlockParam[];
-  displayText?: string;        // user 輪:去掉 CONFIG_APPENDIX_HEADER 附錄後的可讀文字
-  priorImageCount?: number;    // user 輪:content 中 text === PRIOR_IMAGE_PLACEHOLDER 的 block 數
-}
-export function fromStoredConversation(rows: { role: string; content: unknown }[]): RestoredTurn[]
-```
-規則:
-- 逐列轉 turn;`content` 非陣列或 role 非 user/assistant 的列防禦性跳過(不 throw)。
-- user 輪 `displayText`:取第一個**非** placeholder 的 text block,若含 `CONFIG_APPENDIX_HEADER` 則截斷附錄(先找 `"\n\n" + CONFIG_APPENDIX_HEADER`,找不到退 `CONFIG_APPENDIX_HEADER`),trim。
-- `priorImageCount`:精確 `block.text === PRIOR_IMAGE_PLACEHOLDER` 全等比對(import 常數,不複製字串字面值)。
-- assistant 輪原樣(渲染沿用 `extractText`);`tool_result` block 原樣保留在 content(續聊送出時 `toApiMessages` 既有邏輯已正確處理舊輪,tool_use_id 鏈不斷)。
-- 歷史 turns 不重建 `actionSummary`(落庫沒有 tool 執行結果;assistant 文字本身已描述動作)— 明確接受,非 AC 要求。
-- AiPanel 的 `ChatTurn` 介面加 `priorImageCount?: number`(`RestoredTurn` 結構相容,seed 直接塞入)。
-
-### D7. AiPanel 渲染/行為變更
-- **歷史圖片占位**:user 輪渲染時,若 `priorImageCount` ≥ 1,在 displayText 旁渲染 N 個 chip「📷 參考圖」(`data-testid="ai-history-image-placeholder"`)。本 session 剛送出的訊息(handleSend 建立)不帶 `priorImageCount`,原圖預覽行為完全不變 — 採「還原時標記」而非「渲染時字串比對」,天然滿足「規則只套用讀回的歷史訊息」,並免去使用者剛好打出同字串的渲染誤判(比對本身仍引用同一常數)。
-- **chat 帶 planId**:`handleSend` fetch body 改 `{ messages: toApiMessages(nextTurns), ...(planId ? { planId } : {}) }`。`planId === null` 完全不帶欄位(後端 undefined 走零查詢路徑;既有 payload 瘦身斷言不受影響)。
-- **100 輪軟上限**:`Math.floor(turns.length / 2) >= 100` 時顯示 `data-testid="ai-turn-limit-hint"`(文案:「對話已達 100 輪,建議清空對話後重新開始,以確保 AI 回應品質」),不 disable 送出;清空/重整後自然消失。planId 有無皆同一邏輯(spec §7)。
-- **清空對話**:`planId !== null` 時才渲染 `data-testid="ai-clear-conversation-button"`(對話空也可見,spec 假設 3)。點擊開 `AlertDialog`(`ai-clear-conversation-confirm-dialog`,文案照 spec §6);確認 → `DELETE /api/plans/${slot}/conversation`;200 → `setTurns([])`、`setPendingToolResults([])`;非 200 → 以既有 `ChatError` 呈現(401 auth / 404 通用「找不到存檔」/ 其餘 generic),turns 原封不動(不 optimistic)。呼叫期間 disable 確認鈕防連點。
-- **刪除目前讀檔中的格**(PlanEditor 端):`onDeleted(slot)` 時若 `slot === currentSlot` → `setCurrentSlot(null)`、`setCurrentPlanId(null)`,**不動** turns/畫布/`conversationSeed`;AiPanel 因 `planId` 變 null 自動隱藏清空鈕、chat 不再帶 planId。刪除確認彈窗文案含「連同該格的 AI 對話一併刪除」,並補一句「若刪除的是目前讀取中的格,畫面內容保留但不再對應任何存檔」。
-
-### D8. 新端點 `DELETE /api/plans/[slot]/conversation`
-`src/app/api/plans/[slot]/conversation/route.ts`,只 export `DELETE`:
-1. `parseSlot`(嚴格白名單字串比對 "1"/"2"/"3")→ 400 `存檔格位不正確`。
-2. `requireUser()` → 401 `請先登入`。
-3. admin client 查 `venue_plans.select("id").eq("user_id", userId).eq("slot", slot).maybeSingle()` — `.eq("user_id")` 為安全關鍵(admin 無 RLS);查詢錯誤 500,無列 404 `找不到存檔`(與既有端點同字串同狀態碼,跨使用者/不存在不可區分)。
-4. `admin.from("ai_conversations").delete().eq("plan_id", planId)` — 採 orchestrator 建議「刪整列」,DB cascade 帶走 `ai_messages`,邏輯最簡;無對話列時 delete 影響 0 列仍回 200(冪等)。
-5. 回 `{ slot, cleared: true }` 200;錯誤字串沿用既有常數值。
-`parseSlot`/`requireUser` 為 module-local 小函式,在新檔內**複製**(~25 行)而非抽共用模組 — 對齊 AGENTS.md「route 內 validation inline、尚未抽 service layer」慣例(取捨見 Architecture Notes)。
-
-### D9. 存檔面板細節(PlanSlotsDialog)
-- 開啟時 `GET /api/plans`,loading 期間顯示載入中;失敗顯示錯誤 + 重試鈕,不擋關閉。
-- 固定渲染 3 列(後端保證回 3 元素):`plan-slot-row-{slot}`;占用列:`plan-slot-name-{slot}`、`plan-slot-updated-{slot}`(格式 `new Date(updatedAt).toLocaleString("zh-TW", { hour12: false })`,人類可讀即可)+「讀取」(`plan-load-button-{slot}`)「改名」(`plan-rename-button-{slot}`)「刪除」(`plan-delete-button-{slot}`)「存入此格」(`plan-save-button-{slot}`);空列:`plan-slot-empty-{slot}` +「存入此格」。
-- 名稱輸入:面板內一個共用選填 `Input`(`plan-save-name-input`),存入時帶上;空白不帶(後端 default「未命名場地」/更新沿用舊值)。
-- 存入此格統一函式:占用格先開覆蓋確認(文案帶該列現有 name/updatedAt);空格直送。PUT 成功 → 用回傳值局部更新該列 + 呼叫 `onSaved`。**PUT 不回 planId**(既有契約,本任務不改既有 5 支 API)→ 存檔成功後 `PlanSlotsDialog` 補一次 `GET /api/plans/[slot]` 取 `planId` 再呼叫 `onSaved(slot, planId)`;**該次 GET 的 `conversation` 一律丟棄,不餵入 seed**(存檔語意不改對話)。PlanEditor 在 `onSaved` 中設 `currentSlot`/`currentPlanId` 並重設 baseline。
-- 所有 mutation 呼叫期間 disable 對應按鈕(edge case:連點防重複送出;不做 optimistic-lock)。
-- 錯誤:PUT/PATCH/DELETE 失敗 → 在對應彈窗內顯示錯誤、不關閉、可重試/取消;讀檔失敗 → 面板內錯誤,狀態不丟。
-- 改名成功且 `slot === currentSlot`:無常駐徽章(Out of Scope 第 7 條),更新面板列即滿足 AC。
+| --- | --- |
+| `src/lib/venue/plan.ts` | 新增 `export const PLAN_AREA_SIZE_M = 200`;`EMPTY_PLAN_BASELINE` 的 `venueSizeM` 改用 `PLAN_AREA_SIZE_M`(其餘欄位不動)。**其他一律不動**(`VENUE_SIZE_M`=50 保留,語意變為「預設地板生成/預設視圖 fit 尺寸」— Assumption 2) |
+| `src/components/venue/PlanEditor.tsx` | 主要改動:view state + 滾輪/按鈕/pan、4 處指標座標遷移、venue-size UI/state/handler 整組移除、`venueSizeM` state → `PLAN_AREA_SIZE_M` 常數 |
+| `src/components/venue/VenueSceneLoader.tsx` | 透傳新的可選 prop `viewFitSizeM` |
+| `src/components/venue/VenueScene.tsx` | 新增可選 prop `viewFitSizeM`(預設 = `venueSizeM`):相機 position/target 與移動 gizmo 尺寸/步進改用它;ground plane 與 translate clamp 維持用 `venueSizeM` |
+| `src/lib/ai/system.ts` | 尺寸描述批次更新(Step 10),僅字串,同一 commit |
+| `src/lib/ai/tools.ts` | schema description 尺寸批次更新(Step 10),同一 commit |
+| `playwright-tests/pages/PlanEditorPage.ts` | `meterToScreen()` 納入 stage transform;新增 scale/pos 讀取與 zoom/pan 操作 helper |
 
 ## Implementation Steps
 
-1. **`src/lib/ai-panel/messages.ts`**:新增 `RestoredTurn` 介面與 `fromStoredConversation()`(D6),export;不動既有 `toApiMessages`。
-2. **`src/lib/venue/plan.ts`**(或 D3 註記的替代位置):新增 export `PlanSnapshot`、`serializePlanSnapshot(s): string`(固定欄位順序 stringify)、`EMPTY_PLAN_BASELINE` 常數。
-3. **`src/app/api/plans/[slot]/conversation/route.ts`**:實作 `DELETE`(D8)。
-4. **`src/components/venue/PlanSlotsDialog.tsx`**:新元件(D1/D9),含列表 fetch、三個 AlertDialog(覆蓋/讀檔 dirty/刪除)、改名 Dialog、名稱輸入,全部 testid 照 spec。讀取流程:`isDirty()` → 需要時先開 `plan-load-confirm-dialog` → 確認後 `GET /api/plans/[slot]` → 成功 `onLoaded(data)`。
-5. **`src/components/venue/PlanEditor.tsx`**:
-   a. 工具列「場地尺寸」旁新增 `plan-slots-button`(「我的存檔」,`variant="outline"`、`h-[34px]` 對齊既有按鈕)。
-   b. 新 state(D2)+ `applyLoadedPlan`(D4)+ `isDirty`/`getSnapshot` 回呼 + `onSaved`/`onDeleted` 處理(D7/D9)。
-   c. 掛載 `<PlanSlotsDialog …/>`(root div 內,與 size AlertDialog 同層);`<AiPanel plan={…} applyActions={…} planId={currentPlanId} slot={currentSlot} conversationSeed={conversationSeed} />`。
-   d. 供 Playwright 斷言:root div 加 `data-current-slot` / `data-current-plan-id`(比照既有 data-* 慣例)。
-6. **`src/components/venue/AiPanel.tsx`**:props 擴充 + seed useEffect + chat body 帶 planId + 清空對話(按鈕/AlertDialog/DELETE)+ 軟上限提示 + `priorImageCount` 占位 chip 渲染(D7)。`ChatTurn` 加 `priorImageCount?: number` 並 export type(供 seed 型別)。
-7. **`playwright-tests/pages/PlanSlotsPage.ts`**:locators(button、dialog、rows、name/updated/empty、各操作鈕、四個彈窗與 cancel/accept、rename input、save name input)+ 動作方法(`open()`、`saveToSlot(n)`、`loadSlot(n)`、`renameSlot(n, name)`、`deleteSlot(n)`)。
-8. **`playwright-tests/pages/AiPanelPage.ts`**:補 `clearButton`、`clearConfirmDialog`、`turnLimitHint`、`historyImagePlaceholder` locators。
-9. **`playwright-tests/plan-slots.spec.ts`**:mock 策略與案例見 Test Plan。
-10. **手動清單**:`supabase/tests/` 補新端點 4 情境(401 / 400 / 404 跨使用者 / 200 冪等重複呼叫)。
-11. `npm run lint` + 全套 Playwright(新 spec + `ai-panel.spec.ts` + `venue-*.spec.ts` 迴歸)綠燈。
+### A. domain 常數(plan.ts)
+
+1. `src/lib/venue/plan.ts`:新增 `export const PLAN_AREA_SIZE_M = 200;`(註解:可規劃範圍上限,前端 clamp 唯一來源;`VENUE_SIZE_M` 註解補充其新語意 = 預設地板生成與預設視圖 fit 尺寸)。`EMPTY_PLAN_BASELINE` 的 `venueSizeM: VENUE_SIZE_M` → `venueSizeM: PLAN_AREA_SIZE_M`(polygon 仍為 `createDefaultFloor(VENUE_SIZE_M)`)。⚠️ 此行不改的話,新的 `getSnapshot()`(送 200)對上舊 baseline(50)會讓全新畫布永遠判 dirty。`createDefaultFloor` / `DEFAULT_FLOOR` / 所有幾何函式簽名不動。
+
+### B. PlanEditor.tsx — 固定 200 與移除場地尺寸編輯
+
+2. 常數與 state/JSX 清理(移除清單):
+   - 刪除元件檔內 `MIN_VENUE_SIZE_M` / `MAX_VENUE_SIZE_M`,改 import `PLAN_AREA_SIZE_M`;新增 `const DEFAULT_VIEW_SIZE_M = VENUE_SIZE_M;`。
+   - 刪除 state:`venueSizeM`、`sizeEditorOpen`、`sizeInput`、`pendingSizeM`、`sizeConfirmOpen`。
+   - 刪除 handler:`openSizeEditor`、`applyVenueSize`、`handleSizeConfirm`、`handleSizeConfirmAccept`。
+   - 刪除 JSX:`venue-size-editor` / `venue-size-button` 條件塊(含 `venue-size-input`/`venue-size-confirm-button`/`venue-size-cancel-button`)、`sizeConfirmOpen` 的整個 `<AlertDialog>`(`venue-size-confirm-dialog`/`venue-size-confirm-cancel`/`venue-size-confirm-accept`)。
+   - 清理不再使用的 import:`Ruler`、`Input`、`Label`、全部 `AlertDialog*`(此檔僅 size confirm 在用);`VENUE_SIZE_M` 保留(供 `DEFAULT_VIEW_SIZE_M` 與 `viewFitSizeM`)。
+   - 舊 Playwright 測試移除:全 repo grep 確認 `playwright-tests/` 無任何 `venue-size` UI 引用(`venue-dimensions.spec.ts` 是尺寸標籤測試,無關)→ 實際需移除的舊測試為零檔案,開發者以 grep 再驗證一次即可。
+3. `venueSizeM` 引用全數改 `PLAN_AREA_SIZE_M`(逐處):`handleVertexDragMove`/`handleVertexDragEnd`(`moveVertex`)、`handleEdgeDblClick`(`insertVertexOnEdge`)、`handleStageMouseDown`/`handleStageMouseMove`(`snapPoint`)、`handleStageMouseUp`(`createWall`/`createColumn`)、`handleWallBodyDrag`(`translateWall`)、`handleColumnBodyDrag`(`translateColumn`)、`handleWallEndpointDrag`(`moveWallEndpoint`)、`handleColumnCornerDrag`(`resizeColumnCorner`)、`applyActions` 內全部(`snapPoint`×4、`createWall`、`clampColumnCenter`×2、`translateWall`、`translateColumn`、`translateFurniture`)、grid 的 `buildGridLines(pxPerMeter, PLAN_AREA_SIZE_M)`、兩組座標標籤 `Array.from({length: PLAN_AREA_SIZE_M / GRID_MAJOR_M + 1}, …)`、背景 `<Rect>` 的 `width`/`height` 改為 `PLAN_AREA_SIZE_M * pxPerMeter`(原 `stagePx`,否則 zoom out 後背景只蓋 50m)。
+4. `const pxPerMeter = computePxPerMeter(stagePx, DEFAULT_VIEW_SIZE_M);`(數值同現行預設 — 預設視覺不變的關鍵)。
+5. 存讀檔配套:
+   - `getSnapshot()`:`venueSizeM: PLAN_AREA_SIZE_M`(PUT 固定送 200 的 AC)。
+   - `applyLoadedPlan()`:刪除 `sizeM` 計算與 `setVenueSizeM`/`setSizeInput`;`savedBaseline` 的 `serializePlanSnapshot({...})` 改帶 `venueSizeM: PLAN_AREA_SIZE_M`(必須與 `getSnapshot()` 一致,否則讀檔後立即 false-dirty)。舊檔 `rawPlan.venueSizeM` 不論 40/50/>200/缺欄位一律忽略 → 天然滿足「≤200 舊檔相容、缺欄位 fallback 不崩潰」AC(無 fallback 分支殘留)。
+   - `VenueSceneLoader` 呼叫處:`venueSizeM={PLAN_AREA_SIZE_M}`、`viewFitSizeM={VENUE_SIZE_M}`。
+
+### C. PlanEditor.tsx — zoom/pan
+
+6. view state 與 zoom 核心:
+   - `const [view, setView] = useState({ scale: 1, x: 0, y: 0 });`、`const panBlockedRef = useRef(false);`、常數 `MIN_SCALE = DEFAULT_VIEW_SIZE_M / PLAN_AREA_SIZE_M`(0.25)、`MAX_SCALE = 4`、`WHEEL_SCALE_FACTOR = 1.06`、`BUTTON_SCALE_FACTOR = 1.25`。
+   - `function zoomTo(rawScale: number, anchor: { x: number; y: number })`(Konva 官方滾輪錨點食譜):
+     ```ts
+     const oldScale = view.scale;
+     const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, rawScale));
+     if (!Number.isFinite(newScale) || newScale === oldScale) return; // NaN/超界靜默收斂,不拋錯不重置
+     const worldPoint = { x: (anchor.x - view.x) / oldScale, y: (anchor.y - view.y) / oldScale };
+     setView({ scale: newScale, x: anchor.x - worldPoint.x * newScale, y: anchor.y - worldPoint.y * newScale });
+     ```
+   - `handleWheel(e: Konva.KonvaEventObject<WheelEvent>)`:`e.evt.preventDefault()`;`const pointer = stage.getPointerPosition(); if (!pointer) return;`(⚠️ 此處**刻意**用螢幕座標版 `getPointerPosition` — 錨點公式在螢幕座標系運算,是全檔唯一保留處,附 code comment);`zoomTo(e.evt.deltaY > 0 ? view.scale / WHEEL_SCALE_FACTOR : view.scale * WHEEL_SCALE_FACTOR, pointer)`。連續高頻 wheel:每 event 獨立 clamp,無抖動/超界回跳。
+   - `const resetView = () => setView({ scale: 1, x: 0, y: 0 });`(pan 到極端位置的一鍵復原)。
+7. Stage props 與 pan:
+   - `<Stage scaleX={view.scale} scaleY={view.scale} x={view.x} y={view.y} draggable={mode === "select"} onWheel={handleWheel} onDragStart={handleStageDragStart} onDragEnd={handleStageDragEnd} …既有 handler 不動>`。
+   - `handleStageMouseDown` 開頭(取得 stage 後)加:`panBlockedRef.current = e.target !== stage;`(mousedown 的 `e.target` 即命中節點:空白=Stage、地板=Line、物件/把手=該 shape;背景 Rect/grid 在 `listening={false}` layer 不會攔截)。
+   - `handleStageDragStart(e)`:`if (e.target === e.target.getStage() && panBlockedRef.current) e.target.getStage()!.stopDrag();` — 攔掉「按在地板/物件上卻拖動 Stage」;子節點自身 drag(頂點/選取物件/把手,`e.target !== stage`)直接不處理。
+   - `handleStageDragEnd(e)`:`if (e.target !== e.target.getStage()) return;` 之後 `setView(v => ({ ...v, x: e.target.x(), y: e.target.y() }))`(受控 props 與 Konva 內部位置回同步)。
+   - 既有 `handleStageMouseDown` select 分支的取消選取邏輯(`targetName(e) !== "object"`)保持不變。
+8. 指標座標遷移 — **完整清單(全檔實際僅 4 處 `getPointerPosition`,逐處列出)**,一律改 `stage.getRelativePointerPosition()`,保留既有 `if (!pointer) return;` 防呆(Error State AC):
+   1. `handleEdgeDblClick`(雙擊插入頂點的命中判定)
+   2. `handleStageMouseDown`(wall 起點 / select 空白判定用座標)
+   3. `handleStageMouseMove`(wall 拖曳終點)
+   4. `handleStageMouseUp`(column 放置點)
+   - **明確不遷移**(開發者勿多改):(a) Step 6 的 `handleWheel` 用螢幕座標;(b) 全部 drag handler(`handleVertexDragMove/End`、`handleWallBodyDrag`、`handleColumnBodyDrag`、`handleWallEndpointDrag`、`handleColumnCornerDrag`)讀的是 `node.x()/node.y()` = Layer(父層)座標 = 世界像素,Konva drag 已自動把 Stage transform 換算掉,任意縮放/平移下數值語意不變 — 這是 story 備註「~10 處」實際收斂為 4 處的原因,需在 code comment 記錄以防未來誤改。
+9. 工具列 zoom UI(放在原場地尺寸按鈕位置,樣式復用 `PlanToolbar.tsx` 已 export 的 `segmentClassName` 與其外框 `inline-flex overflow-hidden rounded-md border-[1.5px] border-blueprint bg-card` 容器樣式):
+   - `zoom-out-button`(−,`zoomTo(view.scale / BUTTON_SCALE_FACTOR, {x: stagePx/2, y: stagePx/2})`)、`zoom-level`(倍率文字,非按鈕)、`zoom-in-button`(+)、`zoom-reset-button`(重置視圖,呼叫 `resetView`)。lucide icon 建議 `ZoomOut`/`ZoomIn`/`Maximize`。
+   - wrapper div 增加 `data-stage-scale={view.scale}`、`data-stage-x={view.x}`、`data-stage-y={view.y}`。
+   - 畫布內「5 公尺」比例尺與座標數字標籤維持在既有 layer(隨內容縮放/平移 — 物理上一致;預設視圖下與現行逐像素相同)。
+
+### D. AI 提示批次(同一 commit,凍結字串規則)
+
+10. `src/lib/ai/system.ts` + `src/lib/ai/tools.ts` **必須與本任務其餘改動同一個 commit**(不得分批;prompt cache 前綴比對本輪必失效一次,分批會多失效一輪且產生 system/tools 認知不一致過渡態):
+    - `system.ts`(3 處,僅字串;禁止任何插值,`import "server-only"` 與凍結字串註解不動):
+      1. 「協助使用者在 50x50 公尺的場地編輯器中」→「200x200 公尺」
+      2. 「場地最大 50x50 公尺,座標原點在左上角…」→「場地最大 200x200 公尺,…」(原點/軸向/0.5 網格描述不變)
+      3. 「預設 10x10 正方形置中」→「預設 10x10 正方形位於 (20,20)–(30,30)」(200 範圍下「置中」已不成立,改為與 `DEFAULT_FLOOR` 一致的明確座標)
+    - `tools.ts`(4 處,僅 description 字串;schema 結構/strict 不動):
+      1. `POINT_SCHEMA.x.description`:「公尺,0-50」→「公尺,0-200」
+      2. `POINT_SCHEMA.y.description`:同上
+      3. `generate_plan` 的 `floor.description`:「座標 0-50 公尺、0.5 對齊」→「座標 0-200 公尺、0.5 對齊」
+      4. `resize_floor` 的 `points.description`:同上
+    - 完成後全檔 grep `0-50` / `50x50` / `50 公尺` 確認無遺漏。
+
+### E. 3D 配套(最小變更)
+
+11. `VenueScene.tsx`:props 增加 `viewFitSizeM?: number`,`const fit = viewFitSizeM ?? venueSizeM;` — 相機 `position={[fit*0.7, fit*0.9, fit*0.7]}`、`target={[fit/2, 0, fit/2]}`、gizmo `size={Math.max(1, fit * 0.04)}` 改用 fit;ground plane `args`/`position` 與 `translateWall/Column/Furniture` 的 clamp 維持 `venueSizeM`(=200)。`VenueSceneLoader.tsx` 增加同名可選 prop 透傳。效果:3D 預設取景與現行完全一致(fit=50),但拖曳 clamp 與地面涵蓋 200(2D 擴大範圍後的物件在 3D 不會被 50 卡住)。
+
+### F. 測試基建與新測試
+
+12. `playwright-tests/pages/PlanEditorPage.ts`:
+    - 新增讀取:`stageScale()`(`data-stage-scale`)、`stagePosition()`(`data-stage-x`/`data-stage-y`)。
+    - `meterToScreen()` 重做(把 stage transform 納入換算,Assumption 4):
+      ```ts
+      const [box, ppm, scale, pos] = await Promise.all([this.containerBox(), this.pxPerMeter(), this.stageScale(), this.stagePosition()]);
+      return { x: box.x + pos.x + meter.x * ppm * scale, y: box.y + pos.y + meter.y * ppm * scale };
+      ```
+      預設視圖(scale=1, pos=(0,0))下退化為現行公式 → 既有呼叫端(`dragVertexTo`/`drawWall`/`clickAt`/`dragObjectBody`/`dragWallEndpoint`/`dragColumnCorner`/`doubleClickAt`/`rightClickVertex`)全部自動獲得 transform 感知,零改動。
+    - 新增操作:`clickZoomIn()`/`clickZoomOut()`/`clickZoomReset()`、`zoomLevel()`(讀 `zoom-level` 文字)、`wheelZoomAt(meter, deltaY)`(`mouse.move` 到 `meterToScreen(meter)` 後 `page.mouse.wheel(0, deltaY)`)、`panByDrag(fromMeter, toMeter)`(空白公尺點間 mouse down-move-up)。
+    - 檔頭註解更新(現行註解明文假設「Stage 無 offset、meter(0,0) 對映 canvas 左上」— 改述兩層座標系)。
+13. 新增 `playwright-tests/venue-zoom-pan.spec.ts`(對齊 AC 逐條):
+    1. **預設視覺迴歸**:載入後 `data-stage-scale=1`、`data-stage-x/y=0`、`zoom-level` 顯示 `100%`、`data-px-per-meter === stagePx/50`、vertices === DEFAULT_FLOOR(20,20–30,30)。
+    2. **移除驗證**:`venue-size-button`/`venue-size-editor`/`venue-size-confirm-dialog` `count() === 0`。
+    3. **滾輪錨點縮放**:記下公尺點 (25,25) 縮放前 `meterToScreen`,`wheelZoomAt` 該點放大 → scale 上升、該點縮放後螢幕座標與縮放前差 < 1px、`zoom-level` 即時更新。
+    4. **按鈕縮放與夾值**:`clickZoomIn` ×1 → scale ≈ 1.25;連點至上限停在 400%;`clickZoomOut` 連點至下限停在 25%(並驗證 `200 * ppm * 0.25 === stagePx`,整個 200x200 恰好可視)。
+    5. **重置**:縮放+平移後 `clickZoomReset` → scale=1、x=0、y=0。
+    6. **pan 區隔**:select 模式空白處(如 (45,5),地板外)`panByDrag` → `data-stage-x/y` 改變且 vertices/objects 不變;地板內部點拖曳 → stage x/y 不變;選取物件後在物件上拖曳 → 物件公尺座標改變且 stage x/y 不變。
+    7. **縮放/平移狀態下互動正確性**(核心,先 wheel 縮放 + pan 到非預設狀態再逐項):`dragVertexTo`、`doubleClickAt` 邊上插頂點、`rightClickVertex` 刪頂點、wall 工具 `drawWall`、column 工具 `placeColumn`、`dragObjectBody`、`dragWallEndpoint`、`dragColumnCorner` — 斷言產出公尺座標與 1x/(0,0) 期望值一致(`toBeCloseTo(_, 5)`;期望值直接沿用既有 spec 同型測試)。
+    8. **擴大範圍**:zoom out 至 25% 後於 (150,150) `placeColumn` → `data-objects` 中心 = (150,150)(50–200 區間可編輯、clamp 200 生效)。
+    9. **存檔固定 200 + 舊檔相容**:mock `PUT /api/plans/[slot]` 攔截 body → `plan.venueSizeM === 200`;mock GET 回 `venueSizeM: 40` 舊檔 → 讀入正常顯示可編輯、隨後 PUT 仍送 200。
+14. 全套迴歸(不改既有斷言)+ `npm run lint`:`venue-plan-editor.spec.ts`、`venue-dimensions.spec.ts`、`venue-objects.spec.ts`、`venue-3d-scene.spec.ts`、`plan-slots.spec.ts`、`ai-panel.spec.ts`。已核對 `plan-slots.spec.ts` 現有斷言(vertexCount / furniture 數 / `typeof plan.venueSizeM === "number"`)皆與固定 200 相容;`venue-3d-scene.spec.ts` 斷言均為 data attribute(mesh 數/orbit flag),不受 viewFitSizeM 影響。
 
 ## Data Flow
 
-```
-存: PlanSlotsDialog --getSnapshot()--> PlanEditor 快照(含 venueSizeM)
-     --PUT /api/plans/[slot] {plan,name?}--> upsert --200--> 更新列
-     --GET /api/plans/[slot](取 planId,丟棄 conversation)--> onSaved(slot, planId)
-     --> PlanEditor: currentSlot/currentPlanId + savedBaseline 重設
-
-讀: 讀取 click -> isDirty()? confirm -> GET /api/plans/[slot]
-     --200 {planId,slot,name,plan,updatedAt,conversation}--> onLoaded
-     --> PlanEditor.applyLoadedPlan:
-         plan.* -> setVenueSizeM/setPolygon/setWalls/setColumns/setFurniture
-         conversation -> fromStoredConversation() -> conversationSeed{seq++, turns}
-         planId/slot -> currentPlanId/currentSlot;baseline 重設;dialog 關閉
-     --> AiPanel useEffect(seed.seq): setTurns(seed.turns), pendingToolResults=[]
-
-聊: AiPanel.handleSend -> POST /api/ai/chat {messages, planId?}
-     (後端:所有權驗證 -> 扣點 -> 模型 -> 該格落庫)
-
-清: ai-clear-conversation-button -> AlertDialog 確認
-     -> DELETE /api/plans/[slot]/conversation -> 200 -> turns=[], pendingToolResults=[]
-
-刪: plan-delete-button -> AlertDialog -> DELETE /api/plans/[slot]
-     -> onDeleted(slot): slot===currentSlot 時 currentSlot/PlanId=null(畫布/turns 不動)
-```
+- 編輯互動:螢幕 pointer → `getRelativePointerPosition()`(還原第二層)→ `pxToMeters(·, pxPerMeter)`(還原第一層)→ `plan.ts` 幾何函式(`sizeM = PLAN_AREA_SIZE_M`)→ setState → render `metersToPx` → Stage transform 上屏。
+- zoom/pan:wheel/按鈕/Stage drag → `view` state → 僅 Stage props;不落 snapshot、不進 API payload、不進 AI plan JSON。
+- 存檔:`getSnapshot()` 固定 `venueSizeM: 200` → PUT;讀檔:忽略存檔內 `venueSizeM` → baseline 以 200 序列化。
+- AI:tool call 座標(0–200)→ `applyActions` 既有 clamp(`PLAN_AREA_SIZE_M`)→ 畫布;prompt/schema 描述與前端 clamp 範圍一致。
 
 ## Test Plan
 
-無 unit test framework(專案慣例);FRONTEND 驗收 = Playwright,後端新端點 = 手動清單。
+無 unit test framework(依 AGENTS.md,FRONTEND 驗收 gate = Playwright):
 
-**Playwright 策略(mock vs 真 API 取捨)**:全部 `page.route()` mock(assumption 5 + `ai-panel.spec.ts` 既有慣例)— 不打真 Supabase/Anthropic、不需登入、零 flakiness、可精準做 postDataJSON payload 斷言;新端點與 401/404 真實行為由手動清單把關(專案後端驗證慣例)。route 匹配注意 Playwright「後註冊者先匹配」:建議用 **regex 分流**(`/\/api\/plans$/`、`/\/api\/plans\/\d$/`、`/\/api\/plans\/\d\/conversation$/`),避免 `/conversation` 被 `[slot]` 的 glob 吃掉;fixtures 以 helper 函式集中管理(比照 `mockAiChat` 佇列式)。
-
-`plan-slots.spec.ts` 案例(對應 Clarified AC):
-1. 開面板:3 列固定渲染,占用列 name/updated、空列占位(AC1)。
-2. 空格存入:直接 PUT;**postDataJSON 斷言 body.plan 含 `venueSizeM` + 4 欄位**(AC2)。
-3. 占用格存入:先覆蓋確認(含現有名稱/時間文案);確認才 PUT、取消不發請求(AC3)。
-4. dirty 讀檔:先動畫布(加一根柱子)再點讀取 → `plan-load-confirm-dialog`;取消不發 GET(AC4)。
-5. not-dirty 讀檔:直接讀,不跳彈窗(AC5)。
-6. 讀檔套用:mock GET 回含 venueSizeM 的 plan + conversation → 斷言 `data-vertices`/`data-furniture`/`data-current-plan-id` 等 data-*,AiPanel 顯示歷史對話;再送一則訊息,**攔截 chat 請求斷言 body.planId**(AC6)。加一條缺 venueSizeM 的 fixture 變體(fallback 不崩潰)。
-7. 歷史圖片占位:conversation fixture 含 `PRIOR_IMAGE_PLACEHOLDER` text block → `ai-history-image-placeholder` 顯示「📷 參考圖」,原始 placeholder 字串不出現(AC7)。
-8. displayText 還原:fixture user text 含 `[目前配置]` JSON 附錄 → 面板顯示不含附錄(AC8)。
-9. 改名:空字串不發請求;合法名稱 PATCH 後列更新(AC9)。
-10. 刪除:確認彈窗文案含「對話一併刪除」;確認後 DELETE、列變空格;刪除 currentSlot → `data-current-plan-id` 清空、turns 仍在、後續 chat 不帶 planId(AC10)。
-11. 清空對話:讀檔後按鈕可見 → 確認 → DELETE conversation → turns 清空、`data-furniture` 等配置不變;未讀檔時按鈕不存在(AC11/AC12)。
-12. 軟上限:seed 200 則訊息(100 輪)conversation fixture → `ai-turn-limit-hint` 顯示且送出鈕仍 enabled(AC13)。
-13. 錯誤路徑:GET /api/plans 500 → 面板錯誤 + 重試;讀檔 500 → 原地狀態不丟(Error States)。
-
-迴歸:`ai-panel.spec.ts` 全綠(未讀檔情境 chat body 不含 planId,既有 payload 攔截斷言不變)、`venue-*.spec.ts` 全綠(AC16)。
-AC14/AC15(401/跨使用者 404,含新端點):手動清單驗證 — Playwright mock 架構驗不到真後端,明確劃給手動。
-
-Edge cases 對應(orchestrator 清單):Dialog modal 鎖背景(邊界自動消滅)、空 conversation 讀檔 seed turns=[] 顯示既有空狀態、連點 disable、刪後重存同格 = 新 planId 新存檔(預期行為,無需處理)、placeholder 全等比對 import 常數、缺 venueSizeM fallback(D4 步驟 1 + 案例 6 變體)。
+- Playwright 新增:`venue-zoom-pan.spec.ts`(Step 13 全 9 案)。
+- Playwright 修改:`PlanEditorPage.ts`(Step 12)。
+- Playwright 迴歸:Step 14 全套既有 spec 原樣通過。
+- Edge cases 對照(orchestrator 清單):錨點縮放邊緣不產生 NaN(zoomTo 的 Number.isFinite 防呆 + 案3)、連續 wheel 夾值(案4)、極端 pan 一鍵復原(案5)、min zoom 完整容納 200(案4)、縮放態雙擊/右鍵 hit test(案7)、舊檔 venueSizeM 異常值(讀檔直接忽略欄位,天然涵蓋)、ResizeObserver 疊加(兩層設計章節;`ai-panel.spec.ts` 迴歸覆蓋側欄展開下畫布行為)。
 
 ## Architecture Notes
 
-- **不用 key remount AiPanel**(spec §6 留給 architect 決定):remount 會丟 `open` 收合狀態並重跑 config fetch;受控 `conversationSeed.seq` useEffect 侵入最小、行為可測。
-- **PUT 不回 planId** 是既有後端契約(本任務不改既有 5 支 API)→ 存檔成功後補一次 GET 取 planId。代價:每次存檔多一請求;收益:零契約變更。若 review 認為值得讓 PUT 回 planId,另開 task,本任務不做。
-- **新 route 複製 parseSlot/requireUser** 而非抽共用:對齊「validation inline、無 service layer」既定慣例;第三處重複時再抽(留給未來 task)。
-- **dirty 用序列化比對**:取捨見 D5;JSON key 順序風險不存在 — 快照物件由我們以固定字面量順序組裝。
-- **歷史 turns 無 actionSummary**:落庫未存 tool 執行結果,不重建;tool_use/tool_result 鏈由原樣保留的 content 維持不斷。
-- 效能:讀檔整批 setState 一次 render;serialize 僅在點「讀取」時執行一次,無熱路徑成本。
+- **偏離點 1(記錄)**:`venueSizeM` 存檔欄位保留但語意退化為「固定 200 的相容欄位」— story 定案,非 schema 變更。
+- **偏離點 2(記錄)**:3D `VenueScene` 增 `viewFitSizeM` prop — 維持 3D 預設取景不變、同時讓 clamp/地面用 200 的最小手術;ground plane 50→200 使背景邊緣略有視覺差異(spec 斷言皆 data attribute 不受影響),QA 目視確認。
+- **效能**:grid 由 51×2 條線增為 201×2 條 + 41×2 個座標標籤,均在 `listening={false}` layer,Konva 可負擔;若 QA 發現卡頓,視域裁剪列後續任務(不在本任務)。
+- **風險:受控 Stage 位置與 Konva drag 的同步** — pan 期間 Konva 直接動 stage 節點,dragEnd 才 setView;期間若 React re-render(如 AI 回應到達)會以舊 view 值覆蓋進行中的 pan。若實測觀察到跳動,把 `handleStageDragEnd` 的同步複製到 `onDragMove`(同樣加 `e.target === stage` guard)— 開發者可視情況直接加上,屬本計畫允許範圍。
+- **明確不做**:觸控手勢、視域裁剪、`VENUE_SIZE_M` 更名、AiPanel 常駐(story task 2)、資料遷移。
+- wheel 事件發生於子節點 drag 進行中的極端時序:不加 guard(Konva drag 以指標絕對座標計算,transform 改變後下一次 dragmove 自行收斂),QA 免測。
 
 ## Security Checklist
 
-- [ ] 無硬編碼 secrets/credentials(新增程式碼零 env 直讀;admin client 走既有 factory)
-- [ ] 新端點輸入驗證:slot 嚴格白名單字串比對(不用 Number())
-- [ ] 新端點 `requireUser()` 401 + admin 查詢 `.eq("user_id", userId)`(admin 無 RLS,安全關鍵)
-- [ ] 跨使用者/不存在統一 404 同字串**同狀態碼**(狀態碼相等性,防列舉慣例)
-- [ ] 不 log tokens/session/對話內容(錯誤 log 只含 code/message)
-- [ ] 前端一律走 `/api/*`,不直呼 Supabase client;`src/lib/ai-panel/` 不 import server-only 模組
-- [ ] AiPanel fetch 不新增任何 client 可控 `system` 欄位;planId 僅 uuid 字串
-- [ ] Playwright 不硬編碼真實憑證(本任務 mock 架構甚至不需帳號)
+- [ ] 無硬編碼 secrets/credentials(本任務僅前端常數與字串)
+- [ ] 輸入驗證:座標一律經 `snapPoint`/`clampToBounds`(0–200)既有邊界防呆,無新增使用者輸入面
+- [ ] Auth/permission:不涉及(`/api/plans/*`、`/api/ai/*` 保護不變)
+- [ ] 無敏感資料 log
+- [ ] `src/lib/ai/` 專項:`import "server-only"` 邊界不動;`SYSTEM_PROMPT` 維持凍結字串、零插值;cache 斷點結構不動;client 端不得 import `src/lib/ai/*`
+- [ ] Playwright 測試帳密僅 `.env.playwright.local`,spec 內不硬編碼
 
 ## Definition of Done
 
-- [ ] Implementation Steps 1–11 全部完成,無 TODO/註解掉的程式碼/debug log
-- [ ] orchestrator-output.md 全部 16 條 AC 可對應到實作與測試(AC14/15 → 手動清單)
-- [ ] `npm run lint` 通過
-- [ ] `plan-slots.spec.ts` 全綠 + `ai-panel.spec.ts`、`venue-*.spec.ts` 迴歸全綠
-- [ ] Security Checklist 全數通過
-- [ ] 符合 AGENTS.md 全部守則(`@/*` alias、shadcn 元件沿用、admin client 慣例、isomorphic 邊界)
+- [ ] Steps 1–12 實作完成;`PlanEditor.tsx` 內 `getPointerPosition` 僅剩 `handleWheel` 一處(附註解)
+- [ ] `system.ts`/`tools.ts` 尺寸描述與其餘改動同一 commit,grep 無殘留 `0-50`/`50x50`
+- [ ] `venue-zoom-pan.spec.ts` 9 案全過;既有 6 支相關 spec 不改斷言原樣通過;`npm run lint` 乾淨
+- [ ] 預設載入視覺與現行逐像素一致(scale=1/x=0/y=0、pxPerMeter 公式值不變、DEFAULT_FLOOR 位置不變)
+- [ ] 無 TODO / 註解掉的程式碼 / debug log
+- [ ] Security checklist 全數通過
+- [ ] 符合 AGENTS.md 全部規則(含 `@/*` alias、eslint-config-next)

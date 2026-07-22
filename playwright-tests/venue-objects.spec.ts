@@ -84,18 +84,27 @@ test.describe("Venue Plan Editor - Task 2 object system", () => {
     expect(await editor.selectedId()).toBe(columns[0].id);
   });
 
-  test("column mode: center is clamped to [0.25, 49.75] near the canvas edge", async ({
+  test("column mode: center is clamped to [0.25, 199.75] near the plannable-area edge", async ({
     page,
   }) => {
+    // Plannable range is PLAN_AREA_SIZE_M = 200 (2D 畫布 zoom/pan 任務),
+    // not the default 50m view-fit — zoom all the way out, anchored at
+    // meter (0,0) so pan stays at (0,0), to bring the true 200x200 edge
+    // into the canvas's clickable area before placing near it.
     const editor = new PlanEditorPage(page);
     await editor.navigate();
 
+    for (let i = 0; i < 30; i++) {
+      await editor.wheelZoomAt({ x: 0, y: 0 }, 240);
+    }
+    expect(await editor.stageScale()).toBeCloseTo(0.25, 2);
+
     await editor.columnTool();
-    await editor.placeColumn({ x: 0, y: 49.9 });
+    await editor.placeColumn({ x: 0, y: 199.9 });
 
     const { columns } = await editor.objects();
     expect(columns[0].center.x).toBeCloseTo(0.25, 5);
-    expect(columns[0].center.y).toBeCloseTo(49.75, 5);
+    expect(columns[0].center.y).toBeCloseTo(199.75, 5);
   });
 
   test("選取模式: clicking a wall/column selects it; clicking empty space clears selection", async ({

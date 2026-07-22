@@ -37,13 +37,19 @@ export type EditorMode = "select" | "wall" | "column";
 //   label text or ""), data-wall-label (Task 3, current selected/dragging
 //   wall "L m" label text or ""), data-edge-labels (Task 3, JSON array of
 //   always-on floor edge-length label strings, in polygon edge order).
-// This page object owns the meter -> screen-pixel math (see
-// src/components/venue/PlanEditor.tsx: the Stage has no margin/offset —
-// meter (0,0) maps directly to the wrapper div's top-left corner, scaled
-// by data-px-per-meter) and drives all interactions via page.mouse at the
-// computed canvas coordinates. Note: a single <Stage> still renders as a
-// single <canvas> — the new toolbar (PlanToolbar.tsx) is plain DOM,
-// addressed by its own data-testid attributes below.
+// This page object owns the meter -> screen-pixel math and drives all
+// interactions via page.mouse at the computed canvas coordinates. Note: a
+// single <Stage> still renders as a single <canvas> — the toolbar
+// (PlanToolbar.tsx) is plain DOM, addressed by its own data-testid
+// attributes below.
+//
+// Two coordinate layers (architect-plan.md "兩層座標系職責分界"):
+//   meters -> world px, via data-px-per-meter (unaffected by zoom/pan)
+//   world px -> screen px, via the Stage's own scale/position transform
+//   (data-stage-scale/data-stage-x/data-stage-y), driven by wheel/buttons/
+//   drag pan. meterToScreen() below composes both layers; at the default
+//   view (scale=1, x=0, y=0) it degenerates to the original formula, so all
+//   existing call sites are transform-aware with zero changes.
 //
 // Task 5 (2-step wizard): the wrapper's children are now split into two
 // mutually exclusive containers, [data-testid="step-edit"] (toolbar +
@@ -109,6 +115,21 @@ export class PlanEditorPage {
     return Number(raw);
   }
 
+  /** Current Stage zoom scale (`data-stage-scale`), 1 = default view. */
+  async stageScale(): Promise<number> {
+    const raw = await this.editor.getAttribute("data-stage-scale");
+    return Number(raw);
+  }
+
+  /** Current Stage pan position in world px (`data-stage-x`/`data-stage-y`). */
+  async stagePosition(): Promise<PlanPoint> {
+    const [x, y] = await Promise.all([
+      this.editor.getAttribute("data-stage-x"),
+      this.editor.getAttribute("data-stage-y"),
+    ]);
+    return { x: Number(x), y: Number(y) };
+  }
+
   /**
    * Bounding box of the <canvas> (the Stage's origin, no extra offset/margin).
    * Anchored on the canvas rather than the wrapper div because the Task 2
@@ -123,13 +144,15 @@ export class PlanEditorPage {
 
   /** Convert a meter-space point to absolute screen coordinates for page.mouse.* calls. */
   async meterToScreen(meter: PlanPoint): Promise<PlanPoint> {
-    const [box, ppm] = await Promise.all([
+    const [box, ppm, scale, pos] = await Promise.all([
       this.containerBox(),
       this.pxPerMeter(),
+      this.stageScale(),
+      this.stagePosition(),
     ]);
     return {
-      x: box.x + meter.x * ppm,
-      y: box.y + meter.y * ppm,
+      x: box.x + pos.x + meter.x * ppm * scale,
+      y: box.y + pos.y + meter.y * ppm * scale,
     };
   }
 
@@ -376,5 +399,45 @@ export class PlanEditorPage {
   async orbitControlsPresent(): Promise<boolean> {
     const raw = await this.scene.getAttribute("data-orbit-controls");
     return raw === "true";
+  }
+
+  // --- zoom/pan --------------------------------------------------------
+
+  async clickZoomIn() {
+    await this.page.locator('[data-testid="zoom-in-button"]').click();
+  }
+
+  async clickZoomOut() {
+    await this.page.locator('[data-testid="zoom-out-button"]').click();
+  }
+
+  async clickZoomReset() {
+    await this.page.locator('[data-testid="zoom-reset-button"]').click();
+  }
+
+  /** Current zoom-level display text (e.g. "100%"). */
+  async zoomLevel(): Promise<string> {
+    return (
+      (await this.page.locator('[data-testid="zoom-level"]').textContent()) ??
+      ""
+    );
+  }
+
+  /** Scroll-wheel zoom, anchored at the given meter-space point. */
+  async wheelZoomAt(meter: PlanPoint, deltaY: number) {
+    const pt = await this.meterToScreen(meter);
+    await this.page.mouse.move(pt.x, pt.y);
+    await this.page.mouse.wheel(0, deltaY);
+  }
+
+  /** Press-drag pan the Stage from one meter-space point to another (blank canvas area). */
+  async panByDrag(fromMeter: PlanPoint, toMeter: PlanPoint) {
+    const start = await this.meterToScreen(fromMeter);
+    const end = await this.meterToScreen(toMeter);
+
+    await this.page.mouse.move(start.x, start.y);
+    await this.page.mouse.down();
+    await this.page.mouse.move(end.x, end.y, { steps: 8 });
+    await this.page.mouse.up();
   }
 }

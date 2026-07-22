@@ -14,6 +14,12 @@ import {
   Table2,
   Armchair,
   Archive,
+  Store,
+  Flag,
+  Sofa,
+  Presentation,
+  Flower2,
+  Package,
   RotateCcw,
   PanelLeftClose,
   PanelLeftOpen,
@@ -50,6 +56,12 @@ const FURNITURE_ICONS: Record<FurnitureKind, typeof Table2> = {
   table: Table2,
   chair: Armchair,
   cabinet: Archive,
+  counter: Store,
+  bannerStand: Flag,
+  sofa: Sofa,
+  podium: Presentation,
+  plant: Flower2,
+  display: Package,
 };
 
 interface VenueSceneProps {
@@ -58,6 +70,9 @@ interface VenueSceneProps {
   columns: Column[];
   furniture: FurnitureItem[];
   venueSizeM?: number;
+  // 選填:相機取景/gizmo 尺寸的 fit 基準,與 venueSizeM(ground plane/clamp
+  // 用)分離 — 預設回退到 venueSizeM,維持既有呼叫端行為不變。
+  viewFitSizeM?: number;
   onSceneChange?: (next: {
     walls: WallSegment[];
     columns: Column[];
@@ -96,8 +111,10 @@ export default function VenueScene({
   columns,
   furniture,
   venueSizeM = VENUE_SIZE_M,
+  viewFitSizeM,
   onSceneChange,
 }: VenueSceneProps) {
+  const fit = viewFitSizeM ?? venueSizeM;
   const [localWalls, setLocalWalls] = useState(walls);
   const [localColumns, setLocalColumns] = useState(columns);
   const [localFurniture, setLocalFurniture] = useState<FurnitureItem[]>(furniture);
@@ -307,7 +324,7 @@ export default function VenueScene({
           <div className="h-[480px] w-full overflow-hidden rounded border border-stone-300 bg-stone-100">
         <Canvas
           camera={{
-            position: [venueSizeM * 0.7, venueSizeM * 0.9, venueSizeM * 0.7],
+            position: [fit * 0.7, fit * 0.9, fit * 0.7],
             fov: 50,
           }}
         >
@@ -322,7 +339,7 @@ export default function VenueScene({
             maxPolarAngle={Math.PI / 2 - 0.05}
             minDistance={5}
             maxDistance={150}
-            target={[venueSizeM / 2, 0, venueSizeM / 2]}
+            target={[fit / 2, 0, fit / 2]}
           />
           <gridHelper
             args={[venueSizeM, venueSizeM]}
@@ -415,7 +432,7 @@ export default function VenueScene({
               showY={isFurnitureRotate}
               showZ={!isFurnitureRotate}
               rotationSnap={Math.PI / 12}
-              size={Math.max(1, venueSizeM * 0.04)}
+              size={Math.max(1, fit * 0.04)}
               onMouseDown={handleDragMouseDown}
               onMouseUp={commitTransform}
             />

@@ -1,47 +1,51 @@
-# Code Review Report — 存檔 UI 三格面板 + AiPanel 續聊/清空對話/軟上限/歷史圖片占位
-> Generated: 2026-07-22T18:05:00+08:00 | Review iteration: 1
+# Code Review Report — 2D 畫布 zoom/pan(固定 200x200,移除場地尺寸編輯器)
+
+> Generated: 2026-07-22T23:55:00+08:00 | Review iteration: 1
 
 ## Overall Assessment
-APPROVED WITH MINOR FIXES
+
+APPROVED
 
 ## Summary
-實作忠實對應 architect-plan.md D1–D9 與 orchestrator 全部 16 條 AC:新端點、面板、dirty 判定、seed 還原、測試皆到位,慣例(admin `.eq("user_id")`、防列舉 404、testid 命名、isomorphic 邊界)全數遵守。發現 2 個 🟡(續聊 payload 對還原 placeholder 的 slim 誤處理、存檔後補 GET planId 的無聲失敗),已依 pipeline 指示於 review 階段直接修正並補迴歸測試;lint/tsc/相關 Playwright 重跑全綠。
+
+實作與 architect-plan.md 高度一致:兩層座標系(pxPerMeter × Stage transform)分界正確、4 處 `getPointerPosition` 遷移完整且僅 `handleWheel` 依計畫保留螢幕座標(附註解)、pan 命中判斷(`panBlockedRef` + `stopDrag`)不搶物件拖曳、場地尺寸編輯器移除乾淨無殘留、`EMPTY_PLAN_BASELINE`/`getSnapshot()`/`applyLoadedPlan()` baseline 三處同步為 200(dirty 判定一致)。`npm run lint` 與 `npx tsc --noEmit` 皆乾淨。唯一顯著發現:working tree 混入一組**不屬於本任務計畫**的家具種類擴充(6 種新家具,詳見 🟡 Issue 1),為 pipeline 啟動前即存在的未 commit 變更,內部一致且不違反安全規則,但超出本任務「AI 提示僅改尺寸字串」的計畫敘述,需人類在 commit 時知悉處置。
 
 ## 🔴 Critical Issues (Must Fix — Pipeline Paused)
+
 無。
 
-## 🟡 Should Fix (Auto-resolved)
+## 🟡 Should Fix (Auto-resolved by Developer)
 
-### Issue 1 — 還原歷史輪續聊時 slim 邏輯破壞 placeholder / 產生空 text block
-- **File**: `src/lib/ai-panel/messages.ts:41`(`slimOldUserContent`)
-- **Issue**: 讀檔還原的 user 輪,其圖片在落庫時已換成 `text === PRIOR_IMAGE_PLACEHOLDER` 的 text block(非 image block)。續聊時 `toApiMessages` 把「每一個」text block 都換成 `displayText`:(a) placeholder 語意遺失且 displayText 重複多份;(b) image-only 歷史輪 `displayText === ""` → 產生空 text block,Anthropic API 拒絕空 text → 模型呼叫失敗;而扣點在模型呼叫之前、phase 1 不退點,使用者白扣點。
-- **Impact**: 破壞 orchestrator §6「讀檔後可直接續聊」行為(凡歷史含圖片輪即中獎)。未違反 Clarified AC 明文(AC6 僅要求 chat body 帶 planId),故列 🟡 而非 🔴。
-- **Resolution**: `slimOldUserContent` 改為:`text === PRIOR_IMAGE_PLACEHOLDER` 的 block 原樣保留;displayText 僅推一次且空字串不推。fresh 輪行為不變(`ai-panel.spec.ts` 3 條 payload 瘦身測試維持綠)。並在 `plan-slots.spec.ts` AC7 測試補續聊迴歸斷言(placeholder 保留 + 全 payload 無空 text block)。
+### Issue 1 — 計畫外變更混入 working tree:家具種類由 3 種擴充為 9 種
 
-### Issue 2 — 存檔後補 GET planId 失敗被無聲吞掉
-- **File**: `src/components/venue/PlanSlotsDialog.tsx:146`(`performSave`)
-- **Issue**: PUT 成功後補 GET 取 planId(D9 契約取捨);GET 非 200 時 `onSaved` 不會呼叫且無任何提示 → `currentPlanId` 維持 null:後續 chat 不落庫、清空鈕不出現、baseline 未重設(之後讀檔誤跳 dirty 確認)。GET 網路 throw 甚至落入外層 catch 誤顯示「存檔失敗」(實際已成功)。
-- **Resolution**: 補 GET 改獨立 try/catch;失敗時於面板顯示「存檔成功,但無法取得存檔識別碼,請點『讀取』重新載入此格以啟用對話存檔」,不再誤報存檔失敗。
+- **File**: `src/lib/venue/furniture.ts`、`src/lib/ai-panel/actions.ts`、`src/lib/ai/system.ts`(場地領域規則家具清單行)、`src/lib/ai/tools.ts`(`generate_plan`/`add_furniture` 的 kind enum 與 description)、`src/components/venue/VenueScene.tsx`(FURNITURE_ICONS 6 個新 icon)
+- **Issue**: 新增 counter/bannerStand/sofa/podium/plant/display 六種家具。architect-plan.md Step 10 與 orchestrator Out of Scope 明文「AI 提示/tools schema 僅尺寸描述文字變更,不動 schema 結構」,此變更改了 tools.ts 的 enum(結構性)並改了 system.ts 家具清單行(非尺寸字串)。查證:這 5 個檔案在本 pipeline 任務啟動前即已是 modified 狀態(前次 git status 快照僅列這 5 檔),developer 的 implement 記錄(task-log 2026-07-22T15:14:39Z)亦完全未提及 → 判定為使用者既有的 in-flight 工作(68ba48e 家具系統的延伸),非 developer agent 越界。
+- **內部一致性已核**: `FurnitureKind` 型別(furniture.ts/actions.ts)、`FURNITURE_DEFAULTS` 9 鍵齊全(applyActions/2D/3D 渲染均查此表,無 crash 路徑)、tools.ts 兩處 enum 同步、system.ts 描述與 defaults 尺寸吻合、lucide icon(Store/Flag/Sofa/Presentation/Flower2/Package)皆存在、lint/tsc 乾淨。凍結字串規則未破壞(零插值)、scope guard/工作模式規則逐字未動、`import "server-only"` 不變。
+- **Suggested fix**: 程式碼本身無需修改。處置 = commit 衛生:建議將家具擴充與本任務分成兩個 commit(注意 system.ts/tools.ts 的「尺寸 200」與「家具九種」若分拆,每個 commit 內 system/tools 需各自認知一致);或由人類確認一併納入。prompt cache 本輪必失效一次,一起 commit 反而少失效一輪 — 由人類定奪。
 
 ## 💡 Suggestions (Consider — No Action Required)
-- `AiPanel.tsx` 軟上限提示文案硬編「100 輪」而判斷用 `TURN_LIMIT` 常數 — 若未來調常數需同步文案(文案為 spec 指定,接受)。
-- `plan-slots.spec.ts` `closeSlotsDialogViaClose` 用 `[data-slot="dialog-close"]`(shadcn 內部實作細節 selector),升版可能脆化;可改 Esc 或 aria label。
-- AC11 清空對話測試可補 DELETE 呼叫次數斷言(目前以 turns 清空間接驗證成功路徑)。
+
+1. **VenueScene `maxDistance={150}`**:venueSizeM=200 後,3D 相機最遠 150 拉不到能盡覽 200x200 地面的距離(對角 ~283m)。計畫明訂 3D 最小變更,僅記錄供後續任務。
+2. **`zoomTo` 讀 render 閉包的 `view`**:同一 frame 內若連續多發 wheel event,第二發用到舊 view 可能有極輕微錨點抖動(clamp 保證不發散)。計畫原文即此寫法(Konva 官方食譜同),僅記錄。
+3. **`venue-objects.spec.ts` 邊界測試新增了 zoom-out 前置操作**(30 次 wheelZoomAt 錨定 (0,0) + stageScale 斷言),超出「僅改數值與標題」的字面範圍 — 但為必要配套(199.9 在預設 50m 視圖點不到),clamp-to-boundary 斷言意圖不變,認可並已在該測試留有理由註解。
 
 ## Security Assessment
-- Secrets scan: PASS(零硬編 secrets/env 直讀;client 端無 `src/lib/ai/`、`supabase/admin` import;Playwright 全 mock 不含真憑證)
-- Input validation: PASS(新端點 slot 嚴格白名單字串比對,與既有 route 逐字一致)
-- Auth/authz: PASS(`requireUser()` 401;admin 查詢 `.eq("user_id", userId)`;跨使用者/不存在統一 404「找不到存檔」同字串**同狀態碼**,防列舉慣例維持;新端點受 proxy fail-closed 保護免改 allowlist;error log 僅 code/message,無對話內容)
-- 前端一律走 `/api/*`;`src/lib/ai-panel/` 維持 isomorphic;chat body 無 client 可控 `system` 欄位
-- Test coverage: 新端點 → 手動清單 `supabase/tests/plans_conversation_manual.md`(401/400/404 跨使用者/200 冪等);前端 → `plan-slots.spec.ts` 14 tests 全綠 + `ai-panel.spec.ts`、`venue-*.spec.ts` 迴歸全綠(24+55 passed, 1 skipped @paid)
+
+- Secrets scan: PASS(全 diff 無 secrets/tokens/credentials;`venue-zoom-pan.spec.ts` 全程 page.route mock,無登入、無硬編帳密)
+- Input validation: PASS(座標一律經 `snapPoint`/`clampToBounds`(0–200)既有防呆;`zoomTo` 有 `Number.isFinite` + clamp、`getRelativePointerPosition` null 走既有 `if (!pointer) return;`;無新增使用者輸入面)
+- Auth/authz: N/A(未觸及 auth/session/`DATABASE_URL`/proxy.ts/API 保護 — 無自動 🔴 觸發)
+- `src/lib/ai/` 專項: PASS(`import "server-only"` 不動、SYSTEM_PROMPT 維持凍結 template literal 零插值、cache 斷點結構不動、client 端無 `src/lib/ai/*` import、system.ts 與 tools.ts 同一 working tree 將同 commit)
+- CORS/CSP: 未修改
+- Test coverage: 新功能由 `venue-zoom-pan.spec.ts` 9 案完整覆蓋(對齊 AC 逐條),3 支既有 spec 邊界常數 50→200 配套,`PlanEditorPage.meterToScreen` transform 感知後既有呼叫端零改動;developer 已回報全套迴歸 113 passed(playwright stage 將再驗)
 
 ## Plan Compliance
-- [x] All architect plan steps implemented(Steps 1–11;D1–D9 決策逐項對應)
-- [x] Implementation matches plan intent(不用 key remount、序列化 dirty、刪整列 conversation、PUT 後補 GET 皆照 plan)
-- [x] No unauthorised scope additions(唯一後端新增即 orchestrator §8 核可的 DELETE conversation 端點;未觸及 src/proxy.ts 與既有 5 支 plans API)
+
+- [x] All architect plan steps implemented(Steps 1–14 逐項核對:PLAN_AREA_SIZE_M/baseline、view state/zoomTo/wheel/pan、4 處遷移 + 2 類「明確不遷移」遵守、UI 移除清單全數(state/handler/JSX/import 無殘留,grep 驗證)、getSnapshot/applyLoadedPlan/VenueSceneLoader 配套、viewFitSizeM(預設回退 venueSizeM,既有呼叫端不變;ground plane/clamp 仍用 venueSizeM)、AI 尺寸字串 3+4 處(grep 無 `0-50`/`50x50`/`50 公尺` 殘留)、page object、9 案新 spec)
+- [x] Implementation matches plan intent(pan 區隔機制、MIN_SCALE=0.25/MAX_SCALE=4、步進 1.06/1.25、按鈕錨點畫布中心、背景 Rect 200*ppm、data-stage-* hooks、zoom UI 復用 segmentClassName,皆與定案一致)
+- [ ] No unauthorised scope additions — **家具九種擴充混入(🟡 Issue 1,判定為使用者既有工作,非 agent 越界;commit 時人類處置)**
 
 ## Conversation Log
+
 | Issue | Developer Response | Resolution |
 |---|---|---|
-| Issue 1(slim 破壞還原 placeholder) | 依 pipeline 指示於 review 階段直接修正 | `messages.ts` slim 修正 + AC7 續聊迴歸斷言;plan-slots/ai-panel 全綠 |
-| Issue 2(補 GET planId 無聲失敗) | 依 pipeline 指示於 review 階段直接修正 | `PlanSlotsDialog.tsx` 獨立 try/catch + 面板提示;lint/tsc 綠 |
+| 🟡 Issue 1(計畫外家具擴充) | 非 developer agent 產出(pipeline 啟動前即存在的使用者 working tree 變更),無程式碼修正需求 | 內部一致性/安全規則已由 reviewer 核畢;處置(同 commit 或分拆)留待人類 commit 時決定,已記錄 |
