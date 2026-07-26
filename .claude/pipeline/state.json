@@ -1,27 +1,27 @@
 {
-  "story_file": "stories/plan-editor-ux.md",
-  "story_title": "PlanEditor 操作體驗改善(zoom/pan + AI 面板常駐)",
+  "story_file": "stories/venue-refined-3d.md",
+  "story_title": "精密 3D 場景 (步驟 03)",
   "task_index": 1,
-  "current_task": "[FRONTEND] AiPanel 跨步驟常駐:掛載點提升至步驟切換之外(CSS 控制顯示),3D 預覽步驟顯示側欄並可對話、tool call 套用即時反映 3D;Playwright 驗收(切步驟對話保留、預覽步驟下指令)",
+  "current_task": "[FRONTEND] 打光與陰影:shadow map、多光源配置、tone mapping / 環境光設定,套用至步驟 03 場景",
   "task_type": "FRONTEND",
-  "stage": "complete",
+  "stage": "scan",
   "iteration": {
-    "review": 1,
-    "qa": 1
+    "review": 0,
+    "qa": 0
   },
   "checkpoints": {
-    "scan": "completed",
-    "orchestrate": "completed",
-    "architect": "completed",
-    "implement": "completed",
-    "review": "completed",
-    "qa": "completed",
-    "playwright": "completed"
+    "scan": "pending",
+    "orchestrate": "pending",
+    "architect": "pending",
+    "implement": "pending",
+    "review": "pending",
+    "qa": "pending",
+    "playwright": "pending"
   },
   "flags": {
     "review_critical_pending": false,
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "last_updated": "2026-07-23T02:45:00+08:00"
+  "last_updated": "2026-07-26T01:40:00+08:00"
 }

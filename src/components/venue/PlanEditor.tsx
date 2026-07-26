@@ -57,6 +57,7 @@ import PlanSlotsDialog, {
 } from "./PlanSlotsDialog";
 import PlanToolbar, { segmentClassName, type EditorMode } from "./PlanToolbar";
 import VenueSceneLoader from "./VenueSceneLoader";
+import RefinedSceneLoader from "./RefinedSceneLoader";
 import { Button } from "@/components/ui/button";
 
 const MIN_STAGE_PX = 320;
@@ -73,7 +74,7 @@ type SelectedObject = {
   type: "wall" | "column" | "furniture";
   id: string;
 } | null;
-type WizardStep = "edit" | "preview";
+type WizardStep = "edit" | "preview" | "refined";
 
 function buildGridLines(pxPerMeter: number, venueSizeM: number) {
   const lines: {
@@ -107,6 +108,7 @@ function buildGridLines(pxPerMeter: number, venueSizeM: number) {
 const WIZARD_STEPS: { step: WizardStep; no: string; label: string }[] = [
   { step: "edit", no: "01", label: "繪製平面圖" },
   { step: "preview", no: "02", label: "預覽 3D 場景" },
+  { step: "refined", no: "03", label: "精密 3D" },
 ];
 
 // 圖紙頁籤式步驟指示:等寬字大號編號 + 粗藍底線標記當前步,
@@ -115,7 +117,7 @@ function StepProgress({ current }: { current: WizardStep }) {
   return (
     <ol
       data-testid="step-progress"
-      className="mb-4 flex max-w-md gap-7 border-b-2 border-line"
+      className="mb-4 flex max-w-xl gap-7 border-b-2 border-line"
     >
       {WIZARD_STEPS.map((s) => {
         const isCurrent = s.step === current;
@@ -468,6 +470,14 @@ export default function PlanEditor() {
 
   function handleBackToEdit() {
     setStep("edit");
+  }
+
+  function handleToRefined() {
+    setStep("refined");
+  }
+
+  function handleBackToPreview() {
+    setStep("preview");
   }
 
   function markObjectClickSuppressed() {
@@ -1548,6 +1558,14 @@ export default function PlanEditor() {
               >
                 上一步
               </Button>
+              <Button
+                type="button"
+                data-testid="to-refined-button"
+                onClick={handleToRefined}
+                className="mb-2 ml-2"
+              >
+                下一步
+              </Button>
               <VenueSceneLoader
                 key={generation}
                 polygon={polygon}
@@ -1560,14 +1578,42 @@ export default function PlanEditor() {
               />
             </div>
           )}
+          {step === "refined" && sceneGenerated && (
+            <div data-testid="step-refined">
+              <Button
+                type="button"
+                variant="outline"
+                data-testid="back-to-preview-button"
+                onClick={handleBackToPreview}
+                className="mb-2"
+              >
+                上一步
+              </Button>
+              <RefinedSceneLoader
+                polygon={polygon}
+                walls={walls}
+                columns={columns}
+                furniture={furniture}
+                venueSizeM={PLAN_AREA_SIZE_M}
+                viewFitSizeM={VENUE_SIZE_M}
+              />
+            </div>
+          )}
         </div>
-        <AiPanel
-          plan={{ polygon, walls, columns, furniture }}
-          applyActions={applyActions}
-          planId={currentPlanId}
-          slot={currentSlot}
-          conversationSeed={conversationSeed}
-        />
+        <div
+          data-testid="ai-panel-slot"
+          data-hidden={step === "refined"}
+          inert={step === "refined"}
+          className={step === "refined" ? "hidden" : "contents"}
+        >
+          <AiPanel
+            plan={{ polygon, walls, columns, furniture }}
+            applyActions={applyActions}
+            planId={currentPlanId}
+            slot={currentSlot}
+            conversationSeed={conversationSeed}
+          />
+        </div>
       </div>
       <PlanSlotsDialog
         open={slotsDialogOpen}

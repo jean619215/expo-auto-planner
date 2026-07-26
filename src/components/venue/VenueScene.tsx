@@ -3,7 +3,6 @@
 import {
   useRef,
   useState,
-  useMemo,
   type ComponentRef,
   type RefObject,
 } from "react";
@@ -44,9 +43,9 @@ import {
 } from "@/lib/venue/furniture";
 import { Button } from "@/components/ui/button";
 import { segmentClassName } from "./PlanToolbar";
+import { useFloorGeometry } from "./floorGeometry";
 
 const WALL_HEIGHT_M = 3;
-const FLOOR_THICKNESS_M = 0.1;
 
 type SelectedId =
   | { type: "wall" | "column" | "furniture"; id: string }
@@ -87,16 +86,7 @@ function FloorMesh({
   polygon: FloorPolygon;
   onClick?: (e: ThreeEvent<MouseEvent>) => void;
 }) {
-  const geometry = useMemo(() => {
-    const shape = new THREE.Shape();
-    shape.moveTo(polygon[0].x, polygon[0].y);
-    polygon.slice(1).forEach((p) => shape.lineTo(p.x, p.y));
-    shape.closePath();
-    return new THREE.ExtrudeGeometry(shape, {
-      depth: FLOOR_THICKNESS_M,
-      bevelEnabled: false,
-    });
-  }, [polygon]);
+  const geometry = useFloorGeometry(polygon);
 
   return (
     <mesh geometry={geometry} rotation={[Math.PI / 2, 0, 0]} onClick={onClick}>

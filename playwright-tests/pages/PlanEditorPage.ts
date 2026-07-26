@@ -68,6 +68,19 @@ export type EditorMode = "select" | "wall" | "column";
 // selectedObject/selectedVertex from Step 1 could be deleted via a keypress
 // while looking at the 3D preview). `pressDelete()` below focuses
 // `stepEdit`, not `editor`, accordingly.
+//
+// venue-refined-3d task (3-step wizard): the wizard now has a third
+// mutually exclusive container, [data-testid="step-refined"] (
+// back-to-preview-button + the read-only RefinedSceneLoader/RefinedScene,
+// [data-testid="refined-scene"]). Same "exactly one container mounted"
+// rule applies. `refinedScene` is a distinct locator from `scene` —
+// `scene` always addresses the step-02 `venue-scene`, `refinedScene`
+// always addresses the step-03 `refined-scene`; they are never both
+// mounted at once so this only matters for readability/intent. The AI
+// panel now lives inside a permanently-mounted wrapper,
+// [data-testid="ai-panel-slot"], whose class toggles between `contents`
+// (steps 01/02, no layout impact) and `hidden` (step 03) — the panel
+// itself is never unmounted across steps.
 export class PlanEditorPage {
   readonly page: Page;
   readonly editor: Locator;
@@ -77,6 +90,11 @@ export class PlanEditorPage {
   readonly stepEdit: Locator;
   readonly stepPreview: Locator;
   readonly scene: Locator;
+  readonly toRefinedButton: Locator;
+  readonly backToPreviewButton: Locator;
+  readonly stepRefined: Locator;
+  readonly refinedScene: Locator;
+  readonly aiPanelSlot: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -87,6 +105,13 @@ export class PlanEditorPage {
     this.stepEdit = page.locator('[data-testid="step-edit"]');
     this.stepPreview = page.locator('[data-testid="step-preview"]');
     this.scene = page.locator('[data-testid="venue-scene"]');
+    this.toRefinedButton = page.locator('[data-testid="to-refined-button"]');
+    this.backToPreviewButton = page.locator(
+      '[data-testid="back-to-preview-button"]',
+    );
+    this.stepRefined = page.locator('[data-testid="step-refined"]');
+    this.refinedScene = page.locator('[data-testid="refined-scene"]');
+    this.aiPanelSlot = page.locator('[data-testid="ai-panel-slot"]');
   }
 
   async navigate() {
@@ -390,15 +415,63 @@ export class PlanEditorPage {
   }
 
   /** Current wizard step (`data-step` on the wrapper). */
-  async currentStep(): Promise<"edit" | "preview"> {
+  async currentStep(): Promise<"edit" | "preview" | "refined"> {
     const raw = await this.editor.getAttribute("data-step");
-    return (raw ?? "edit") as "edit" | "preview";
+    return (raw ?? "edit") as "edit" | "preview" | "refined";
   }
 
   /** Whether `data-orbit-controls="true"` is present on the mounted 3D scene. */
   async orbitControlsPresent(): Promise<boolean> {
     const raw = await this.scene.getAttribute("data-orbit-controls");
     return raw === "true";
+  }
+
+  // --- venue-refined-3d task: step 03 (read-only RefinedScene) ---------
+
+  /** Click "下一步" on step-preview — advances from Step 2 to Step 3. */
+  async clickToRefined() {
+    await this.toRefinedButton.click();
+  }
+
+  /** Click "上一步" on step-refined — returns from Step 3 to Step 2. */
+  async clickBackToPreview() {
+    await this.backToPreviewButton.click();
+  }
+
+  async goToRefined() {
+    await this.clickToRefined();
+    await this.stepRefined.waitFor({ state: "visible" });
+  }
+
+  async backToPreview() {
+    await this.clickBackToPreview();
+    await this.stepPreview.waitFor({ state: "visible" });
+  }
+
+  /** Wall mesh count of the currently mounted `[data-testid="refined-scene"]`. */
+  async refinedWallMeshCount(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute("data-wall-mesh-count");
+    return Number(raw);
+  }
+
+  /** Column mesh count of the currently mounted `[data-testid="refined-scene"]`. */
+  async refinedColumnMeshCount(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute("data-column-mesh-count");
+    return Number(raw);
+  }
+
+  /** Furniture mesh count of the currently mounted `[data-testid="refined-scene"]`. */
+  async refinedFurnitureMeshCount(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute(
+      "data-furniture-mesh-count",
+    );
+    return Number(raw);
+  }
+
+  /** Floor polygon vertex count of the currently mounted `[data-testid="refined-scene"]`. */
+  async refinedFloorVertexCount(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute("data-floor-vertex-count");
+    return Number(raw);
   }
 
   // --- zoom/pan --------------------------------------------------------
