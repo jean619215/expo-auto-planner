@@ -1,13 +1,18 @@
-# Code Review Report — 步驟 03 骨架 + 唯讀 RefinedScene
-> Generated: 2026-07-26T02:05+08:00 | Review iteration: 1 | Story: 精密 3D 場景 (步驟 03) — task 1
+# Code Review Report — [FRONTEND] 打光與陰影(步驟 03)
+> Generated: 2026-07-26T09:40+08:00 | Review iteration: 1
+> Story: `stories/venue-refined-3d.md` task 2 | Plan: `.claude/pipeline/architect-plan.md`
 
 ## Overall Assessment
 
-**APPROVED WITH MINOR FIXES**
+**APPROVED WITH MINOR FIXES** — 4 個 🟡 已於本階段修正(見 Conversation Log),0 個 🔴。
 
 ## Summary
 
-實作忠實對應 architect-plan 的 15 個 Implementation Steps,四項硬性架構約束(D1 單一資料源、D2 互斥掛載、D3 AiPanel 常駐、D4 共用地板 geometry)全部成立且經逐行查核。`npx tsc --noEmit` 與 `npm run lint` 皆通過。無 🔴 Critical。兩項 🟡 集中在 Playwright 測試的**斷言強度**而非產品程式碼 —— 其中「凹多邊形」fixture 我已直接修正,另一項(AC3 拖曳路徑)留給 developer/QA 判斷。
+實作忠實對應 architect-plan.md 的 D1–D8,包含計畫點名為「最可能真實缺陷」的
+`shadow.camera.updateProjectionMatrix()`(已確認存在且綁在正確的依賴上)。範圍紀律良好:
+無任何貼圖 / GLB / 程序化家具幾何,`FURNITURE_DEFAULTS` 與 `VenueScene.tsx` 未被觸碰。
+主要問題集中在**驗收證據的強度**而非產品邏輯:探針有一項診斷是原始碼字面量而非場景實際值,
+另有兩個測試斷言在任何實作下都必然通過。四項皆已修正,`tsc --noEmit` / `eslint` 重跑全綠。
 
 ---
 
@@ -15,115 +20,191 @@
 
 無。
 
----
+**特別查核(計畫 Risks 表列出的高風險項,逐項確認通過):**
 
-## 🟡 Should Fix (Auto-resolved by Developer)
+| 風險項 | 結果 |
+| --- | --- |
+| 忘記 `shadow.camera.updateProjectionMatrix()` | ✅ `refinedLighting.tsx:129`,位於 `useLayoutEffect(deps=[bounds])` 內。`bounds` 是 `useMemo([polygon, walls, columns, furniture])`,AI `resize_floor` 會換 `polygon` 陣列識別 → 視錐必然重算。 |
+| 忘記把 `light.target` 掛進場景 | ✅ `<primitive object={target} position={[centerX, 0, centerY]} />`(`refinedLighting.tsx:162`),三盞方向光共用。 |
+| `shadow-mapSize-*` 巢狀 prop 未生效 | ✅ 走 JSX prop 路徑,於首次 layout effect 前完成,不需 S9 的退回方案。 |
+| 誤改 `FURNITURE_DEFAULTS` / `VenueScene.tsx` | ✅ D7 的「絕對不得修改」清單 12 個路徑在 `git status` 中全部不存在。 |
 
-### Issue 1 — 「凹多邊形」edge case fixture 其實不是凹多邊形 ✅ 已由 reviewer 修正
+**陰影視錐邊界數學(逐案驗算,無截斷)：**
 
-- **File**: `playwright-tests/venue-refined-3d.spec.ts:323`
-- **Issue**: 沿用 `venue-3d-scene.spec.ts:139` 的 `dragVertexTo(1, { x: 24, y: 24 })`。`DEFAULT_FLOOR` 為 `(20,20)(30,20)(30,30)(20,30)`,把 vertex 1 拖到 (24,24) 得 `(20,20)(24,24)(30,30)(20,30)` —— 前三點全部落在 `y = x` 上(cross product = 0),是**退化的凸多邊形**,四個轉角的 cross product 皆 ≥ 0。因此完全沒有觸發 `ExtrudeGeometry` 對凹多邊形的 earcut 三角化路徑,orchestrator edge case 4 實質未被覆蓋。
-- **Suggested fix**: 改拖 vertex 2 → `(20,20)(30,20)(24,24)(20,30)`,在 C 點為 reflex angle,是真正的凹多邊形。
-- **Resolution**: 已套用(含說明註解),`tsc` + `lint` 重跑通過。此改動只影響 fixture 形狀,原有斷言(`vertexCount() === 4`、02/03 vertex count 相等、無 pageerror)語意不變。
+`R = radiusM + 4`、`D = max(radiusM*2, 20)`、`near = max(0.5, D-R-5)`、`far = D+R+2`。
+`KEY_DIR` 正規化後 y 分量 = 0.8165(仰角 54.7°)。
 
-### Issue 2 — AC3 的「手動**拖曳**移動家具」路徑未被測到
+- **空場景 / 預設 10m 地板**(`createDefaultFloor(50)` → 20–30 帶,`radiusM = 7.07`):`R = 11.07`、`D = 20`、`near = 3.93`、`far = 33.07`。span = 22m → 約 1.1cm/texel。
+- **極小場地**(`radiusM` 被 `MIN_SHADOW_RADIUS_M = 2` 夾住):`R = 6`、`D = 20`、`near = 9`、`far = 26`。無 0 寬視錐、無 NaN。
+- **200m 滿版場地**(`radiusM = 141.4`):`R = 145.4`、`D = 282.8`、`near = 132.4`、`far = 430.2`。內容沿光軸的最大位移僅 `0.408*(100+100) = 81.6m`,加最高物件 `3 * 0.816 = 2.45m`,遠小於 `R` 提供的 145.4m 餘裕 → **不截斷**。橫向同理(AABB 內任一點離中心 ≤ 半對角線 141.4 < R)。
+- **高瘦物件**(bannerStand 2.0m / cabinet 1.8m):`MAX_OBJECT_HEIGHT_M = 3` 已涵蓋且 near 尚有數十公尺餘裕。
+- `near` 的 `Math.max(0.5, ...)` clamp 在實務參數域內**不可能觸發**(因 `D ≥ 20` 而 `R = radiusM + 4`),故 `far - near` 恆為 `span + 7`。
 
-- **File**: `playwright-tests/venue-refined-3d.spec.ts:110-134`
-- **Issue**: AC3 明文是「在步驟 02 手動**拖曳移動**了一件家具」。測試改以「側欄放置家具」(`placeFurnitureOnStep2`)替代,spec 檔頭已誠實說明理由(TransformControls gizmo 拖曳在本專案無既有測試先例)。但這兩條在 `VenueScene` 內是**不同的 handler**:放置走 `handleFloorClick`(`VenueScene.tsx:182-196`),拖曳走 `commitTransform`(`:144-180`)。兩者最終都呼叫 `onSceneChange`,所以 D1 的保證仍成立,但 `commitTransform` → 頂層 state → 步驟 03 這條線沒有任何自動化覆蓋。
-- **Suggested fix**: 二擇一 —(a) 補一個以 `page.mouse` 拖曳 TransformControls gizmo 的案例(需先在 02 點選家具使 gizmo 出現);或(b) 由 QA 階段以手動檢查表補上這一條並在 qa-report.md 記錄。若採 (b),請在 spec 檔頭註解明確標註「AC3 的拖曳變體由 QA 手動驗證」,避免日後誤以為已自動化。
-
----
-
-## 💡 Suggestions (Consider — No Action Required)
-
-1. **`floorGeometry.ts` 未加 `"use client"`** (`src/components/venue/floorGeometry.ts:1`)。目前只被兩支 `"use client"` 元件 import,所以 `three` 不會漏進 server bundle。但這是全專案唯一一個 import Three 卻沒有 client 邊界標記的檔案;加上 `"use client"` 可讓 AGENTS.md「瀏覽器限定函式庫不可被 server component import」的守則變成編譯期保證,而非仰賴呼叫端自律。
-
-2. **StrictMode 下 `useFloorGeometry` 的 dispose 會早一步觸發** (`floorGeometry.ts:25-27`)。dev 的 StrictMode double-invoke 會 mount → cleanup(`geometry.dispose()`)→ mount,但 `useMemo` 不重跑,於是 mesh 仍持有已 dispose 的 geometry。實務上無害:`BufferGeometry.dispose()` 只釋放 GPU buffer,attribute 資料仍在 JS 端,下一幀 `WebGLGeometries.get()` 會重新上傳。僅 dev、且自我修復,不需改。若日後想根絕,可改成把 geometry 收進 `useRef` 並在 cleanup 內同時清 ref。
-
-3. **`data-readonly="true"` / `data-orbit-controls="true"` 是寫死字面值** (`RefinedScene.tsx:55-56`),所以 `venue-refined-3d.spec.ts:174/210` 的斷言即使 `<OrbitControls>` 被整段刪掉也會通過。這沿用了 `VenueScene.tsx:206` 的既有慣例,不算退化;真正的行為驗證來自同一測試裡「拖曳後 `data-furniture` 不變 + 無 pageerror」。留作日後測試強化的方向。
-
-4. **02/03 `data-floor-vertex-count` 相等是恆真式**(兩邊都是同一個 `polygon.length`),無法偵測三角化差異。D4 的共用 `useFloorGeometry` 才是真正的保證,這點 architect-plan 已言明;測試只是佐證不是證明。可接受。
-
-5. **02 與 03 的 canvas aspect ratio 不同**(03 少了 `venue-sidebar` 與 AI 面板,高度同為 480px)。`fov: 50` 是垂直 FOV,所以 03 只是水平看到更多,無變形。符合 edge case「不變形、不水平溢出」。
+`planBoundsM` 正確納入地板 + 牆(端點外擴 `WALL_THICKNESS_M/2`)+ 柱 + 家具(外接圓
+`hypot(w,h)/2`,涵蓋任意 `rotationDeg`),符合 D2「物件可合法站在地板多邊形之外
+(`clampColumnCenter` 只 clamp 到 `venueSizeM`)」的理由。`Number.isFinite` 過濾與全空退化路徑皆到位。
 
 ---
 
-## 逐項架構驗證(reviewer 檢查點)
+## 🟡 Should Fix(本階段已由 reviewer 修正)
 
-### D1 — 單一資料源 ✅
+### Issue 1 — `data-floor-receives-shadow` 是原始碼字面量,對應的測試無法失敗
 
-- `RefinedScene.tsx` 全檔 **零 `useState` / `useReducer` / `useRef`**,無任何幾何複本。props 介面為唯讀 `{ polygon, walls, columns, furniture, venueSizeM?, viewFitSizeM? }`,**無 `onSceneChange`**。
-- `PlanEditor.tsx:1581-1600` 傳給 `RefinedSceneLoader` 的 6 個 prop 與 `:1550-1578` 傳給 `VenueSceneLoader` 的**逐字相同**(`polygon` / `walls` / `columns` / `furniture` / `venueSizeM={PLAN_AREA_SIZE_M}` / `viewFitSizeM={VENUE_SIZE_M}`),差別僅在 03 少了 `onSceneChange` 與 `key={generation}` —— 正是 D1/D2 要求的。
-- `RefinedSceneLoader.tsx` 純透傳,無中間層轉換。
-- 未出現任何 `refinedSnapshot` / 第四份 state。
+- **File**: `src/components/venue/RefinedScene.tsx:136`(修正前)、`playwright-tests/venue-refined-lighting.spec.ts` 案例 4
+- **Issue**: 該屬性以 `data-floor-receives-shadow="true"` 硬寫在根 div 上,不是探針回報值。
+  案例 4 的 `expect(await editor.refinedFloorReceivesShadow()).toBe(true)` 因此是恆真斷言 ——
+  就算有人刪掉 `FloorMesh` 的 `receiveShadow`,測試依然全綠。這同時牴觸 architect-plan D8 的
+  硬性設計原則(「回報的一律是 renderer/scene 的實際值,不是原始碼裡的字面量」)、
+  spec 檔頭註解、以及 `PlanEditorPage.ts` 新增區塊的註解 —— 兩處註解都宣稱**所有**診斷值取自實際場景狀態。
+- **Fix applied**: 匯出 `REFINED_FLOOR_NAME`,`FloorMesh` 以 `name` 標記自己;探針在 traverse 時
+  以 name 找到地板 mesh,回報**真實的** `receiveShadow` 與 `castShadow`。新增
+  `data-floor-casts-shadow` + `refinedFloorCastsShadow()` getter,案例 4 加上
+  `expect(await editor.refinedFloorCastsShadow()).toBe(false)` —— 這條同時把 D5
+  「地板絕不投影(DoubleSide 是本場景唯一真正的 acne 來源)」變成機器可驗證的守門條件,原本只有註解在守。
 
-### D2 — 互斥掛載 ✅
+### Issue 2 — 案例 10(高瘦物件不被 near/far 截斷)是恆真斷言
 
-- `PlanEditor.tsx:968 / 1550 / 1581` 三個 `step === "..."` 區塊互斥,同一時間只有一個 `<Canvas>`。
-- `handleToRefined` / `handleBackToPreview`(`:475-481`)只做 `setStep`,**未動** `generation`、`sceneGenerated` 或任何幾何 state。
-- `RefinedSceneLoader` 未加 `key`,`VenueSceneLoader` 的 `key={generation}` 未動。
-- 全檔 `step` 分支盤點(`:226 / 968 / 1550 / 1581 / 1605-1607`)無遺漏:`:226` 的 stage 量測 effect 已是 `step !== "edit"` early-return,新增第三步不影響。
+- **File**: `playwright-tests/venue-refined-lighting.spec.ts` 案例 10
+- **Issue**: `expect(near).toBeGreaterThanOrEqual(0)` 由 `Math.max(0.5, ...)` 保證,
+  `expect(far).toBeGreaterThan(near)` 由 `far = D+R+2` 的構造保證。**任何** near/far 公式都會通過,
+  包含把 `MAX_OBJECT_HEIGHT_M` 改成 0 或把 `SHADOW_MARGIN_M` 砍成 0 的退化版本 ——
+  也就是說,這條 edge case 目前沒有任何自動化保護。
+- **Fix applied**: 補上真正的不變式 `expect(far - near).toBeGreaterThanOrEqual(span + 3)`。
+  現行實作恆為 `span + 7`(見上方驗算),餘裕充足;而移除高度餘裕的退化實作會落到 `span` 附近而失敗。
 
-### D3 — AiPanel 常駐掛載 ✅(重點查核)
+### Issue 3 — 案例 6 的「零下載」把關比計畫弱,且常數命名誤導
 
-- Wrapper `[data-testid="ai-panel-slot"]`(`PlanEditor.tsx:1603-1616`)在**三個步驟下都存在**,位置固定為 `<div className="flex items-start gap-4">`(`:966`)的第二個子節點 —— 與 commit `97d548c` 的位置一致,只是多了一層恆存在的包裝。React 對「同位置、同 element type、僅 className/attribute 改變」不會 unmount ⇒ `turns / input / imageDraft / open / pendingToolResults` 全數保留。
-- **無** `{step !== "refined" && <AiPanel/>}` 之類的條件渲染;`AiPanel` 的 5 個 prop 一字未改;`AiPanel.tsx` 零修改(`git status` 佐證)。
-- `contents` / `hidden` 切換正確:`AiPanel` 兩個 return 分支(`:325` 收合態 `<div className="shrink-0">`、`:340` 展開態 `<div data-testid="ai-panel" className="flex w-80 shrink-0 ...">`)都是**單一根 div**,`display: contents` 不產生 box ⇒ 該 div 仍是外層 flex row 的直接 flex item,`gap-4` 照常生效,01/02 版面逐像素不變。03 下 `hidden`(`display:none`)使收合態 toggle 也一併消失,對應 AC6。
-- `inert={step === "refined"}`:React 19.2.4(`package.json:25`)原生支援 boolean `inert`,`false` 時屬性被省略而非渲染成 `inert="false"`。**這點很關鍵** —— 若是 React 18,`inert={false}` 會渲染 `inert="false"`(HTML 中為 truthy),整個 AI 面板會在 01/02 被停用。目前版本安全,但這是升降版時的隱藏地雷,值得記在 PR 說明裡。
-- `AiPanel.tsx` 內無 `scrollHeight` / `getBoundingClientRect` / `scrollIntoView` / `focus()` 之類的版面量測(已 grep 確認),所以 `display:none` 期間不會算出 0 高度而錯位。
+- **File**: `playwright-tests/venue-refined-lighting.spec.ts:17`
+- **Issue**: 常數名為 `FURNITURE_KINDS_URL_ALLOWLIST_HOST`,但它既與 furniture kinds 無關、
+  也不是 allowlist —— 它是唯一被禁止的 host。且 `externalRequests` 收集了所有非 localhost 請求,
+  卻只拿來比對 `githack.com` 一個字串;若日後有人改用自托管或別的 CDN 取 `.hdr`,測試不會發現。
+- **Fix applied**: 改名為 `FORBIDDEN_ENV_ASSET_PATTERNS`,涵蓋 `githack.com` / `polyhaven` /
+  `.hdr` / `.exr`,並改為 `expect(forbidden).toEqual([])` —— 失敗時直接列出被抓到的 URL,而非一個裸 `false`。
 
-### D4 — 地板三角化一致 ✅
+### Issue 4 — 探針每一幀都 traverse 全場景並 `JSON.stringify`,永不停止
 
-- `floorGeometry.ts:14-23` 的 `useMemo` 內容與被刪掉的 `VenueScene.tsx` 原版**逐字相同**(`THREE.Shape` → `moveTo` → `slice(1).forEach(lineTo)` → `closePath` → `ExtrudeGeometry({ depth: FLOOR_THICKNESS_M, bevelEnabled: false })`),依賴陣列同為 `[polygon]`。
-- `VenueScene.tsx` 與 `RefinedScene.tsx` 的 `FloorMesh` **呼叫同一個 hook**,不是複製貼上 ⇒ 兩步驟不可能分岔。
-- `FLOOR_THICKNESS_M` 已從 `VenueScene.tsx:49` 移除、改由共用模組匯出,無重複定義(`tsc` 通過即證明 `VenueScene` 內無其他遺留引用)。
-- `VenueScene.tsx` 的改動僅 3 處:移除 `useMemo` import、移除本地常數、`FloorMesh` 換 hook。`onClick` / mesh JSX / 全部 `data-*` 屬性零改動 ⇒ 行為等價重構,符合 plan step 2 的「其餘全檔不得有任何其他改動」。
+- **File**: `src/components/venue/RefinedSceneProbe.tsx:77-136`(修正前)
+- **Issue**: `useFrame` 內的 traverse + `JSON.stringify` 在第 2 幀後**無限期**每幀執行。單次成本雖低,
+  但它落在本任務唯一無法自動化驗收的 AC(「數十件家具下仍可流暢旋轉」)的熱迴圈裡 —— 純診斷程式碼
+  不該常駐在那裡。更實質的是連鎖成本:每次 `onReport` → `setDiagnostics` → `RefinedScene` re-render
+  → `<HallEnvironment>` 的 children 取得新識別 → drei `EnvironmentPortal` 的
+  `useLayoutEffect`(依賴陣列含 `children`,已核對 `node_modules/@react-three/drei/core/Environment.js:134`)
+  重跑一次 128px cube 渲染。計畫 D4 已把這條連鎖列為已知瑕疵,不該再讓探針成為額外的觸發源。
+- **Fix applied**: 新增 `PROBE_ACTIVE_FRAMES = 120`,超過即 early-return。`frameRef` 已由
+  `resetKey`(revision)重置,所以場景一變就重新武裝、重新回報 120 幀。保留 120 幀(約 2 秒)而非
+  「回報一次就停」是刻意的:`shadow.map` 配置、環境 cube 渲染與 `gl.info.memory` 需要幾幀才穩定,
+  太早停會讓 `shadowMapAllocatedWidth` 永遠停在 `null`。
 
-### Three.js 資源生命週期 ✅
+**附帶修正(型別整潔,無行為變更)**:探針原本因 TS 對 callback 內賦值的 CFA 限制,
+把 `keyLight` 窄化成 `never`,導致每個讀取點都要 `as THREE.DirectionalLight`。改用 holder object
+(`found.key` / `found.floor`)後 5 處 cast 全部移除。
 
-- `useFloorGeometry` 以 `useMemo` 快取(不在 render 期間重複 new),並以 `useEffect` cleanup `dispose()` —— 符合 AGENTS.md Developer 規則。
-- **額外修好一個既有洩漏**:`VenueScene` 原本的 `FloorMesh` geometry **從未 dispose**,重構後 02 也拿到了 dispose。這是本次的淨改善。
-- dispose 時序正確:`polygon` identity 改變時,render 產生新 geometry → commit → 舊 effect cleanup dispose 舊 geometry(此時舊 geometry 已不被 mesh 引用)。
-- 牆/柱/家具用 JSX `<boxGeometry>` / `<meshStandardMaterial>`,由 R3F 於卸載時自動 dispose,無需手動處理(與 plan D4 一致)。
-- `<Canvas>` 於 03 卸載時由 R3F 釋放 renderer 與 WebGL context;因 D2 互斥掛載,任一時刻只有一個 context。
+---
 
-### 範圍紀律 ✅
+## 💡 Suggestions（Consider — 不需處理,登記備查）
 
-- `RefinedScene.tsx` 打光僅 `ambientLight intensity={0.6}` + `directionalLight position={[25,40,25]} intensity={0.8}` —— 與 `VenueScene` 現況**完全相同**。
-- **無** `castShadow` / `receiveShadow` / `shadows` prop / `toneMapping` / `<Environment>` / 貼圖 / `useTexture` / 參數化家具幾何。全部家具仍是 `<boxGeometry args={[item.w, defaults.height3d, item.h]} />` + `meshStandardMaterial color={defaults.color}`。
-- **無** `TransformControls` / `selectedId` / `placingKind` / `sidebarOpen` / `<aside>` / `furniture-place-*` / `reset-view-button`。
-- 唯一的樣式外溢:`StepProgress` 的 `max-w-md` → `max-w-xl`(`PlanEditor.tsx:120`)—— 由 plan step 6 明文授權(容納第三項不換行),純樣式,無邏輯影響。
+1. **`HallLighting` 的 `revision` prop 已冗餘**。`bounds` 是對同樣四個 props 的 `useMemo`,
+   任何幾何編輯都會換掉 `bounds` 的識別,所以 `useLayoutEffect(deps=[gl, bounds, revision])`
+   裡的 `revision` 不會帶來任何 `bounds` 沒帶來的重烘焙。真正需要 `revision` 的只有探針的 `resetKey`。
+   維持現狀無害(只是多一個 no-op 依賴),但若日後 `bounds` 改成值比較(而非識別比較)的快取,
+   這個 prop 就會從冗餘變成必要 —— 屆時請保留註解說明。
+2. **`MAX_OBJECT_HEIGHT_M = 3` 是手動維護的重複常數**,同時鏡射 `RefinedScene.tsx` 的
+   `WALL_HEIGHT_M = 3` 與 `max(FURNITURE_DEFAULTS[*].height3d) = 2.0`。註解有寫明,但若 task 4–6
+   引入更高的模型(或把牆加高),near plane 的餘裕會靜默失效。可考慮改為
+   `Math.max(WALL_HEIGHT_M, ...Object.values(FURNITURE_DEFAULTS).map((d) => d.height3d))`。
+   本任務不改 —— 會把 `refinedLighting.tsx` 對 `furniture.ts` 的依賴從零變成一。
+3. **`REFINED_GL` / `REFINED_SURFACE` 是可變的匯出物件**。兩者的契約(「模組層級單例,絕不在
+   render 內重建、絕不 mutate」)目前只靠註解。`as const` + `Object.freeze` 可讓契約由型別系統執行。
+4. **案例 9(極大場地)靠 30 次 zoom-out 後在 x=195 畫牆**,是本 spec 中對畫布座標最敏感的一條。
+   Playwright 階段若出現 flake,優先懷疑此處而非產品程式碼(task 1 的 playwright 階段已修過兩次同類的
+   測試撰寫 bug,見 task-log)。
+5. **`gridHelper` 在新打光下的違和感**已由計畫 Architecture Notes 列為 task 3 候選,本任務正確地未動它。
 
 ---
 
 ## Security Assessment
 
-- Secrets scan: **PASS** — 新增 4 檔零硬編碼憑證;spec 用 `page.route` mock `/api/ai/chat` 與 `/api/ai/config`,不打真實 API、不花點數,測試帳號仍走 `.env.playwright.local`。
-- Input validation: **N/A** — 本任務未新增/修改任何 API 呼叫或系統邊界輸入。
-- Auth/authz: **N/A** — 未新增 page route,`src/proxy.ts` 未動(`git status` 佐證)。與 auth / session / `DATABASE_URL` 零接觸,不觸發 AGENTS.md「PR Reviewer 自動 Critical」條款。
-- Server-only 邊界: **PASS** — 未 import `admin.ts`;未觸及 `src/lib/ai/`;`src/lib/venue/*` 維持零 React/DOM/Konva/Three import(新 Three 程式碼全部落在 `src/components/venue/`)。
-- 敏感資料 log: **PASS** — 新增程式碼無任何 `console.*`。
-- Test coverage: 12 個 Playwright 案例,對應 10 條 AC + 5 個 edge case(AC3 的拖曳變體見 Issue 2)。
+| 項目 | 結果 | 說明 |
+| --- | --- | --- |
+| Secrets / credentials scan | **PASS** | 本 diff 不含任何憑證、token、連線字串。Playwright spec 未硬寫帳密(沿用既有 `editor.navigate()`)。 |
+| Input validation at boundaries | **N/A** | 未新增/修改任何 API route、系統邊界輸入或使用者輸入解析。`planBoundsM` 對所有座標做 `Number.isFinite` 過濾,已是防禦性的。 |
+| Auth / authz | **N/A** | 未觸及 `src/proxy.ts`、`src/lib/supabase/**`、任何 page 路由或 session 處理。 |
+| 敏感資料入 log | **PASS** | 探針只讀 renderer 狀態,不 `console.*`。 |
+| 新增外部網路請求 | **PASS** | D4 的程序化 `<Environment>` + `<Lightformer>` 零下載;案例 6 以 network 監聽把關(本次已強化)。 |
+| 新增依賴 | **PASS** | `package.json` 未變動;`Environment` / `Lightformer` 皆來自既有的 `@react-three/drei`。 |
+| CORS / CSP | **PASS** | 未修改。 |
+| SQL injection / XSS | **N/A** | 無 DB 存取。所有 `data-*` 值皆為 `String(number)` 或封閉列舉字串(`TONE_MAPPING_LABELS` / `SHADOW_MAP_TYPE_LABELS` 的 `?? "unknown"` 兜底),由 React 輸出,無 `dangerouslySetInnerHTML`。 |
+| `service_role` / server-only 邊界 | **PASS** | 未 import `admin.ts`;`src/lib/ai/**` 未觸及。 |
+| 分層規則 | **PASS** | `src/lib/venue/bounds.ts` 只 import `./plan` 與 `./furniture` 的型別/常數,零 React / DOM / Three。新增的 Three 程式碼全在 `src/components/venue/` 且在既有 `RefinedSceneLoader` 的 `ssr:false` 邊界內。 |
+
+測試覆蓋:14 個 Playwright 案例對應 orchestrator-output.md 的 10 條 AC 與 7 個 edge case
+(案例 14 為截圖產物,不斷言)。無 JS unit framework(AGENTS.md),符合專案慣例。
 
 ---
 
 ## Plan Compliance
 
-- [x] 全部 15 個 Implementation Steps 均已實作(step 11 `tsc`/`lint` 已由 reviewer 重跑驗證;step 12 手動 smoke 與 step 15 迴歸屬 QA/Playwright 階段)
-- [x] 實作與 plan 意圖一致(D0–D5 逐項成立,見上方查核)
-- [x] 無未授權的範圍擴張 —— 修改檔案與 plan 的 Files to Create / Files to Modify 表**完全吻合**
-- [x] plan 標示「不修改」的檔案確實未動:`AiPanel.tsx`、`VenueSceneLoader.tsx`、`src/lib/venue/*`、`src/app/api/*`、`src/proxy.ts`、`PlanSlotsDialog.tsx`
-- [x] 既有 8 支迴歸 spec 零改動(`git status` 僅顯示 `PlanEditorPage.ts` 一支 page object 有變更,且為純新增 + `currentStep()` 回傳型別擴張,不影響既有呼叫端)
-- [x] 無 TODO / 註解掉的程式碼 / debug log
+- [x] 14 個 Implementation Steps 全數實作(S1–S14)
+- [x] 實作符合計畫意圖(D1 固定 4 盞光 / D2 動態視錐 / D3 顯式 ACES + 僅覆寫地板色 / D4 零下載 IBL / D5 normalBias + 地板不投影 / D6 自寫重烘焙 / D7 檔案切分 / D8 場景探針)
+- [x] 無未授權的範圍擴張
+  - 材質:只有 `roughness` / `metalness` **純量**(本任務授權範圍),**零** `map` / `normalMap` / `roughnessMap` / `aoMap`
+  - **零** GLB / 模型 import(task 4–6),**零**程序化家具幾何 —— 家具仍是 `boxGeometry args={[item.w, defaults.height3d, item.h]}`
+  - `FURNITURE_DEFAULTS[*].color` 完全未動(`src/lib/venue/furniture.ts` 不在 diff 中);顏色覆寫僅地板 `#f5f5f4 → #e7e5e4` 一處,牆 `#78350f` / 柱 `#78716c` / 家具 `defaults.color` 原樣保留
+- [x] D7「絕對不得修改」清單 12 個路徑在 diff 中全部缺席(含 `VenueScene.tsx`、`floorGeometry.ts`、`plan.ts`、`furniture.ts`、`PlanEditor.tsx`、`AiPanel.tsx`、`src/proxy.ts`、`src/lib/ai/**`、`src/lib/supabase/**`)
+- [x] 計畫的兩處刻意偏離 drei(不用 `<SoftShadows>` / 自寫 bake 而非 `<BakeShadows>`)皆已在程式碼註解寫明理由,符合 Architecture Notes 的要求
 
-**範圍外備註**(不計入本次 review 的 finding):working tree 另含 `AGENTS.md`、`.claude/pipeline/project-doc.md`、`stories/venue-refined-3d.md` 的改動,那些來自本 story 的 scan / orchestrate 階段,不屬 task 1 的實作 diff。`AGENTS.md` 的 delta 標註為 2026-07-26「場地規劃器補件」,依 AGENTS.md 自身規則需人工確認 —— 提醒在 commit 前確認該確認已完成。
+**唯讀不變式(逐項核對,AGENTS.md + orchestrator requirement 7):**
+
+| 不變式 | 結果 |
+| --- | --- |
+| 不持有幾何 state | ✅ `bounds` 是 `useMemo` 衍生值。兩個 `useState` 分別是 `revision: number`(計數器)與 `diagnostics`(純視覺/測試回報,單向由場景流向 DOM 屬性,不回寫任何幾何),皆非幾何快照。 |
+| 無 `TransformControls` | ✅ 未出現。 |
+| 不回寫 `onSceneChange` | ✅ `RefinedScene` 未接收也未呼叫。 |
+| `AiPanel` 維持 CSS 隱藏、掛載位置不變 | ✅ `AiPanel.tsx` 與 `PlanEditor.tsx` 皆不在 diff 中。 |
+| 02/03 互斥掛載 | ✅ `PlanEditor.tsx` 未動;案例 12 以 `canvas` 元素數 === 1 守門。 |
+| 家具尺寸唯一來源仍是 `FURNITURE_DEFAULTS` | ✅ `boxGeometry` / `position` / `rotation` 一字未改。 |
+
+**資源釋放(orchestrator requirement 6):**
+
+- 四盞光全部以 JSX 宣告 → R3F 卸載時自動 `light.dispose()`,`DirectionalLight.dispose()` 連帶
+  `shadow.dispose()` → `shadow.map.dispose()`。**未**使用 `useMemo` + `<primitive>` 建光源(那樣不會自動 dispose)。
+- 共用 `target` 是 `THREE.Object3D`,無 GPU 資源、無 `dispose` 方法,以 `<primitive>` 掛載正確且註解已說明,避免後續 reviewer 誤判為漏 dispose。
+- `<Environment frames={1}>` 由 drei 的 `EnvironmentPortal` 自行 `fbo.dispose()` 並還原 `scene.environment`。
+- `gl.shadowMap.autoUpdate` 於 cleanup 還原為 `true`(在互斥掛載下屬冗餘保險,但正確)。
+
+**AGENTS.md 變動說明**:`git status` 顯示 `AGENTS.md` 有 4 行新增(步驟 03 唯讀 / 02-03 互斥掛載 /
+`AiPanel` 不可 unmount / 家具不可縮放)。經核對 `.claude/pipeline/task-log.md`,這是 **2026-07-26T02:40
+的 scan 階段**(delta scan `c7c06c5`,經人工確認)寫入的,**不是**本次 implement 的範圍外改動。
+唯一小瑕疵:檔頭的 `Last updated` delta 註記未同步更新,建議下次 scan 補上(不阻擋)。
 
 ---
 
 ## Conversation Log
 
 | Issue | Developer Response | Resolution |
-|---|---|---|
-| Issue 1 — 凹多邊形 fixture 實為共線退化多邊形 | (reviewer 直接處理) | ✅ 已由 reviewer 修正為 `dragVertexTo(2, {x:24,y:24})` 並加註解;`tsc` + `lint` 重跑通過 |
-| Issue 2 — AC3 拖曳路徑未自動化 | 待 developer / QA 決定 (a) 補 gizmo 拖曳測試 或 (b) QA 手動檢查表覆蓋 | 🟡 未阻擋,轉交 QA 階段 |
-| 💡 1–5 | — | 僅記錄,不採取行動 |
+| --- | --- | --- |
+| 🟡 1 `data-floor-receives-shadow` 為字面量,案例 4 恆真 | — (reviewer 直接處理,`RefinedSceneProbe.tsx` / `RefinedScene.tsx` / `PlanEditorPage.ts` / spec 案例 4) | **Fixed** — 探針以 `REFINED_FLOOR_NAME` 找到地板 mesh 回報真實 `receiveShadow`,並新增 `data-floor-casts-shadow` 把 D5 的「地板不投影」也納入斷言 |
+| 🟡 2 案例 10 恆真,edge case 無實質保護 | — (reviewer 直接處理,spec 案例 10) | **Fixed** — 補 `far - near >= span + 3` |
+| 🟡 3 案例 6 零下載把關過窄、常數命名誤導 | — (reviewer 直接處理,spec) | **Fixed** — `FORBIDDEN_ENV_ASSET_PATTERNS` 涵蓋 4 種樣式,失敗時列出 URL |
+| 🟡 4 探針每幀 traverse + stringify 永不停止 | — (reviewer 直接處理,`RefinedSceneProbe.tsx`) | **Fixed** — `PROBE_ACTIVE_FRAMES = 120`,由 `resetKey` 重新武裝 |
+| 💡 1–5 | — | **Logged only**,不動作 |
+
+**修正後靜態檢查**:`npx tsc --noEmit` → 0 error;`npm run lint` → 0 error / 0 warning。
+
+---
+
+## Handoff to QA
+
+1. 本次 reviewer 修正動到了 `RefinedSceneProbe.tsx` / `RefinedScene.tsx` / `PlanEditorPage.ts` /
+   `venue-refined-lighting.spec.ts` 四個檔案,**QA 與 playwright 階段請以修正後的版本為準**。
+   新增的 `data-floor-casts-shadow` 屬性需在 playwright 階段實跑驗證(預期 `"false"`)。
+2. **手動視覺檢查表 8 項尚未執行**(計畫 Test Plan「手動」段)—— 這是本任務唯一能驗收
+   「展場實景感」與陰影柔邊的途徑,請務必逐項確認並記入 `qa-report.md`,附上案例 14 產出的
+   `playwright-report/refined-lighting.png`。
+3. 手動檢查表**第 8 項最關鍵**:在 03 停留期間用 AI 面板移動一件家具,確認**陰影跟著移動**。
+   這是 D6(`autoUpdate=false` + revision 重烘焙)與 D2(`updateProjectionMatrix`)唯一的端到端驗證 ——
+   自動化測試只覆蓋了「進入 03 當下」的狀態,涵蓋不到「停留期間場景變動」。
+4. 必須記入 QA 報告的已知取捨(計畫 D2 要求):固定 2048 解析度下,預設 10m 地板約
+   **1.1cm/texel**,200m 滿版場地約 **14cm/texel** —— 極大場地的陰影邊緣偏鈍是設計取捨,非 bug。
+5. 步驟 13 所列 9 支既有 spec 需在 playwright 階段全綠且零改動。
+</content>

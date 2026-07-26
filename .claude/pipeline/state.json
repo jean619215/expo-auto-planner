@@ -1,8 +1,8 @@
 {
   "story_file": "stories/venue-refined-3d.md",
   "story_title": "精密 3D 場景 (步驟 03)",
-  "task_index": 1,
-  "current_task": "[FRONTEND] 打光與陰影:shadow map、多光源配置、tone mapping / 環境光設定,套用至步驟 03 場景",
+  "task_index": 2,
+  "current_task": "[FRONTEND] PBR 材質:地板/牆/柱套用材質貼圖(含 lazy load 與載入指示),步驟 02 不載入這些資源",
   "task_type": "FRONTEND",
   "stage": "scan",
   "iteration": {
@@ -23,5 +23,5 @@
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "last_updated": "2026-07-26T01:40:00+08:00"
+  "last_updated": "2026-07-26T06:00:00+08:00"
 }

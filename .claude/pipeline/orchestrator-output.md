@@ -1,59 +1,77 @@
-# Orchestrator Output — 步驟 03 骨架
-> Story: 精密 3D 場景 (步驟 03) | Generated: 2026-07-26T00:20+08:00
+# Orchestrator Output — 打光與陰影
+> Story: 精密 3D 場景 (步驟 03) | Generated: 2026-07-26T02:45+08:00
 
 ## Task Type
 FRONTEND
 
 ## Refined Requirement
 
-目前場地 wizard 只有兩步(`WizardStep = "edit" | "preview"`,`src/components/venue/PlanEditor.tsx:76`;`WIZARD_STEPS` 陣列 `PlanEditor.tsx:107-110`)。本任務新增第三步「03 精密 3D」的**結構骨架**,建立一個唯讀的 `RefinedScene` 元件位置,**本任務先沿用現有 box 幾何與現有打光**(材質、陰影、參數化家具幾何分別是 story 後續 task 2–4 的範圍,本任務不做)。
+步驟 03(`RefinedScene.tsx`,commit `c7c06c5`)目前沿用步驟 02 的最小打光:`ambientLight` + 單一 `directionalLight`,未啟用陰影,`meshStandardMaterial` 全平光。本任務把步驟 03 升級為**展場實景感**打光,是後續材質(task 3)與家具模型(task 5–6)的視覺基礎 —— 沒有陰影與方向性光源,再好的材質與模型都會看起來是平的。
 
 本任務要求:
 
-1. **步驟型別與進度列**:`WizardStep` 加入第三個值,`WIZARD_STEPS` 加入「03 精密 3D」項目。兩者必須同步更新(見 AGENTS.md Modularity 規則)。進度列在三步驟下皆正確標示目前位置。
+1. **燈光風格:展場實景感**(使用者已定案)。模擬展覽會場天花板燈:
+   - 偏冷白的主光(色溫接近會場 LED/鹵素混合光),具明確方向性以產生可辨識的落地陰影。
+   - 多盞補光避免暗部死黑 —— 展場實務上不會只有單一光源。
+   - 不要做成戶外日光(強烈平行光 + 天空環境光),展場是室內情境。
 
-2. **導覽**:步驟 02 的「下一步」直接進入步驟 03(使用者已定案:**不另設「產生精密 3D」按鈕**);步驟 03 提供「上一步」回到 02。步驟 03 沒有再下一步。
+2. **陰影:中等品質**(使用者已定案):
+   - 啟用 shadow map,採 PCF soft shadow(柔邊,非硬邊鋸齒)。
+   - Shadow map 解析度 2048。**不要**用 4096(低階 GPU 掉幀),也不要低於 1024(陰影會糊成塊)。
+   - 只有必要的光源投射陰影 —— 每盞投影光源都是一次額外 render pass,補光不需要全部開 `castShadow`。
+   - 地板接收陰影;牆/柱/家具投射陰影。
 
-3. **唯讀 `RefinedScene` 元件**:新建元件(含 `next/dynamic` `ssr:false` loader 包裝,比照 `VenueSceneLoader.tsx`)渲染 3D 場景,但**唯讀**:
-   - 不掛 `TransformControls`、不做點擊選取、不提供家具工具列側欄、不觸發任何 `onSceneChange` 類回寫。
-   - 保留 `OrbitControls`(旋轉/縮放/平移視角)。
-   - 本任務的幾何/材質/打光可直接沿用 `VenueScene.tsx` 現有作法(多邊形 `ExtrudeGeometry` 地板 + box 牆/柱/家具 + `ambientLight` + `directionalLight`),視覺升級留給後續 task。
+3. **Tone mapping / 色彩管理**:
+   - **修正(2026-07-26,architect 查證 node_modules)**:R3F v9 的 `<Canvas>` **已預設** ACESFilmic + sRGB,步驟 02 早就套用。本任務是「明確化設定並調整曝光」,不是從無到有開啟。
+   - 明確設定 tone mapping 與曝光值,讓多光源疊加後不會過曝死白。
+   - 這會改變整體亮度觀感 —— 需連帶調整既有材質的基礎色明度,確保白模階段的物件不會變得太暗或太亮(注意:`FURNITURE_DEFAULTS` 的顏色與 2D 編輯器、步驟 02 共用,不可改動)。
+   - **材質數值納入本任務範圍**(2026-07-26 使用者定案):`roughness` / `metalness` **純量**屬本任務 —— `meshStandardMaterial` 預設 `roughness: 1`(全霧面)不反射任何環境,IBL 效果將完全不可觀察、無法驗收。材質**貼圖**(影像檔)仍屬 task 3。
 
-4. **資料來源(本任務主要技術約束)**:
-   - 步驟 03 顯示的內容必須與**使用者剛才在步驟 02 看到的**完全一致,包含使用者在 3D 內手動拖曳/旋轉後的結果。
-   - **修正(2026-07-26,architect 階段查證)**:本節原先描述的「三層 state」問題**已不存在**,該描述來自過期的探查結果。現況為:`sceneSnapshot` 已簡化為 `sceneGenerated: boolean` 純 gate(`PlanEditor.tsx:208`);`VenueScene` 已完全受控,不再持有 `localWalls/localColumns/localFurniture`(僅剩 `selectedId`/`transformMode`/`placingKind`/`sidebarOpen` 等 UI state),手動編輯經 `onSceneChange` 直接寫回 `PlanEditor` 頂層 state(`PlanEditor.tsx:456-467`,含 ref 同步)。
-   - 因此步驟 03 直接讀取與步驟 02 相同的頂層 props(`polygon`/`walls`/`columns`/`furniture`)即為最新資料,02→03→02 往返的正確性由「單一資料來源」保證,不需額外同步機制。
-   - 步驟 03 為唯讀:**不得持有任何幾何 useState**,不得反向寫回任何幾何 state。
+4. **環境光 / IBL**:
+   - 可用 drei 的環境光方案提供柔和的環境反射,讓 `meshStandardMaterial` 的金屬/粗糙度有東西可反射。
+   - **限制**:若採用需下載 HDRI 的方案,必須確認授權(比照專案模型來源政策:Poly Haven CC0 可用)且檔案大小合理;**若會顯著增加下載量,優先採用程序化/內建的環境光方案**。實際做法由 architect 定案並說明取捨。
 
-5. **AI 面板**:使用者已定案步驟 03 **不顯示** AI 側欄。但 `AiPanel` 是上一個 story 剛完成的「跨步驟常駐掛載」架構(commit `97d548c`,節點恆在 React tree 同一位置以避免 unmount 丟失對話)。因此步驟 03 必須以 **CSS/樣式隱藏**,**不可**把 `AiPanel` 從 tree 移除或改變其掛載位置 —— 否則會退化上一個 story 的成果(進 03 再回 02,對話與草稿輸入會消失)。
+5. **作用範圍限步驟 03**:
+   - 步驟 02(`VenueScene.tsx`)的打光**維持現況不動** —— 02 是即時互動編輯,運算要輕;03 才追求畫面品質。
+   - 兩者共用的 `floorGeometry.ts` 只提供幾何,不涉及光照,不受本任務影響。
 
-6. **存檔**:步驟 03 不提供存檔入口(使用者已定案)。步驟 03 不產生任何需要持久化的新資料 —— 材質與幾何都由 plan 推導而來,`PlanSnapshot` 結構與 `/api/plans/*` 一律不動。
+6. **效能約束**:
+   - 陰影與多光源設定不得讓步驟 03 的初次進入明顯卡頓。
+   - 場景可能有數十件家具(每種家具可重複放置),打光成本不隨物件數線性惡化 —— 光源數固定,不可依物件數動態增生光源。
+   - 資源(光源、shadow map、環境貼圖)需在離開步驟 03 時正確釋放,比照 AGENTS.md 的 dispose 規則。
 
-7. **既有行為不得退化**:步驟 01 的 2D 編輯(含 zoom/pan)、步驟 02 的白模預覽與 3D 內手動編輯、AI 面板常駐與 tool call 套用,全部維持現況。
+7. **既有約束不得破壞**(AGENTS.md,均為前一任務確立):
+   - `RefinedScene` 維持唯讀:不得持有幾何 state、不得掛 `TransformControls`、不得回寫 `onSceneChange`。
+   - 02/03 維持互斥掛載。
+   - `AiPanel` 在 03 維持 CSS 隱藏且不改變掛載位置。
+   - 家具尺寸仍由 `FURNITURE_DEFAULTS` 決定,本任務不碰尺寸與幾何。
+
+8. **範圍界線**:本任務**只做打光與陰影**。PBR 材質貼圖(task 3)、家具模型匯入(task 4–5)、展場家具程序化幾何(task 6)都不在此範圍 —— 材質仍維持現有的單色 `meshStandardMaterial`,只是在新打光下呈現。
 
 ## Clarified Acceptance Criteria
 
-- [ ] Given 使用者在步驟 02(已產生 3D 場景),when 點擊「下一步」,then 進入步驟 03,畫面顯示 3D 場景且進度列標示第三步為目前步驟。
-- [ ] Given 使用者在步驟 03,when 點擊「上一步」,then 回到步驟 02,且步驟 02 的 3D 場景內容與離開前一致(未被重置為更早的版本)。
-- [ ] Given 使用者在步驟 02 手動拖曳移動了一件家具,when 進入步驟 03,then 步驟 03 顯示的該家具位置為手動調整後的位置(非進入 02 當下的原始位置)。
-- [ ] Given 步驟 03,when 使用者點擊場景中的任一物件,then 不會出現選取高亮、不會出現 TransformControls 拖曳把手,物件不可被移動或旋轉。
-- [ ] Given 步驟 03,when 使用者以滑鼠拖曳/滾輪操作視角,then 可正常旋轉、縮放、平移相機。
-- [ ] Given 步驟 03,then 畫面上不顯示 AI 側欄(含收合狀態的 toggle 按鈕)。
-- [ ] Given 使用者在步驟 02 與 AI 對話過(至少一輪),when 進入步驟 03 再返回步驟 02,then AI 面板對話歷史與未送出的輸入框內容完整保留(驗證常駐掛載未被破壞)。
-- [ ] Given 步驟 03,then 不顯示存檔/讀取入口。
-- [ ] Given 尚未產生 3D 場景(`sceneSnapshot === null`,從未進入過步驟 02),then 無法直接抵達步驟 03(維持既有「需先產生 scene」的 gate 精神)。
-- [ ] Given 步驟 01 與 02,then 既有行為(2D 編輯 zoom/pan、白模預覽、3D 手動編輯、AI tool call 套用即時反映)全部不變。
+- [ ] Given 步驟 03,then 場景由多盞光源打亮(非單一 directional + ambient),暗部有補光、不出現全黑死角。
+- [ ] Given 步驟 03 且場景中有牆/柱/家具,then 物件在地板上投射出柔邊陰影(PCF soft shadow,非硬邊鋸齒)。
+- [ ] Given 步驟 03,then 陰影解析度為 2048,視覺上陰影邊緣清晰但不鋸齒、不糊成方塊。
+- [ ] Given 步驟 03,then 啟用 tone mapping 與正確 color space,多光源重疊處不出現過曝死白區塊。
+- [ ] Given 步驟 02,then 打光與陰影維持現況(無陰影、原本的 ambient + directional),與本任務前完全一致。
+- [ ] Given 場景中放置數十件家具,when 進入步驟 03,then 畫面仍可流暢以 OrbitControls 旋轉,無明顯卡頓。
+- [ ] Given 步驟 03,when 返回步驟 02,then 步驟 03 建立的光源與 shadow map 資源被釋放(往返多次不累積)。
+- [ ] Given 步驟 03,then 唯讀行為不變:點擊物件無選取/無 gizmo,僅 OrbitControls 可用。
+- [ ] Given 步驟 03,then AI 側欄仍隱藏;返回步驟 02 後對話歷史與草稿輸入完整保留。
+- [ ] Given 步驟 01/02,then 既有行為(2D 編輯、白模預覽、3D 手動編輯、AI tool call 套用)全部不變。
 
 ## Edge Cases to Handle
 
-- **往返資料倒退**:02 → 03 → 02 → 03 多次往返,且每次在 02 都手動調整過物件 —— 每次進入 03 都要顯示當下最新結果,不可出現「第二次進 03 看到第一次的舊快照」。`VenueScene` local state 無 props 重新同步機制(`VenueScene.tsx`),同樣的坑不可在 03 重演。
-- **AI 在步驟 02 送出指令後立刻切到 03**:回應到達時 `applyActions` 仍套用到正確的最新幾何 state;03 為唯讀不參與寫入,但若使用者接著返回 02,必須看到該 AI 變更已套用。
-- **空場景**:場地只有地板多邊形、沒有任何牆/柱/家具時,步驟 03 仍應正常渲染(只有地板),不可 crash 或空白。
-- **不規則凹多邊形地板**:`ExtrudeGeometry` 對凹多邊形的處理沿用 02 現有作法,03 不得引入新的三角化行為差異導致兩步驟地板形狀不一致。
-- **版面寬度**:步驟 03 隱藏 AI 側欄後,3D Canvas 可用寬度與 02 不同 —— 需確認 canvas 尺寸/相機 aspect 正確,不出現變形或水平溢出。
-- **資源釋放**:步驟 03 卸載時(返回 02)需釋放自身建立的 Three.js 資源,避免往返累積 GPU 洩漏(AGENTS.md Developer 規則)。本任務沿用既有 box 幾何,量體不大,但慣例要從骨架就建立。
+- **空場景**:只有地板多邊形、無任何牆/柱/家具時,打光仍正常,不因無投影物件而報錯或畫面全黑。
+- **極大場地**:地板可達 `PLAN_AREA_SIZE_M`(200m)。方向光的 shadow camera 視錐若固定為小範圍,大場地邊緣會沒有陰影或陰影破碎 —— 需依實際地板範圍調整 shadow camera 邊界,或說明取捨。
+- **極小場地**:反之,場地很小時 shadow camera 範圍過大會讓 shadow map 精度浪費、陰影變糊。
+- **凹多邊形地板**:陰影接收面沿用共用 `useFloorGeometry`,不得因打光改動而讓 02/03 地板形狀出現差異。
+- **高瘦物件**:`bannerStand` 高 2.0m、`cabinet` 高 1.8m,陰影不可被 shadow camera 的 near/far 截斷。
+- **物件重疊/貼牆**:家具緊貼牆面時的陰影不應出現嚴重 shadow acne(自陰影雜訊)或 peter-panning(陰影與物件脫離)。
+- **往返累積**:02→03→02→03 多次,光源與 shadow map 不重複建立累積(AGENTS.md dispose 規則)。
 
 ## Error States
 
 - 本任務不新增任何 API 呼叫,無網路錯誤狀態需處理。
-- 若 `sceneSnapshot` 為 null 而步驟狀態意外被設為第三步,應比照既有 `step === "preview" && sceneSnapshot` guard 的防禦精神,不渲染 3D 而非拋錯白畫面。
+- ~~HDRI 載入失敗處理~~ —— **不適用(2026-07-26)**:architect 定案採程序化 `<Environment>` + `<Lightformer>`,零下載、無外部資源,此錯誤狀態由設計上即不可能發生。(drei 的 `<Environment preset>` 會在 runtime 從 `raw.githack.com` 下載,已因第三方 CDN 依賴而否決。)

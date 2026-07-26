@@ -474,6 +474,131 @@ export class PlanEditorPage {
     return Number(raw);
   }
 
+  // --- venue-refined-3d task 2: lighting/shadow diagnostics ------------
+  //
+  // All values below are read from `[data-testid="refined-scene"]`'s
+  // `data-*` attributes, which are populated from the scene probe's
+  // report of the *actual* renderer/scene state (architect-plan.md D8) —
+  // not source-code literals. `refinedLightingReady()` gates the others:
+  // wait for it to be `true` before reading any other diagnostic getter.
+
+  /** Whether the scene probe has reported at least once (`data-lighting-ready`). */
+  async refinedLightingReady(): Promise<boolean> {
+    const raw = await this.refinedScene.getAttribute("data-lighting-ready");
+    return raw === "true";
+  }
+
+  /** Total light count in the step-03 scene (`data-light-count`). */
+  async refinedLightCount(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute("data-light-count");
+    return Number(raw);
+  }
+
+  /** Count of lights with `castShadow=true` (`data-shadow-casting-light-count`). */
+  async refinedShadowCastingLightCount(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute(
+      "data-shadow-casting-light-count",
+    );
+    return Number(raw);
+  }
+
+  /** Count of meshes with `castShadow=true` (`data-shadow-caster-mesh-count`). */
+  async refinedShadowCasterMeshCount(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute(
+      "data-shadow-caster-mesh-count",
+    );
+    return Number(raw);
+  }
+
+  /** Whether `gl.shadowMap.enabled` (`data-shadows-enabled`). */
+  async refinedShadowsEnabled(): Promise<boolean> {
+    const raw = await this.refinedScene.getAttribute("data-shadows-enabled");
+    return raw === "true";
+  }
+
+  /** Shadow map mechanism label, e.g. `"VSM"` (`data-shadow-map-type`). */
+  async refinedShadowMapType(): Promise<string> {
+    return (await this.refinedScene.getAttribute("data-shadow-map-type")) ?? "";
+  }
+
+  /** Configured key-light shadow map size (`data-shadow-map-size`). */
+  async refinedShadowMapSize(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute("data-shadow-map-size");
+    return Number(raw);
+  }
+
+  /** Actual allocated `shadow.map` width — only set once a shadow pass has run (`data-shadow-map-allocated-width`). */
+  async refinedShadowMapAllocatedWidth(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute(
+      "data-shadow-map-allocated-width",
+    );
+    return Number(raw);
+  }
+
+  /** Key light's shadow camera frustum span in meters (`data-shadow-camera-span-m`). */
+  async refinedShadowCameraSpanM(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute("data-shadow-camera-span-m");
+    return Number(raw);
+  }
+
+  /** Key light's shadow camera near plane in meters (`data-shadow-camera-near-m`). */
+  async refinedShadowCameraNearM(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute("data-shadow-camera-near-m");
+    return Number(raw);
+  }
+
+  /** Key light's shadow camera far plane in meters (`data-shadow-camera-far-m`). */
+  async refinedShadowCameraFarM(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute("data-shadow-camera-far-m");
+    return Number(raw);
+  }
+
+  /** `gl.toneMapping` label, e.g. `"ACESFilmic"` (`data-tone-mapping`). */
+  async refinedToneMapping(): Promise<string> {
+    return (await this.refinedScene.getAttribute("data-tone-mapping")) ?? "";
+  }
+
+  /** `gl.toneMappingExposure`, formatted to 2 decimals (`data-tone-mapping-exposure`). */
+  async refinedToneMappingExposure(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute("data-tone-mapping-exposure");
+    return Number(raw);
+  }
+
+  /** `gl.outputColorSpace`, e.g. `"srgb"` (`data-output-color-space`). */
+  async refinedOutputColorSpace(): Promise<string> {
+    return (await this.refinedScene.getAttribute("data-output-color-space")) ?? "";
+  }
+
+  /** Whether `scene.environment` is set (`data-environment-set`). */
+  async refinedEnvironmentSet(): Promise<boolean> {
+    const raw = await this.refinedScene.getAttribute("data-environment-set");
+    return raw === "true";
+  }
+
+  /** The floor mesh's actual `receiveShadow` flag, read off the scene (`data-floor-receives-shadow`). */
+  async refinedFloorReceivesShadow(): Promise<boolean> {
+    const raw = await this.refinedScene.getAttribute("data-floor-receives-shadow");
+    return raw === "true";
+  }
+
+  /** The floor mesh's actual `castShadow` flag — must stay false (`data-floor-casts-shadow`). */
+  async refinedFloorCastsShadow(): Promise<boolean> {
+    const raw = await this.refinedScene.getAttribute("data-floor-casts-shadow");
+    return raw === "true";
+  }
+
+  /** `gl.info.memory.textures` (`data-renderer-textures`) — for round-trip leak checks. */
+  async refinedRendererTextures(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute("data-renderer-textures");
+    return Number(raw);
+  }
+
+  /** `gl.info.memory.geometries` (`data-renderer-geometries`) — for round-trip leak checks. */
+  async refinedRendererGeometries(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute("data-renderer-geometries");
+    return Number(raw);
+  }
+
   // --- zoom/pan --------------------------------------------------------
 
   async clickZoomIn() {
