@@ -7,17 +7,42 @@
 // `WebGLShadowMap.render()` ever allocates — its presence at the expected
 // size is the strongest available proof, short of pixel inspection, that
 // the shadow pass actually executed for that light.
+//
+// architect-plan.md 階段 C 步驟 8 (task 3) extends this with material
+// diagnostics: actual texture objects on the actual floor/wall/column
+// materials (not the constants file), plus `gl.readRenderTargetPixels()`
+// readback of the baked albedo/normal render targets — the only way to
+// prove the bake shader really ran (see Test Plan T2/T4/T5). The readback
+// reads the render target's FULL width x height (see `readFullAlbedoStats`/
+// `readFullNormalStats` below) rather than a sub-sample, so mean/max/
+// variance are the bake's true texture-wide statistics with no sampling
+// assumption of any kind. It is computed once (cached in a ref) rather than
+// every frame.
+//
+// PR-review history (review-report.md, this task's iteration 1): an earlier
+// version of this readback sampled a small fixed center block, then a grid
+// of blocks dispersed across the target — but the grid's cell count
+// (`STAT_GRID_N = 8`) was accidentally commensurate with
+// `surfaceHeight()`'s noise periods (8/24/64/96, all multiples of 8), so
+// every sample block landed on the same fractional phase within its noise
+// cell instead of covering the texture's real distribution (Issue 2). Fixed
+// by reading the whole target once instead of trying to choose a
+// sub-sampling scheme that is provably independent of the shader's own
+// periods — the full read is a one-off ~4MB transfer off the per-frame
+// path, so there is no performance reason to sub-sample at all.
 
 import { useLayoutEffect, useRef } from "react";
 import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
+import { useSurfaceMaterials } from "./SurfaceMaterials";
+import { getSurfaceTextureStats } from "./surfaceTextures";
 
-// The floor mesh tags itself with this name (RefinedScene.tsx) so the probe
-// can report the floor's *actual* castShadow/receiveShadow flags instead of
-// a source-code literal — see architect-plan.md D5 (floor receives but must
-// never cast, it is the only DoubleSide surface and thus the sole real acne
-// source).
+// The floor/wall/column meshes tag themselves with these names
+// (RefinedScene.tsx) so the probe can report *actual* scene-graph state
+// (flags, materials, geometry) instead of source-code literals.
 export const REFINED_FLOOR_NAME = "refined-floor";
+export const REFINED_WALL_NAME = "refined-wall";
+export const REFINED_COLUMN_NAME = "refined-column";
 
 // Diagnostics are only collected for this many frames after mount / after a
 // `resetKey` change. Long enough for the shadow pass, the environment cube
@@ -54,7 +79,407 @@ export interface RefinedDiagnostics {
   environmentSet: boolean;
   rendererTextures: number;
   rendererGeometries: number;
+  materials: MaterialProbeReport;
 }
+
+// --- task 3: material diagnostics ---------------------------------------
+
+interface TextureDiagnostics {
+  present: boolean;
+  width: number | null;
+  wrapS: string | null;
+  wrapT: string | null;
+  minFilter: string | null;
+  magFilter: string | null;
+  anisotropy: number | null;
+  // review-report.md Issue 1 — `anisotropy` above is the JS property, which
+  // stays whatever we last *requested* even if three silently discarded it
+  // (exactly what happened before the fix: assigned after
+  // setupRenderTarget() had already run its one-time setTextureParameters()
+  // pass, so the GPU never got TEXTURE_MAX_ANISOTROPY_EXT). This field reads
+  // the renderer's own bookkeeping of what it actually pushed to GL —
+  // `gl.properties.get(texture).__currentAnisotropy`
+  // (WebGLTextures.js:696-706, the same technique already used for
+  // `shadowMapAllocatedWidth`) — so T6 can assert reality, not intent.
+  anisotropyGpu: number | null;
+  colorSpace: string | null;
+  generateMipmaps: boolean | null;
+  channel: number | null;
+  repeatX: number | null;
+}
+
+interface SurfaceTextureDiagnostics {
+  map: TextureDiagnostics;
+  normalMap: TextureDiagnostics;
+  roughnessMap: TextureDiagnostics | null;
+  aoMap: TextureDiagnostics | null;
+  materialColorHex: string;
+  normalScaleX: number;
+}
+
+interface AlbedoReadback {
+  mean: number;
+  max: number;
+  variance: number;
+  seamDelta: number;
+  adjacentDelta: number;
+}
+
+interface NormalReadback {
+  meanZ: number;
+  varianceXY: number;
+}
+
+export interface MaterialProbeReport {
+  ready: boolean;
+  maxAnisotropy: number | null;
+  floor: SurfaceTextureDiagnostics | null;
+  wall: SurfaceTextureDiagnostics | null;
+  column: SurfaceTextureDiagnostics | null;
+  floorAlbedo: AlbedoReadback | null;
+  floorNormal: NormalReadback | null;
+  // review-report.md Issue 5 — the wall's D9 base-color override
+  // (`#78350f` -> `#d6d3d1`, ~3.5x the linear brightness) previously had no
+  // GPU-readback brightness check at all; T5 covered only the floor.
+  wallAlbedo: AlbedoReadback | null;
+  floorUvMeterError: number | null;
+  wallUvMeterError: number | null;
+  liveSurfaceTargets: number | null;
+  totalSurfaceBakes: number | null;
+}
+
+const NOT_READY_MATERIALS: MaterialProbeReport = {
+  ready: false,
+  maxAnisotropy: null,
+  floor: null,
+  wall: null,
+  column: null,
+  floorAlbedo: null,
+  floorNormal: null,
+  wallAlbedo: null,
+  floorUvMeterError: null,
+  wallUvMeterError: null,
+  liveSurfaceTargets: null,
+  totalSurfaceBakes: null,
+};
+
+const WRAP_LABELS: Record<number, string> = {
+  [THREE.RepeatWrapping]: "RepeatWrapping",
+  [THREE.ClampToEdgeWrapping]: "ClampToEdgeWrapping",
+  [THREE.MirroredRepeatWrapping]: "MirroredRepeatWrapping",
+};
+
+const FILTER_LABELS: Record<number, string> = {
+  [THREE.NearestFilter]: "NearestFilter",
+  [THREE.LinearFilter]: "LinearFilter",
+  [THREE.NearestMipmapNearestFilter]: "NearestMipmapNearestFilter",
+  [THREE.NearestMipmapLinearFilter]: "NearestMipmapLinearFilter",
+  [THREE.LinearMipmapNearestFilter]: "LinearMipmapNearestFilter",
+  [THREE.LinearMipmapLinearFilter]: "LinearMipmapLinearFilter",
+};
+
+function describeTexture(
+  gl: THREE.WebGLRenderer,
+  texture: THREE.Texture | null | undefined,
+): TextureDiagnostics {
+  if (!texture) {
+    return {
+      present: false,
+      width: null,
+      wrapS: null,
+      wrapT: null,
+      minFilter: null,
+      magFilter: null,
+      anisotropy: null,
+      anisotropyGpu: null,
+      colorSpace: null,
+      generateMipmaps: null,
+      channel: null,
+      repeatX: null,
+    };
+  }
+  const image = texture.image as { width?: number } | undefined;
+  // review-report.md Issue 1 — read three's own record of what it actually
+  // pushed to GL (`__currentAnisotropy`, set only inside
+  // `setTextureParameters()`'s anisotropy branch, WebGLTextures.js:696-706),
+  // not just the JS property the app requested.
+  const gpuProps = gl.properties.get(texture) as { __currentAnisotropy?: number } | undefined;
+  return {
+    present: true,
+    width: image?.width ?? null,
+    wrapS: WRAP_LABELS[texture.wrapS] ?? null,
+    wrapT: WRAP_LABELS[texture.wrapT] ?? null,
+    minFilter: FILTER_LABELS[texture.minFilter] ?? null,
+    magFilter: FILTER_LABELS[texture.magFilter] ?? null,
+    anisotropy: texture.anisotropy,
+    anisotropyGpu: gpuProps?.__currentAnisotropy ?? null,
+    colorSpace: texture.colorSpace,
+    generateMipmaps: texture.generateMipmaps,
+    channel: texture.channel,
+    repeatX: texture.repeat.x,
+  };
+}
+
+function describeSurfaceMaterial(
+  gl: THREE.WebGLRenderer,
+  material: THREE.MeshStandardMaterial,
+  includeRoughnessAo: boolean,
+): SurfaceTextureDiagnostics {
+  return {
+    map: describeTexture(gl, material.map),
+    normalMap: describeTexture(gl, material.normalMap),
+    roughnessMap: includeRoughnessAo ? describeTexture(gl, material.roughnessMap) : null,
+    aoMap: includeRoughnessAo ? describeTexture(gl, material.aoMap) : null,
+    materialColorHex: material.color.getHexString(),
+    normalScaleX: material.normalScale.x,
+  };
+}
+
+function readRegionLuminance(
+  gl: THREE.WebGLRenderer,
+  target: THREE.WebGLRenderTarget,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+): number[] {
+  const buffer = new Uint8Array(width * height * 4);
+  gl.readRenderTargetPixels(target, x, y, width, height, buffer);
+  const values: number[] = [];
+  for (let i = 0; i < width * height; i++) {
+    const r = buffer[i * 4] / 255;
+    const g = buffer[i * 4 + 1] / 255;
+    const b = buffer[i * 4 + 2] / 255;
+    values.push((r + g + b) / 3);
+  }
+  return values;
+}
+
+function averageAbsDiff(a: number[], b: number[]): number {
+  let total = 0;
+  for (let i = 0; i < a.length; i++) total += Math.abs(a[i] - b[i]);
+  return total / a.length;
+}
+
+// T2/T4/T5 — reads the real GPU output of a baked albedo target in full:
+// texture-wide mean/max/variance from EVERY texel (proves the shader
+// produced non-flat, on-brightness output across the WHOLE bake, not a
+// sub-sample that could be biased by the noise function's own periods —
+// see the file-header PR-review note), plus the seam-vs-adjacent-row delta
+// (already full-width reads — proves the noise tiles seamlessly, R4's
+// mitigation). Used for both the floor (T2/T4/T5) and the wall
+// (review-report.md Issue 5) albedo targets.
+function readFullAlbedoStats(gl: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget): AlbedoReadback {
+  const size = target.width;
+  const buffer = new Uint8Array(size * size * 4);
+  gl.readRenderTargetPixels(target, 0, 0, size, size, buffer);
+
+  const count = size * size;
+  let sum = 0;
+  let max = -Infinity;
+  for (let i = 0; i < count; i++) {
+    const r = buffer[i * 4] / 255;
+    const g = buffer[i * 4 + 1] / 255;
+    const b = buffer[i * 4 + 2] / 255;
+    const v = (r + g + b) / 3;
+    sum += v;
+    if (v > max) max = v;
+  }
+  const valuesMean = sum / count;
+
+  let varianceSum = 0;
+  for (let i = 0; i < count; i++) {
+    const r = buffer[i * 4] / 255;
+    const g = buffer[i * 4 + 1] / 255;
+    const b = buffer[i * 4 + 2] / 255;
+    const v = (r + g + b) / 3;
+    varianceSum += (v - valuesMean) * (v - valuesMean);
+  }
+
+  const rowFirst = readRegionLuminance(gl, target, 0, 0, size, 1);
+  const rowLast = readRegionLuminance(gl, target, 0, size - 1, size, 1);
+  const midRow = Math.floor(size / 2);
+  const rowMidA = readRegionLuminance(gl, target, 0, midRow, size, 1);
+  const rowMidB = readRegionLuminance(gl, target, 0, midRow + 1, size, 1);
+
+  return {
+    mean: valuesMean,
+    max,
+    variance: varianceSum / count,
+    seamDelta: averageAbsDiff(rowFirst, rowLast),
+    adjacentDelta: averageAbsDiff(rowMidA, rowMidB),
+  };
+}
+
+// T2 — reads the floor normal target in full (see readFullAlbedoStats doc
+// above): mean Z (should be close to 1 — the baked normal points mostly
+// "up") and a magnitude proxy for the XY perturbation (should be > 0 —
+// proves the shader actually derived a non-flat normal from
+// surfaceHeight(), not the blank (0.5,0.5,1) normal), both computed over
+// every texel.
+function readFullNormalStats(gl: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget): NormalReadback {
+  const size = target.width;
+  const buffer = new Uint8Array(size * size * 4);
+  gl.readRenderTargetPixels(target, 0, 0, size, size, buffer);
+
+  const count = size * size;
+  let sumZ = 0;
+  let sumXY = 0;
+  for (let i = 0; i < count; i++) {
+    const nx = (buffer[i * 4] / 255) * 2 - 1;
+    const ny = (buffer[i * 4 + 1] / 255) * 2 - 1;
+    const nz = (buffer[i * 4 + 2] / 255) * 2 - 1;
+    sumZ += nz;
+    sumXY += nx * nx + ny * ny;
+  }
+  return { meanZ: sumZ / count, varianceXY: sumXY / count };
+}
+
+// T3 — D2's UV assumption guard: the floor's `uv` attribute should equal
+// its local (x, y) position exactly (ExtrudeGeometry's WorldUVGenerator).
+// Returns the largest absolute bounding-box discrepancy between the two.
+//
+// Restricted to the CAP group (top + bottom faces, `materialIndex === 0` —
+// three r185 ExtrudeGeometry.js's `buildLidFaces()` calls
+// `addGroup(start, count, 0)`, `buildSideFaces()` calls
+// `addGroup(start, count, 1)`). Only the caps use `generateTopUV()`
+// (`(vertex.x, vertex.y)`, meters — D2's claim). The side-wall group uses
+// `generateSideWallUV()`, whose `v` is `1 - extrudeDepth` (architect-plan.md
+// event 查證表) — i.e. genuinely NOT meters, by design, for a different
+// purpose (D2 doesn't claim anything about it). Mixing both groups into one
+// bounding box (as an earlier version of this probe did) compares the
+// side group's [0,1]-ish `v` against the position bbox's absolute meter
+// coordinates (e.g. floor at x/y ~20-30), producing a spurious ~19 error
+// that has nothing to do with whether `generateTopUV()` still behaves as
+// D2 assumes. Non-indexed geometry (ExtrudeGeometry never calls
+// `setIndex()`) means `group.start`/`group.count` address the
+// position/uv attributes directly.
+function computeFloorUvMeterError(mesh: THREE.Mesh): number | null {
+  const position = mesh.geometry.getAttribute("position");
+  const uv = mesh.geometry.getAttribute("uv");
+  if (!position || !uv) return null;
+
+  const capGroup = mesh.geometry.groups.find((group) => group.materialIndex === 0);
+  if (!capGroup) return null;
+  const start = capGroup.start;
+  const end = Math.min(start + capGroup.count, position.count);
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  let minU = Infinity;
+  let maxU = -Infinity;
+  let minV = Infinity;
+  let maxV = -Infinity;
+  for (let i = start; i < end; i++) {
+    const x = position.getX(i);
+    const y = position.getY(i);
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+    const u = uv.getX(i);
+    const v = uv.getY(i);
+    minU = Math.min(minU, u);
+    maxU = Math.max(maxU, u);
+    minV = Math.min(minV, v);
+    maxV = Math.max(maxV, v);
+  }
+  return Math.max(
+    Math.abs(minU - minX),
+    Math.abs(maxU - maxX),
+    Math.abs(minV - minY),
+    Math.abs(maxV - maxY),
+  );
+}
+
+// T3 — D3's applyMeterUv() guard: for each of BoxGeometry's 6 fixed
+// face-groups, the actual uv span (max - min) should equal the face's real
+// meter extent. Returns the largest relative deviation from 1 across all 6
+// faces (so a narrow 0.2m side face stretched into a stripe would read as a
+// huge error, not a tiny absolute one).
+//
+// review-report.md Issue 6: an earlier version compared the uv span against
+// a literal `[d, h] / [w, d] / [w, h]` table copied from boxGeometry.ts's
+// own face->span table, keyed by the same group index. That is not an
+// independent guard — the real risk D3 names is a future three upgrade
+// changing BoxGeometry's face/group emission order; if it did,
+// `applyMeterUv()` (indexed by that same order) and this literal table
+// would both be wrong in exactly the same way, so `wallUvMeterError` would
+// still read ~0 while the geometry silently stretched. Fixed by deriving
+// the "expected" span directly from the face's own `position` data instead
+// of from `w`/`h`/`d` + a table: for each 4-vertex face group, the largest
+// two of the three axis-aligned position spans ARE that face's real extent,
+// whatever axis they happen to be on and whatever BoxGeometry's group order
+// is. Comparing that (order-independent, geometry-derived) pair against the
+// uv span pair now only depends on the actual vertex data — a group-order
+// change that fed `applyMeterUv()` the wrong span would show up here as a
+// real mismatch, not a coincidental match.
+function computeWallUvMeterError(mesh: THREE.Mesh): number | null {
+  const geometry = mesh.geometry as THREE.BoxGeometry;
+  const uv = geometry.getAttribute("uv");
+  const position = geometry.getAttribute("position");
+  if (!uv || !position) return null;
+
+  const faceCount = 6;
+  let maxError = 0;
+  for (let face = 0; face < faceCount; face++) {
+    const base = face * 4;
+
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    let minZ = Infinity;
+    let maxZ = -Infinity;
+    for (let v = 0; v < 4; v++) {
+      const i = base + v;
+      const x = position.getX(i);
+      const y = position.getY(i);
+      const z = position.getZ(i);
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+      minZ = Math.min(minZ, z);
+      maxZ = Math.max(maxZ, z);
+    }
+    // A box face is planar: exactly one of the three axis spans is ~0 (the
+    // face normal's axis). The other two ARE the face's real in-plane
+    // extent, in whatever order they fall — sorted so comparison below
+    // doesn't need to know which position axis maps to u vs v.
+    const positionSpans = [maxX - minX, maxY - minY, maxZ - minZ]
+      .filter((span) => span > 1e-6)
+      .sort((a, b) => a - b);
+    if (positionSpans.length !== 2) continue;
+
+    let minU = Infinity;
+    let maxU = -Infinity;
+    let minV = Infinity;
+    let maxV = -Infinity;
+    for (let v = 0; v < 4; v++) {
+      const i = base + v;
+      const u = uv.getX(i);
+      const vv = uv.getY(i);
+      minU = Math.min(minU, u);
+      maxU = Math.max(maxU, u);
+      minV = Math.min(minV, vv);
+      maxV = Math.max(maxV, vv);
+    }
+    const uvSpans = [maxU - minU, maxV - minV].sort((a, b) => a - b);
+
+    for (let k = 0; k < 2; k++) {
+      const expected = positionSpans[k];
+      const actual = uvSpans[k];
+      const error = expected > 0 ? Math.abs(actual / expected - 1) : 0;
+      maxError = Math.max(maxError, error);
+    }
+  }
+  return maxError;
+}
+
+// --- task 2: lighting/shadow diagnostics (unchanged) --------------------
 
 const TONE_MAPPING_LABELS: Record<number, RefinedDiagnostics["toneMapping"]> = {
   [THREE.NoToneMapping]: "None",
@@ -114,12 +539,19 @@ interface RefinedSceneProbeProps {
 export default function RefinedSceneProbe({ resetKey, onReport }: RefinedSceneProbeProps) {
   const gl = useThree((state) => state.gl);
   const scene = useThree((state) => state.scene);
+  const { ready: materialsReady, textureSet } = useSurfaceMaterials();
   const frameRef = useRef(0);
   const lastReportRef = useRef<string | null>(null);
+  // Cached once per mount — the material readback (T2/T4/T5) is real GPU
+  // work and does not need to repeat every frame (architect-plan.md Test
+  // Plan: "只在首次報告時做一次,不進每幀路徑").
+  const materialsCacheRef = useRef<MaterialProbeReport | null>(null);
 
   // `resetKey` changes whenever RefinedScene's geometry props change
   // identity (a new revision) — re-arm the frame counter so the probe
-  // waits for a fresh shadow pass before reporting again.
+  // waits for a fresh shadow pass before reporting again. Deliberately
+  // does NOT reset `materialsCacheRef` — the bake is decoupled from scene
+  // content (D2/D3), so a scene edit must never re-trigger the readback.
   useLayoutEffect(() => {
     frameRef.current = 0;
   }, [resetKey]);
@@ -139,9 +571,16 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
     // flow analysis cannot see assignments made inside the traverse callback
     // and would otherwise narrow the locals to `null` (then to `never` at every
     // use site), forcing a cast on each read.
-    const found: { key: THREE.DirectionalLight | null; floor: THREE.Mesh | null } = {
+    const found: {
+      key: THREE.DirectionalLight | null;
+      floor: THREE.Mesh | null;
+      wall: THREE.Mesh | null;
+      column: THREE.Mesh | null;
+    } = {
       key: null,
       floor: null,
+      wall: null,
+      column: null,
     };
 
     scene.traverse((object) => {
@@ -161,12 +600,46 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
         if (!found.floor && object.name === REFINED_FLOOR_NAME) {
           found.floor = object as THREE.Mesh;
         }
+        if (!found.wall && object.name === REFINED_WALL_NAME) {
+          found.wall = object as THREE.Mesh;
+        }
+        if (!found.column && object.name === REFINED_COLUMN_NAME) {
+          found.column = object as THREE.Mesh;
+        }
       }
     });
 
     const key = found.key;
     const floor = found.floor;
     const shadowCamera = key ? key.shadow.camera : null;
+
+    if (
+      !materialsCacheRef.current &&
+      materialsReady &&
+      textureSet &&
+      floor &&
+      (floor.material as THREE.MeshStandardMaterial).map
+    ) {
+      const floorMaterial = floor.material as THREE.MeshStandardMaterial;
+      const wallMaterial = found.wall?.material as THREE.MeshStandardMaterial | undefined;
+      const columnMaterial = found.column?.material as THREE.MeshStandardMaterial | undefined;
+      const stats = getSurfaceTextureStats();
+
+      materialsCacheRef.current = {
+        ready: true,
+        maxAnisotropy: gl.capabilities.getMaxAnisotropy(),
+        floor: describeSurfaceMaterial(gl, floorMaterial, true),
+        wall: wallMaterial ? describeSurfaceMaterial(gl, wallMaterial, false) : null,
+        column: columnMaterial ? describeSurfaceMaterial(gl, columnMaterial, false) : null,
+        floorAlbedo: readFullAlbedoStats(gl, textureSet.floorAlbedoTarget),
+        floorNormal: readFullNormalStats(gl, textureSet.floorNormalTarget),
+        wallAlbedo: readFullAlbedoStats(gl, textureSet.wallAlbedoTarget),
+        floorUvMeterError: computeFloorUvMeterError(floor),
+        wallUvMeterError: found.wall ? computeWallUvMeterError(found.wall) : null,
+        liveSurfaceTargets: stats.liveTargets,
+        totalSurfaceBakes: stats.totalBakes,
+      };
+    }
 
     const diagnostics: RefinedDiagnostics = {
       lightCount,
@@ -193,6 +666,7 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
       environmentSet: scene.environment !== null,
       rendererTextures: gl.info.memory.textures,
       rendererGeometries: gl.info.memory.geometries,
+      materials: materialsCacheRef.current ?? NOT_READY_MATERIALS,
     };
 
     const serialized = JSON.stringify(diagnostics);

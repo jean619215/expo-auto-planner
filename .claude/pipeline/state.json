@@ -4,24 +4,24 @@
   "task_index": 2,
   "current_task": "[FRONTEND] PBR 材質:地板/牆/柱套用材質貼圖(含 lazy load 與載入指示),步驟 02 不載入這些資源",
   "task_type": "FRONTEND",
-  "stage": "scan",
+  "stage": "review",
   "iteration": {
-    "review": 0,
+    "review": 1,
     "qa": 0
   },
   "checkpoints": {
-    "scan": "pending",
-    "orchestrate": "pending",
-    "architect": "pending",
-    "implement": "pending",
-    "review": "pending",
+    "scan": "completed",
+    "orchestrate": "completed",
+    "architect": "completed",
+    "implement": "completed",
+    "review": "changes_requested",
     "qa": "pending",
     "playwright": "pending"
   },
   "flags": {
-    "review_critical_pending": false,
+    "review_critical_pending": true,
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "last_updated": "2026-07-26T06:00:00+08:00"
+  "last_updated": "2026-07-27T02:10:00+08:00"
 }

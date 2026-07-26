@@ -1,210 +1,253 @@
-# Code Review Report — [FRONTEND] 打光與陰影(步驟 03)
-> Generated: 2026-07-26T09:40+08:00 | Review iteration: 1
-> Story: `stories/venue-refined-3d.md` task 2 | Plan: `.claude/pipeline/architect-plan.md`
+# Code Review Report — [FRONTEND] 程序化 PBR 材質(地板/牆/柱), 步驟 03
+> Generated: 2026-07-27T02:10+08:00 | Review iteration: 1
+> Story: `stories/venue-refined-3d.md` task 3 | Plan: `.claude/pipeline/architect-plan.md`
+> Diff reviewed: uncommitted working tree vs `571330f`
 
 ## Overall Assessment
 
-**APPROVED WITH MINOR FIXES** — 4 個 🟡 已於本階段修正(見 Conversation Log),0 個 🔴。
+**CHANGES REQUIRED** — 1 🔴 Critical (anisotropic filtering never reaches the GPU; the
+assertion that guards it reads a setting the renderer ignores), 5 🟡 Should Fix, 4 💡.
 
 ## Summary
 
-實作忠實對應 architect-plan.md 的 D1–D8,包含計畫點名為「最可能真實缺陷」的
-`shadow.camera.updateProjectionMatrix()`(已確認存在且綁在正確的依賴上)。範圍紀律良好:
-無任何貼圖 / GLB / 程序化家具幾何,`FURNITURE_DEFAULTS` 與 `VenueScene.tsx` 未被觸碰。
-主要問題集中在**驗收證據的強度**而非產品邏輯:探針有一項診斷是原始碼字面量而非場景實際值,
-另有兩個測試斷言在任何實作下都必然通過。四項皆已修正,`tsc --noEmit` / `eslint` 重跑全綠。
+The architecture is sound and the plan was followed closely: the meter-UV convention (D2/D3)
+is correct on all six box faces, the per-octave `mod(period)` seamlessness invariant holds in
+every noise layer, D5's "bake the brightness, keep `color` white" is implemented as designed,
+and the resource lifecycle is genuinely clean — `<primitive>` is the right choice (R3F never
+disposes primitive objects, verified in `events-b389eeca.esm.js:15221`), so the shared
+materials are owned solely by the provider and no double-dispose or premature-dispose path
+exists. Scope discipline is good: `VenueScene.tsx`, `PlanEditor.tsx`, `src/lib/venue/*`,
+`FURNITURE_DEFAULTS`, the furniture meshes and every task-2 shadow/lighting constant are
+untouched; step 02's wall is still `#78350f`.
+
+The one serious problem is the same class of defect this task has already hit twice: a
+mitigation that is asserted at the *setting* level while the renderer silently does something
+else. `anisotropy` is assigned after three has already finalised the render target's GL texture
+parameters, so anisotropic filtering — the plan's named defence against grazing-angle moiré on
+a 200 m floor (D4/R2) — is a no-op on the GPU, and T6 cannot see it. Separately, the "fixed"
+T2/T5 grid readback is dispersed across the target but *phase-locked* to the noise lattice, so
+it still does not measure the texture-wide statistics its comment claims.
 
 ---
 
 ## 🔴 Critical Issues (Must Fix — Pipeline Paused)
 
-無。
+### Issue 1 — `anisotropy` is set too late and is silently discarded by three; T6 asserts the setting, not the reality
 
-**特別查核(計畫 Risks 表列出的高風險項,逐項確認通過):**
+- **File**: `src/components/venue/surfaceTextures.ts:259` (assignment),
+  `playwright-tests/venue-refined-materials.spec.ts:196-198` (the assertion that cannot see it)
+- **Issue**:
 
-| 風險項 | 結果 |
-| --- | --- |
-| 忘記 `shadow.camera.updateProjectionMatrix()` | ✅ `refinedLighting.tsx:129`,位於 `useLayoutEffect(deps=[bounds])` 內。`bounds` 是 `useMemo([polygon, walls, columns, furniture])`,AI `resize_floor` 會換 `polygon` 陣列識別 → 視錐必然重算。 |
-| 忘記把 `light.target` 掛進場景 | ✅ `<primitive object={target} position={[centerX, 0, centerY]} />`(`refinedLighting.tsx:162`),三盞方向光共用。 |
-| `shadow-mapSize-*` 巢狀 prop 未生效 | ✅ 走 JSX prop 路徑,於首次 layout effect 前完成,不需 S9 的退回方案。 |
-| 誤改 `FURNITURE_DEFAULTS` / `VenueScene.tsx` | ✅ D7 的「絕對不得修改」清單 12 個路徑在 `git status` 中全部不存在。 |
+  ```ts
+  gl.setRenderTarget(target);                  // line 253 — first setRenderTarget on this RT
+  gl.render(quadScene, quadCamera);
+  target.texture.anisotropy = maxAnisotropy;   // line 259 — too late
+  ```
 
-**陰影視錐邊界數學(逐案驗算,無截斷)：**
+  Verified line-by-line against `node_modules/three` (r185), not from memory:
 
-`R = radiusM + 4`、`D = max(radiusM*2, 20)`、`near = max(0.5, D-R-5)`、`far = D+R+2`。
-`KEY_DIR` 正規化後 y 分量 = 0.8165(仰角 54.7°)。
+  1. `WebGLRenderer.setRenderTarget()` calls `textures.setupRenderTarget(renderTarget)` on the
+     first use of a target (`WebGLRenderer.js:2922-2924`, guarded by
+     `__webglFramebuffer === undefined`).
+  2. `setupRenderTarget()` is the **only** place a render-target texture's GL parameters are
+     applied — `setTextureParameters(glTextureType, texture)` at `WebGLTextures.js:2216`.
+  3. `setTextureParameters()` applies anisotropy only under
+     `if (texture.anisotropy > 1 || properties.get(texture).__currentAnisotropy)`
+     (`WebGLTextures.js:696-706`). At that moment `texture.anisotropy` is still the default `1`
+     and `__currentAnisotropy` is `undefined`, so the branch is **skipped entirely** —
+     `TEXTURE_MAX_ANISOTROPY_EXT` is never issued.
+  4. Nothing re-applies it afterwards: `setTexture2D()` early-outs for render-target textures
+     (`texture.isRenderTargetTexture === false && …`, `WebGLTextures.js:559`) and only binds;
+     `updateRenderTargetMipmap()` only binds and calls `generateMipmap()`
+     (`WebGLTextures.js:2252-2272`).
 
-- **空場景 / 預設 10m 地板**(`createDefaultFloor(50)` → 20–30 帶,`radiusM = 7.07`):`R = 11.07`、`D = 20`、`near = 3.93`、`far = 33.07`。span = 22m → 約 1.1cm/texel。
-- **極小場地**(`radiusM` 被 `MIN_SHADOW_RADIUS_M = 2` 夾住):`R = 6`、`D = 20`、`near = 9`、`far = 26`。無 0 寬視錐、無 NaN。
-- **200m 滿版場地**(`radiusM = 141.4`):`R = 145.4`、`D = 282.8`、`near = 132.4`、`far = 430.2`。內容沿光軸的最大位移僅 `0.408*(100+100) = 81.6m`,加最高物件 `3 * 0.816 = 2.45m`,遠小於 `R` 提供的 145.4m 餘裕 → **不截斷**。橫向同理(AABB 內任一點離中心 ≤ 半對角線 141.4 < R)。
-- **高瘦物件**(bannerStand 2.0m / cabinet 1.8m):`MAX_OBJECT_HEIGHT_M = 3` 已涵蓋且 near 尚有數十公尺餘裕。
-- `near` 的 `Math.max(0.5, ...)` clamp 在實務參數域內**不可能觸發**(因 `D ≥ 20` 而 `R = radiusM + 4`),故 `far - near` 恆為 `span + 7`。
+  So all 8 baked textures render with **anisotropy 1**. `wrapS`/`wrapT`/`minFilter`/
+  `magFilter`/`generateMipmaps` are *not* affected — those are passed in the constructor
+  options and are correctly in place at setup time. Only anisotropy is lost.
 
-`planBoundsM` 正確納入地板 + 牆(端點外擴 `WALL_THICKNESS_M/2`)+ 柱 + 家具(外接圓
-`hypot(w,h)/2`,涵蓋任意 `rotationDeg`),符合 D2「物件可合法站在地板多邊形之外
-(`clampColumnCenter` 只 clamp 到 `venueSizeM`)」的理由。`Number.isFinite` 過濾與全空退化路徑皆到位。
+  T6 reads `material.map.anisotropy` — the JS property the code just assigned — so it reports
+  `8` and stays green regardless. This is exactly the task-2 failure mode the plan's
+  「驗證紀律」 section was written to prevent (「斷言了設定,而 renderer 已把它靜默降級」).
 
----
+- **Impact**: D4/R2's primary moiré mitigation is inert. The plan is explicit that this is
+  invisible in close-up testing and only manifests at grazing angles on a large floor
+  (「近距離測試完全看不出來,只有掠射角遠景才炸」) — and the grazing-angle screenshot that
+  would have caught it by eye is also missing (see 🟡 Issue 4). This directly threatens the AC
+  「Given 地板放大至 200m … 不出現明顯重複格線或接縫」/「不出現摩爾紋」. It is also an
+  architect-plan compliance failure (D4 requires the setting to be *effective*, and the Test
+  Plan requires assertions to read renderer reality).
+- **Required fix**:
+  1. Pass anisotropy in the render-target options so it is set before `setupRenderTarget()`
+     runs. `RenderTarget`'s constructor already forwards it
+     (`three/src/core/RenderTarget.js:233`:
+     `if (options.anisotropy !== undefined) values.anisotropy = options.anisotropy;`):
 
-## 🟡 Should Fix(本階段已由 reviewer 修正)
-
-### Issue 1 — `data-floor-receives-shadow` 是原始碼字面量,對應的測試無法失敗
-
-- **File**: `src/components/venue/RefinedScene.tsx:136`(修正前)、`playwright-tests/venue-refined-lighting.spec.ts` 案例 4
-- **Issue**: 該屬性以 `data-floor-receives-shadow="true"` 硬寫在根 div 上,不是探針回報值。
-  案例 4 的 `expect(await editor.refinedFloorReceivesShadow()).toBe(true)` 因此是恆真斷言 ——
-  就算有人刪掉 `FloorMesh` 的 `receiveShadow`,測試依然全綠。這同時牴觸 architect-plan D8 的
-  硬性設計原則(「回報的一律是 renderer/scene 的實際值,不是原始碼裡的字面量」)、
-  spec 檔頭註解、以及 `PlanEditorPage.ts` 新增區塊的註解 —— 兩處註解都宣稱**所有**診斷值取自實際場景狀態。
-- **Fix applied**: 匯出 `REFINED_FLOOR_NAME`,`FloorMesh` 以 `name` 標記自己;探針在 traverse 時
-  以 name 找到地板 mesh,回報**真實的** `receiveShadow` 與 `castShadow`。新增
-  `data-floor-casts-shadow` + `refinedFloorCastsShadow()` getter,案例 4 加上
-  `expect(await editor.refinedFloorCastsShadow()).toBe(false)` —— 這條同時把 D5
-  「地板絕不投影(DoubleSide 是本場景唯一真正的 acne 來源)」變成機器可驗證的守門條件,原本只有註解在守。
-
-### Issue 2 — 案例 10(高瘦物件不被 near/far 截斷)是恆真斷言
-
-- **File**: `playwright-tests/venue-refined-lighting.spec.ts` 案例 10
-- **Issue**: `expect(near).toBeGreaterThanOrEqual(0)` 由 `Math.max(0.5, ...)` 保證,
-  `expect(far).toBeGreaterThan(near)` 由 `far = D+R+2` 的構造保證。**任何** near/far 公式都會通過,
-  包含把 `MAX_OBJECT_HEIGHT_M` 改成 0 或把 `SHADOW_MARGIN_M` 砍成 0 的退化版本 ——
-  也就是說,這條 edge case 目前沒有任何自動化保護。
-- **Fix applied**: 補上真正的不變式 `expect(far - near).toBeGreaterThanOrEqual(span + 3)`。
-  現行實作恆為 `span + 7`(見上方驗算),餘裕充足;而移除高度餘裕的退化實作會落到 `span` 附近而失敗。
-
-### Issue 3 — 案例 6 的「零下載」把關比計畫弱,且常數命名誤導
-
-- **File**: `playwright-tests/venue-refined-lighting.spec.ts:17`
-- **Issue**: 常數名為 `FURNITURE_KINDS_URL_ALLOWLIST_HOST`,但它既與 furniture kinds 無關、
-  也不是 allowlist —— 它是唯一被禁止的 host。且 `externalRequests` 收集了所有非 localhost 請求,
-  卻只拿來比對 `githack.com` 一個字串;若日後有人改用自托管或別的 CDN 取 `.hdr`,測試不會發現。
-- **Fix applied**: 改名為 `FORBIDDEN_ENV_ASSET_PATTERNS`,涵蓋 `githack.com` / `polyhaven` /
-  `.hdr` / `.exr`,並改為 `expect(forbidden).toEqual([])` —— 失敗時直接列出被抓到的 URL,而非一個裸 `false`。
-
-### Issue 4 — 探針每一幀都 traverse 全場景並 `JSON.stringify`,永不停止
-
-- **File**: `src/components/venue/RefinedSceneProbe.tsx:77-136`(修正前)
-- **Issue**: `useFrame` 內的 traverse + `JSON.stringify` 在第 2 幀後**無限期**每幀執行。單次成本雖低,
-  但它落在本任務唯一無法自動化驗收的 AC(「數十件家具下仍可流暢旋轉」)的熱迴圈裡 —— 純診斷程式碼
-  不該常駐在那裡。更實質的是連鎖成本:每次 `onReport` → `setDiagnostics` → `RefinedScene` re-render
-  → `<HallEnvironment>` 的 children 取得新識別 → drei `EnvironmentPortal` 的
-  `useLayoutEffect`(依賴陣列含 `children`,已核對 `node_modules/@react-three/drei/core/Environment.js:134`)
-  重跑一次 128px cube 渲染。計畫 D4 已把這條連鎖列為已知瑕疵,不該再讓探針成為額外的觸發源。
-- **Fix applied**: 新增 `PROBE_ACTIVE_FRAMES = 120`,超過即 early-return。`frameRef` 已由
-  `resetKey`(revision)重置,所以場景一變就重新武裝、重新回報 120 幀。保留 120 幀(約 2 秒)而非
-  「回報一次就停」是刻意的:`shadow.map` 配置、環境 cube 渲染與 `gl.info.memory` 需要幾幀才穩定,
-  太早停會讓 `shadowMapAllocatedWidth` 永遠停在 `null`。
-
-**附帶修正(型別整潔,無行為變更)**:探針原本因 TS 對 callback 內賦值的 CFA 限制,
-把 `keyLight` 窄化成 `never`,導致每個讀取點都要 `as THREE.DirectionalLight`。改用 holder object
-(`found.key` / `found.floor`)後 5 處 cast 全部移除。
+     ```ts
+     const target = new THREE.WebGLRenderTarget(resolution, resolution, {
+       …,
+       anisotropy: maxAnisotropy,
+     });
+     ```
+     and delete the post-`gl.render()` assignment at line 259.
+  2. Harden T6 so it can never again pass on a discarded setting: assert the value three
+     actually pushed to GL, which the renderer exposes —
+     `gl.properties.get(texture).__currentAnisotropy` — reported from `RefinedSceneProbe.tsx`
+     alongside the JS property. Assert both, and that they agree. (The same technique is
+     already used correctly for `shadowMapAllocatedWidth`.)
+  3. Re-run the materials spec and confirm the new probe field is `min(8, maxAnisotropy)` and
+     not `undefined`; a green run of the hardened assertion against the *current* code would
+     prove the assertion is still blind.
 
 ---
 
-## 💡 Suggestions（Consider — 不需處理,登記備查）
+## 🟡 Should Fix (Developer auto-resolves)
 
-1. **`HallLighting` 的 `revision` prop 已冗餘**。`bounds` 是對同樣四個 props 的 `useMemo`,
-   任何幾何編輯都會換掉 `bounds` 的識別,所以 `useLayoutEffect(deps=[gl, bounds, revision])`
-   裡的 `revision` 不會帶來任何 `bounds` 沒帶來的重烘焙。真正需要 `revision` 的只有探針的 `resetKey`。
-   維持現狀無害(只是多一個 no-op 依賴),但若日後 `bounds` 改成值比較(而非識別比較)的快取,
-   這個 prop 就會從冗餘變成必要 —— 屆時請保留註解說明。
-2. **`MAX_OBJECT_HEIGHT_M = 3` 是手動維護的重複常數**,同時鏡射 `RefinedScene.tsx` 的
-   `WALL_HEIGHT_M = 3` 與 `max(FURNITURE_DEFAULTS[*].height3d) = 2.0`。註解有寫明,但若 task 4–6
-   引入更高的模型(或把牆加高),near plane 的餘裕會靜默失效。可考慮改為
-   `Math.max(WALL_HEIGHT_M, ...Object.values(FURNITURE_DEFAULTS).map((d) => d.height3d))`。
-   本任務不改 —— 會把 `refinedLighting.tsx` 對 `furniture.ts` 的依賴從零變成一。
-3. **`REFINED_GL` / `REFINED_SURFACE` 是可變的匯出物件**。兩者的契約(「模組層級單例,絕不在
-   render 內重建、絕不 mutate」)目前只靠註解。`as const` + `Object.freeze` 可讓契約由型別系統執行。
-4. **案例 9(極大場地)靠 30 次 zoom-out 後在 x=195 畫牆**,是本 spec 中對畫布座標最敏感的一條。
-   Playwright 階段若出現 flake,優先懷疑此處而非產品程式碼(task 1 的 playwright 階段已修過兩次同類的
-   測試撰寫 bug,見 task-log)。
-5. **`gridHelper` 在新打光下的違和感**已由計畫 Architecture Notes 列為 task 3 候選,本任務正確地未動它。
+### Issue 2 — The "texture-wide" T2/T5 readback grid is phase-locked to the noise lattice
+
+- **File**: `src/components/venue/RefinedSceneProbe.tsx:249-276`
+- **Issue**: The grid genuinely spans the whole target (a real improvement over the old fixed
+  centre block, and the sample budget is preserved as claimed). But `STAT_GRID_N = 8` was
+  deliberately chosen to *match* `surfaceHeight()`'s macro base frequency, and every noise
+  period in the shader is `8`, `24`, `64`, `96` or a power-of-two multiple thereof. With
+  `size = 1024`, block centres land at `uv = gx/8 + 1/16`, so:
+  - macro layer (`fbm(uv, vec2(8.0))`): every block sits at fractional cell phase exactly
+    `(0.5, 0.5)` — the cell centre, where the `f*f*(3-2f)` interpolant's derivative is at its
+    **maximum** (1.5). `varianceXY` is therefore measured at the most gradient-favourable
+    points in the texture, biased high.
+  - fine-tint layers (`fbm(uv, 64)` and `fbm(uv+37, 96)`): `uv*64 = 8·gx + 4` and
+    `(uv+37)*96 = 12·gx + 3558` — both exact integers, so every block starts precisely on a
+    lattice vertex and covers only the `[0, 0.5)` quadrant of its cell. Half of every cell is
+    never sampled, at any location.
+
+  The result is a systematic sub-sample, not the texture-wide statistic the doc comment claims
+  (「reflect the bake's texture-wide statistics」). It matters most for `max`: T5 asserts
+  `max <= mean * 1.05`, while `TINT_AMP.floor = 0.064` permits excursions up to ~6.4 % of the
+  base — the assertion plausibly only holds because 4096 phase-aligned texels out of 1 048 576
+  (0.39 %) never see the tail. The brightness bound T5 claims to prove is therefore not
+  actually proven.
+- **Suggested fix**: Break the commensurability — either use a grid count coprime with the
+  noise periods (e.g. `STAT_GRID_N = 7` or `11`) *plus* a deterministic per-block sub-cell
+  jitter, or, simplest and assumption-free, read the full 1024² target once (4 MB, one-off,
+  already off the per-frame path). Re-measure and re-derive the thresholds from the new
+  numbers, documenting measured red/green margins as the previous fix did.
+
+### Issue 3 — R1 (the plan's highest-risk item) has no assertion at all
+
+- **File**: `playwright-tests/venue-refined-materials.spec.ts` (no `colorSpace` assertion)
+- **Issue**: `RefinedSceneProbe.tsx` reports `colorSpace` per texture, but no test reads it.
+  R1 is named in the plan as the easiest trap to fall into and the hardest to notice
+  (「畫面『只是有點亮』,極易被誤認為調得不錯」). Crucially, T5 **cannot** cover it: the
+  `colorSpace` flag changes how the shader *decodes* the texture, not the bytes in the render
+  target, so the readback mean is byte-identical either way. R1 is currently unguarded.
+- **Suggested fix**: Add to T5 (or T6):
+  `expect(diagnostics.floor?.map.colorSpace).toBe("srgb-linear")`, and the same for
+  `normalMap` / `roughnessMap` / `aoMap` and the wall/column maps.
+
+### Issue 4 — T14's grazing-angle and wall-contact screenshots were not produced
+
+- **File**: `playwright-tests/venue-refined-materials.spec.ts:338-361`
+- **Issue**: Only one screenshot is produced (default 10 m camera). The plan's T14 and its
+  Definition of Done require three: 10 m top view, **large venue at grazing angle**, and a
+  **wall-flush furniture contact-line close-up**. Those two are not decorative — the plan
+  states the grazing angle is the only effective way to read moiré (and it is the sole
+  remaining check on Issue 1's failure mode), and the contact-line shot is the designated
+  verification for D8's shading-noise / VSM-bleed risk (R5). The plan also requires QA to give
+  an explicit pass/fail on 對外提案品質, which is not possible from the single image provided.
+- **Suggested fix**: Extend the visual-evidence test to orbit/dolly to a low grazing angle over
+  an enlarged floor, and to a close-up of a furniture item placed flush against a wall, writing
+  all three PNGs to `playwright-report/`.
+
+### Issue 5 — The wall's new base colour has no brightness check of any kind
+
+- **File**: `src/components/venue/refinedLighting.tsx:107`
+- **Issue**: The `#78350f → #d6d3d1` override is in scope and human-approved (D9), and step 02
+  is correctly untouched — no complaint about the change itself. But it raises the wall's
+  linear value from ~0.19 to ~0.66 (≈3.5×) under ACES / exposure 1.1, and nothing verifies the
+  result: T5's readback covers only the **floor** albedo target, and the wall never appears in
+  any brightness assertion or screenshot. The AC 「材質在既有 ACES tone mapping 與曝光 1.1 下
+  不過曝,陰影對比仍清楚可辨」 is now unverified for the one surface whose brightness actually
+  changed.
+- **Suggested fix**: Extend the probe's readback to the wall albedo target and mirror T5's
+  mean/max assertions against `linear(#d6d3d1)`; the wall shot from Issue 4 covers the visual
+  half.
+
+### Issue 6 — T3's wall UV guard is not independent of the code it guards
+
+- **File**: `src/components/venue/RefinedSceneProbe.tsx:405-446`
+- **Issue**: `computeWallUvMeterError()` re-encodes the same face→span table as
+  `boxGeometry.ts:49-56`. The mapping itself is correct (verified against three's
+  `BoxGeometry.buildPlane()` call order: `+x/-x → (d,h)`, `+y/-y → (w,d)`, `+z/-z → (w,h)`,
+  4 vertices per face, no material-index splitting). But the actual risk D3 names is a *three
+  upgrade changing that group order* — and if it changed, `applyMeterUv()` and the probe would
+  be wrong in exactly the same way, so `wallUvMeterError` would read 0 and T3 would stay green
+  while the 0.2 m faces silently stretched into stripes. The floor half of T3 is correctly
+  independent (uv bbox vs. position bbox); the wall half is not.
+- **Suggested fix**: Derive the expected span per group from the geometry's own `position`
+  attribute (the face's real extent along its two in-plane axes) rather than from a copied
+  literal table, so the guard depends on the geometry rather than on the assumption.
+
+---
+
+## 💡 Suggestions (Consider — No Action Required)
+
+1. **`queueMicrotask` weakens the stated paint-time guarantee** (`SurfaceMaterials.tsx:82`).
+   The comment claims parity with a synchronous `setState`, but React schedules the resulting
+   normal-priority re-render through the scheduler (MessageChannel macrotask), not the
+   microtask queue — a paint can land in between. Harmless in practice: the loading overlay
+   covers exactly that window and T13 does not assert it away. Worth softening the comment.
+2. **T4 covers only the floor albedo target and only the horizontal seam.** The wall and column
+   maps, and the vertical (column 0 vs. column N-1) seam, are never measured. The column height
+   function is anisotropic (`vec2(3.0, 18.0)`), so a u-axis-only regression there would be
+   invisible. Low risk — the mechanism is shared and verified — but cheap to widen.
+3. **The exact bake counts in T7/T8 are StrictMode-brittle.** `next.config.ts` leaves
+   `reactStrictMode` unset, so effects are not double-invoked today; enabling it would double
+   `totalBakes` and turn these into confusing red herrings rather than real failures. A comment
+   pinning that dependency would save a future debugging session.
+4. **`texture.channel = 0` (`surfaceTextures.ts:209`) is already the default**, and **box
+   geometries are rebuilt for every wall on any plan edit** (any `walls` identity change
+   recreates the whole map). Both are intentional/harmless — the geometry churn matches the
+   existing `useFloorGeometry` pattern and disposes correctly — noted only so they are not
+   mistaken for defects later.
 
 ---
 
 ## Security Assessment
 
-| 項目 | 結果 | 說明 |
-| --- | --- | --- |
-| Secrets / credentials scan | **PASS** | 本 diff 不含任何憑證、token、連線字串。Playwright spec 未硬寫帳密(沿用既有 `editor.navigate()`)。 |
-| Input validation at boundaries | **N/A** | 未新增/修改任何 API route、系統邊界輸入或使用者輸入解析。`planBoundsM` 對所有座標做 `Number.isFinite` 過濾,已是防禦性的。 |
-| Auth / authz | **N/A** | 未觸及 `src/proxy.ts`、`src/lib/supabase/**`、任何 page 路由或 session 處理。 |
-| 敏感資料入 log | **PASS** | 探針只讀 renderer 狀態,不 `console.*`。 |
-| 新增外部網路請求 | **PASS** | D4 的程序化 `<Environment>` + `<Lightformer>` 零下載;案例 6 以 network 監聽把關(本次已強化)。 |
-| 新增依賴 | **PASS** | `package.json` 未變動;`Environment` / `Lightformer` 皆來自既有的 `@react-three/drei`。 |
-| CORS / CSP | **PASS** | 未修改。 |
-| SQL injection / XSS | **N/A** | 無 DB 存取。所有 `data-*` 值皆為 `String(number)` 或封閉列舉字串(`TONE_MAPPING_LABELS` / `SHADOW_MAP_TYPE_LABELS` 的 `?? "unknown"` 兜底),由 React 輸出,無 `dangerouslySetInnerHTML`。 |
-| `service_role` / server-only 邊界 | **PASS** | 未 import `admin.ts`;`src/lib/ai/**` 未觸及。 |
-| 分層規則 | **PASS** | `src/lib/venue/bounds.ts` 只 import `./plan` 與 `./furniture` 的型別/常數,零 React / DOM / Three。新增的 Three 程式碼全在 `src/components/venue/` 且在既有 `RefinedSceneLoader` 的 `ssr:false` 邊界內。 |
-
-測試覆蓋:14 個 Playwright 案例對應 orchestrator-output.md 的 10 條 AC 與 7 個 edge case
-(案例 14 為截圖產物,不斷言)。無 JS unit framework(AGENTS.md),符合專案慣例。
-
----
+- Secrets scan: **PASS** — no credentials, tokens or connection strings introduced.
+- Input validation: **N/A** — no API route, no user input reaches this path; the bake consumes
+  no plan data (UV is world-meters, D2).
+- Auth/authz: **N/A** — `src/proxy.ts`, `src/lib/supabase/*`, `admin.ts` untouched.
+- Sensitive data in logs: **PASS** — no logging added; `data-*` diagnostics expose only
+  renderer state (texture sizes, filter enums, GPU statistics), no user or account data.
+- Dependencies: **PASS** — zero new npm packages.
+- External network: **PASS** — fully procedural; T10 enforces it with a request listener.
+- CORS/CSP: untouched.
+- Test coverage: 14 Playwright tests added (reported green, 40/40 alongside the refined-3d and
+  refined-lighting suites); the gaps are Issues 2-6 above, not an absence of tests.
 
 ## Plan Compliance
 
-- [x] 14 個 Implementation Steps 全數實作(S1–S14)
-- [x] 實作符合計畫意圖(D1 固定 4 盞光 / D2 動態視錐 / D3 顯式 ACES + 僅覆寫地板色 / D4 零下載 IBL / D5 normalBias + 地板不投影 / D6 自寫重烘焙 / D7 檔案切分 / D8 場景探針)
-- [x] 無未授權的範圍擴張
-  - 材質:只有 `roughness` / `metalness` **純量**(本任務授權範圍),**零** `map` / `normalMap` / `roughnessMap` / `aoMap`
-  - **零** GLB / 模型 import(task 4–6),**零**程序化家具幾何 —— 家具仍是 `boxGeometry args={[item.w, defaults.height3d, item.h]}`
-  - `FURNITURE_DEFAULTS[*].color` 完全未動(`src/lib/venue/furniture.ts` 不在 diff 中);顏色覆寫僅地板 `#f5f5f4 → #e7e5e4` 一處,牆 `#78350f` / 柱 `#78716c` / 家具 `defaults.color` 原樣保留
-- [x] D7「絕對不得修改」清單 12 個路徑在 diff 中全部缺席(含 `VenueScene.tsx`、`floorGeometry.ts`、`plan.ts`、`furniture.ts`、`PlanEditor.tsx`、`AiPanel.tsx`、`src/proxy.ts`、`src/lib/ai/**`、`src/lib/supabase/**`)
-- [x] 計畫的兩處刻意偏離 drei(不用 `<SoftShadows>` / 自寫 bake 而非 `<BakeShadows>`)皆已在程式碼註解寫明理由,符合 Architecture Notes 的要求
-
-**唯讀不變式(逐項核對,AGENTS.md + orchestrator requirement 7):**
-
-| 不變式 | 結果 |
-| --- | --- |
-| 不持有幾何 state | ✅ `bounds` 是 `useMemo` 衍生值。兩個 `useState` 分別是 `revision: number`(計數器)與 `diagnostics`(純視覺/測試回報,單向由場景流向 DOM 屬性,不回寫任何幾何),皆非幾何快照。 |
-| 無 `TransformControls` | ✅ 未出現。 |
-| 不回寫 `onSceneChange` | ✅ `RefinedScene` 未接收也未呼叫。 |
-| `AiPanel` 維持 CSS 隱藏、掛載位置不變 | ✅ `AiPanel.tsx` 與 `PlanEditor.tsx` 皆不在 diff 中。 |
-| 02/03 互斥掛載 | ✅ `PlanEditor.tsx` 未動;案例 12 以 `canvas` 元素數 === 1 守門。 |
-| 家具尺寸唯一來源仍是 `FURNITURE_DEFAULTS` | ✅ `boxGeometry` / `position` / `rotation` 一字未改。 |
-
-**資源釋放(orchestrator requirement 6):**
-
-- 四盞光全部以 JSX 宣告 → R3F 卸載時自動 `light.dispose()`,`DirectionalLight.dispose()` 連帶
-  `shadow.dispose()` → `shadow.map.dispose()`。**未**使用 `useMemo` + `<primitive>` 建光源(那樣不會自動 dispose)。
-- 共用 `target` 是 `THREE.Object3D`,無 GPU 資源、無 `dispose` 方法,以 `<primitive>` 掛載正確且註解已說明,避免後續 reviewer 誤判為漏 dispose。
-- `<Environment frames={1}>` 由 drei 的 `EnvironmentPortal` 自行 `fbo.dispose()` 並還原 `scene.environment`。
-- `gl.shadowMap.autoUpdate` 於 cleanup 還原為 `true`(在互斥掛載下屬冗餘保險,但正確)。
-
-**AGENTS.md 變動說明**:`git status` 顯示 `AGENTS.md` 有 4 行新增(步驟 03 唯讀 / 02-03 互斥掛載 /
-`AiPanel` 不可 unmount / 家具不可縮放)。經核對 `.claude/pipeline/task-log.md`,這是 **2026-07-26T02:40
-的 scan 階段**(delta scan `c7c06c5`,經人工確認)寫入的,**不是**本次 implement 的範圍外改動。
-唯一小瑕疵:檔頭的 `Last updated` delta 註記未同步更新,建議下次 scan 補上(不阻擋)。
-
----
+- [x] Architect plan implementation steps 1-11 implemented
+- [x] D1-D8 implemented as specified; D9 applied per human approval (`#d6d3d1`, step-03 only)
+- [x] No unauthorised scope additions — `VenueScene.tsx`, `PlanEditor.tsx`,
+      `RefinedSceneLoader.tsx`, `floorGeometry.ts`, `src/lib/venue/*`, `FURNITURE_DEFAULTS`,
+      furniture meshes/materials and all task-2 shadow/lighting constants are zero-diff
+- [x] Step 02 wall remains `#78350f`; `REFINED_SURFACE.column` `#78716c` matches step 02 exactly
+- [x] `RefinedScene` read-only constraint intact (no geometry state, no `TransformControls`,
+      no `onSceneChange`); 02/03 mutual exclusion and `AiPanel` mounting untouched
+- [x] AGENTS.md: `useMemo` + `dispose()` for every geometry / material / render target; nothing
+      created during render; the documented constant-placement deviation is the approved one
+- [ ] **D4 not effectively delivered** — anisotropy is inert (🔴 Issue 1)
+- [ ] **DoD step 12 incomplete** — 2 of 3 manual-judgement screenshots missing (🟡 Issue 4)
 
 ## Conversation Log
 
 | Issue | Developer Response | Resolution |
-| --- | --- | --- |
-| 🟡 1 `data-floor-receives-shadow` 為字面量,案例 4 恆真 | — (reviewer 直接處理,`RefinedSceneProbe.tsx` / `RefinedScene.tsx` / `PlanEditorPage.ts` / spec 案例 4) | **Fixed** — 探針以 `REFINED_FLOOR_NAME` 找到地板 mesh 回報真實 `receiveShadow`,並新增 `data-floor-casts-shadow` 把 D5 的「地板不投影」也納入斷言 |
-| 🟡 2 案例 10 恆真,edge case 無實質保護 | — (reviewer 直接處理,spec 案例 10) | **Fixed** — 補 `far - near >= span + 3` |
-| 🟡 3 案例 6 零下載把關過窄、常數命名誤導 | — (reviewer 直接處理,spec) | **Fixed** — `FORBIDDEN_ENV_ASSET_PATTERNS` 涵蓋 4 種樣式,失敗時列出 URL |
-| 🟡 4 探針每幀 traverse + stringify 永不停止 | — (reviewer 直接處理,`RefinedSceneProbe.tsx`) | **Fixed** — `PROBE_ACTIVE_FRAMES = 120`,由 `resetKey` 重新武裝 |
-| 💡 1–5 | — | **Logged only**,不動作 |
-
-**修正後靜態檢查**:`npx tsc --noEmit` → 0 error;`npm run lint` → 0 error / 0 warning。
+|---|---|---|
+| 🔴 1 anisotropy discarded by three | — | Pending: pipeline paused for human review |
+| 🟡 2-6 | — | Held pending the Critical decision |
 
 ---
 
-## Handoff to QA
-
-1. 本次 reviewer 修正動到了 `RefinedSceneProbe.tsx` / `RefinedScene.tsx` / `PlanEditorPage.ts` /
-   `venue-refined-lighting.spec.ts` 四個檔案,**QA 與 playwright 階段請以修正後的版本為準**。
-   新增的 `data-floor-casts-shadow` 屬性需在 playwright 階段實跑驗證(預期 `"false"`)。
-2. **手動視覺檢查表 8 項尚未執行**(計畫 Test Plan「手動」段)—— 這是本任務唯一能驗收
-   「展場實景感」與陰影柔邊的途徑,請務必逐項確認並記入 `qa-report.md`,附上案例 14 產出的
-   `playwright-report/refined-lighting.png`。
-3. 手動檢查表**第 8 項最關鍵**:在 03 停留期間用 AI 面板移動一件家具,確認**陰影跟著移動**。
-   這是 D6(`autoUpdate=false` + revision 重烘焙)與 D2(`updateProjectionMatrix`)唯一的端到端驗證 ——
-   自動化測試只覆蓋了「進入 03 當下」的狀態,涵蓋不到「停留期間場景變動」。
-4. 必須記入 QA 報告的已知取捨(計畫 D2 要求):固定 2048 解析度下,預設 10m 地板約
-   **1.1cm/texel**,200m 滿版場地約 **14cm/texel** —— 極大場地的陰影邊緣偏鈍是設計取捨,非 bug。
-5. 步驟 13 所列 9 支既有 spec 需在 playwright 階段全綠且零改動。
-</content>
+**Pipeline action**: `flags.review_critical_pending = true`, `iteration.review = 1`,
+`checkpoints.review = "changes_requested"`. Not advanced to QA.

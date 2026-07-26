@@ -82,17 +82,30 @@ export const RIM_COLOR = "#ffeedd";
 export const RIM_INTENSITY = 0.5;
 export const RIM_DIR = new THREE.Vector3(-0.8, 0.35, -0.8).normalize();
 
-// --- D3: 03-only surface overrides ------------------------------------
+// --- D3/D9: 03-only surface overrides -----------------------------------
 //
-// Only the floor color is overridden here — walls/columns/furniture keep
-// their step-02 colors (shared with the 2D editor). Do NOT add more color
-// overrides here without an objective reason (see architect-plan.md
-// Architecture Notes: "顏色只改一處是刻意的").
+// `color` is the single source of truth for the procedural material bake
+// (surfaceTextures.ts D5 reads it as the baked albedo's linear base value)
+// — do NOT add a second color literal anywhere else for these surfaces.
+//
+// - floor: overridden (`#f5f5f4` -> `#e7e5e4`), task 2's anti-overexposure
+//   tuning under ACES — preserved unchanged.
+// - wall: overridden (task 3, D9, human-approved) from the shared step-02
+//   `#78350f` to a warm light grey `#d6d3d1` — a painted-panel wall's
+//   normal map has almost no visible relief against `#78350f`'s low
+//   linear value (~0.19); this is a step-03-only, one-line-reversible
+//   override (revert this one field to fall back to the step-02 color).
+//   Step 02 (`VenueScene.tsx`) is untouched and keeps `#78350f`.
+// - column: kept identical to step 02's `#78716c` — no objective reason to
+//   diverge (architect-plan.md Architecture Notes: "顏色只改一處是刻意
+//   的"), only made explicit here so D5 has a single color source to bake
+//   from instead of a second hardcoded literal in RefinedScene.tsx.
+// - furniture: task 4-6's territory, untouched.
 
 export const REFINED_SURFACE = {
   floor: { color: "#e7e5e4", roughness: 0.55, metalness: 0 },
-  wall: { roughness: 0.85, metalness: 0 },
-  column: { roughness: 0.7, metalness: 0.05 },
+  wall: { color: "#d6d3d1", roughness: 0.85, metalness: 0 },
+  column: { color: "#78716c", roughness: 0.7, metalness: 0.05 },
   furniture: { roughness: 0.6, metalness: 0 },
 };
 

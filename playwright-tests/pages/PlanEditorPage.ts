@@ -25,6 +25,65 @@ export interface PlanObjects {
 
 export type EditorMode = "select" | "wall" | "column";
 
+// task 3 (procedural PBR materials) — mirrors
+// RefinedSceneProbe.tsx's MaterialProbeReport shape. Kept independent of
+// the app source (same convention as PlanPoint/WallSegment/Column above)
+// rather than imported, since page objects only know the DOM contract.
+export interface TextureDiagnostics {
+  present: boolean;
+  width: number | null;
+  wrapS: string | null;
+  wrapT: string | null;
+  minFilter: string | null;
+  magFilter: string | null;
+  anisotropy: number | null;
+  // Renderer-reality anisotropy (`gl.properties.get(texture).__currentAnisotropy`,
+  // review-report.md Issue 1) — distinct from `anisotropy` above, which is
+  // only the JS property the app requested.
+  anisotropyGpu: number | null;
+  colorSpace: string | null;
+  generateMipmaps: boolean | null;
+  channel: number | null;
+  repeatX: number | null;
+}
+
+export interface SurfaceTextureDiagnostics {
+  map: TextureDiagnostics;
+  normalMap: TextureDiagnostics;
+  roughnessMap: TextureDiagnostics | null;
+  aoMap: TextureDiagnostics | null;
+  materialColorHex: string;
+  normalScaleX: number;
+}
+
+export interface AlbedoReadback {
+  mean: number;
+  max: number;
+  variance: number;
+  seamDelta: number;
+  adjacentDelta: number;
+}
+
+export interface NormalReadback {
+  meanZ: number;
+  varianceXY: number;
+}
+
+export interface MaterialProbeReport {
+  ready: boolean;
+  maxAnisotropy: number | null;
+  floor: SurfaceTextureDiagnostics | null;
+  wall: SurfaceTextureDiagnostics | null;
+  column: SurfaceTextureDiagnostics | null;
+  floorAlbedo: AlbedoReadback | null;
+  floorNormal: NormalReadback | null;
+  wallAlbedo: AlbedoReadback | null;
+  floorUvMeterError: number | null;
+  wallUvMeterError: number | null;
+  liveSurfaceTargets: number | null;
+  totalSurfaceBakes: number | null;
+}
+
 // Page object for the Konva-based floor-plan editor at /venue.
 //
 // The canvas itself has no per-shape DOM, so the wrapper div
@@ -597,6 +656,28 @@ export class PlanEditorPage {
   async refinedRendererGeometries(): Promise<number> {
     const raw = await this.refinedScene.getAttribute("data-renderer-geometries");
     return Number(raw);
+  }
+
+  // --- venue-refined-3d task 3: procedural PBR material diagnostics ----
+  //
+  // `refinedMaterialsReady()` mirrors the `data-materials-ready` attribute
+  // set directly by RefinedScene.tsx from SurfaceMaterials' `onReady`
+  // callback (renderer-config state, not scene-probe-derived). The rest of
+  // the fields come from the scene probe's `MaterialProbeReport` (real
+  // material/texture instances + `gl.readRenderTargetPixels()` readback),
+  // JSON-encoded onto `data-material-diagnostics` (same convention as
+  // `data-objects`/`data-vertices` above).
+
+  /** Whether SurfaceMaterials has committed its baked materials (`data-materials-ready`). */
+  async refinedMaterialsReady(): Promise<boolean> {
+    const raw = await this.refinedScene.getAttribute("data-materials-ready");
+    return raw === "true";
+  }
+
+  /** Parsed `data-material-diagnostics` — see `MaterialProbeReport` above. */
+  async refinedMaterialDiagnostics(): Promise<MaterialProbeReport> {
+    const raw = await this.refinedScene.getAttribute("data-material-diagnostics");
+    return JSON.parse(raw ?? "null") as MaterialProbeReport;
   }
 
   // --- zoom/pan --------------------------------------------------------
