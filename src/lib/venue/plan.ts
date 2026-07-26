@@ -17,7 +17,10 @@ export interface PlanPoint {
 
 export type FloorPolygon = PlanPoint[];
 
+// 預設地板生成尺寸與預設視圖 fit 尺寸(非可規劃範圍上限 — 見 PLAN_AREA_SIZE_M)。
 export const VENUE_SIZE_M = 50;
+// 可規劃範圍上限(公尺),前端 clamp 唯一來源。
+export const PLAN_AREA_SIZE_M = 200;
 export const SNAP_M = 0.5;
 export const MIN_FLOOR_VERTICES = 3;
 export const GRID_MINOR_M = 1;
@@ -421,5 +424,5 @@ export const EMPTY_PLAN_BASELINE = serializePlanSnapshot({
   walls: [],
   columns: [],
   furniture: [],
-  venueSizeM: VENUE_SIZE_M,
+  venueSizeM: PLAN_AREA_SIZE_M,
 });

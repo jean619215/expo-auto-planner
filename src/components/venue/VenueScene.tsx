@@ -3,7 +3,6 @@
 import {
   useRef,
   useState,
-  useMemo,
   type ComponentRef,
   type RefObject,
 } from "react";
@@ -14,6 +13,12 @@ import {
   Table2,
   Armchair,
   Archive,
+  Store,
+  Flag,
+  Sofa,
+  Presentation,
+  Flower2,
+  Package,
   RotateCcw,
   PanelLeftClose,
   PanelLeftOpen,
@@ -38,9 +43,9 @@ import {
 } from "@/lib/venue/furniture";
 import { Button } from "@/components/ui/button";
 import { segmentClassName } from "./PlanToolbar";
+import { useFloorGeometry } from "./floorGeometry";
 
 const WALL_HEIGHT_M = 3;
-const FLOOR_THICKNESS_M = 0.1;
 
 type SelectedId =
   | { type: "wall" | "column" | "furniture"; id: string }
@@ -50,6 +55,12 @@ const FURNITURE_ICONS: Record<FurnitureKind, typeof Table2> = {
   table: Table2,
   chair: Armchair,
   cabinet: Archive,
+  counter: Store,
+  bannerStand: Flag,
+  sofa: Sofa,
+  podium: Presentation,
+  plant: Flower2,
+  display: Package,
 };
 
 interface VenueSceneProps {
@@ -58,6 +69,9 @@ interface VenueSceneProps {
   columns: Column[];
   furniture: FurnitureItem[];
   venueSizeM?: number;
+  // 選填:相機取景/gizmo 尺寸的 fit 基準,與 venueSizeM(ground plane/clamp
+  // 用)分離 — 預設回退到 venueSizeM,維持既有呼叫端行為不變。
+  viewFitSizeM?: number;
   onSceneChange?: (next: {
     walls: WallSegment[];
     columns: Column[];
@@ -72,16 +86,7 @@ function FloorMesh({
   polygon: FloorPolygon;
   onClick?: (e: ThreeEvent<MouseEvent>) => void;
 }) {
-  const geometry = useMemo(() => {
-    const shape = new THREE.Shape();
-    shape.moveTo(polygon[0].x, polygon[0].y);
-    polygon.slice(1).forEach((p) => shape.lineTo(p.x, p.y));
-    shape.closePath();
-    return new THREE.ExtrudeGeometry(shape, {
-      depth: FLOOR_THICKNESS_M,
-      bevelEnabled: false,
-    });
-  }, [polygon]);
+  const geometry = useFloorGeometry(polygon);
 
   return (
     <mesh geometry={geometry} rotation={[Math.PI / 2, 0, 0]} onClick={onClick}>
@@ -96,11 +101,10 @@ export default function VenueScene({
   columns,
   furniture,
   venueSizeM = VENUE_SIZE_M,
+  viewFitSizeM,
   onSceneChange,
 }: VenueSceneProps) {
-  const [localWalls, setLocalWalls] = useState(walls);
-  const [localColumns, setLocalColumns] = useState(columns);
-  const [localFurniture, setLocalFurniture] = useState<FurnitureItem[]>(furniture);
+  const fit = viewFitSizeM ?? venueSizeM;
   const [selectedId, setSelectedId] = useState<SelectedId>(null);
   const [transformMode, setTransformMode] = useState<"translate" | "rotate">(
     "translate",
@@ -133,15 +137,10 @@ export default function VenueScene({
 
     if (selectedId.type === "furniture" && transformMode === "rotate") {
       const deg = -(obj.rotation.y * 180) / Math.PI;
-      const nextFurniture = localFurniture.map((f) =>
+      const nextFurniture = furniture.map((f) =>
         f.id === selectedId.id ? rotateFurniture(f, deg) : f,
       );
-      setLocalFurniture(nextFurniture);
-      onSceneChange?.({
-        walls: localWalls,
-        columns: localColumns,
-        furniture: nextFurniture,
-      });
+      onSceneChange?.({ walls, columns, furniture: nextFurniture });
       return;
     }
 
@@ -150,25 +149,22 @@ export default function VenueScene({
     if (!start) return;
     const deltaPlan = { x: obj.position.x - start.x, y: obj.position.z - start.z };
 
-    let nextWalls = localWalls;
-    let nextColumns = localColumns;
-    let nextFurniture = localFurniture;
+    let nextWalls = walls;
+    let nextColumns = columns;
+    let nextFurniture = furniture;
 
     if (selectedId.type === "wall") {
-      nextWalls = localWalls.map((w) =>
+      nextWalls = walls.map((w) =>
         w.id === selectedId.id ? translateWall(w, deltaPlan, venueSizeM) : w,
       );
-      setLocalWalls(nextWalls);
     } else if (selectedId.type === "column") {
-      nextColumns = localColumns.map((c) =>
+      nextColumns = columns.map((c) =>
         c.id === selectedId.id ? translateColumn(c, deltaPlan, venueSizeM) : c,
       );
-      setLocalColumns(nextColumns);
     } else {
-      nextFurniture = localFurniture.map((f) =>
+      nextFurniture = furniture.map((f) =>
         f.id === selectedId.id ? translateFurniture(f, deltaPlan, venueSizeM) : f,
       );
-      setLocalFurniture(nextFurniture);
     }
     onSceneChange?.({ walls: nextWalls, columns: nextColumns, furniture: nextFurniture });
   }
@@ -180,15 +176,10 @@ export default function VenueScene({
         { x: e.point.x, y: e.point.z },
         venueSizeM,
       );
-      const nextFurniture = [...localFurniture, item];
-      setLocalFurniture(nextFurniture);
+      const nextFurniture = [...furniture, item];
       setPlacingKind(null);
       selectObject({ type: "furniture", id: item.id });
-      onSceneChange?.({
-        walls: localWalls,
-        columns: localColumns,
-        furniture: nextFurniture,
-      });
+      onSceneChange?.({ walls, columns, furniture: nextFurniture });
       return;
     }
     setSelectedId(null);
@@ -196,9 +187,16 @@ export default function VenueScene({
 
   const isFurnitureRotate =
     selectedId?.type === "furniture" && transformMode === "rotate";
+  const selectionExists =
+    selectedId !== null &&
+    (selectedId.type === "wall"
+      ? walls.some((w) => w.id === selectedId.id)
+      : selectedId.type === "column"
+        ? columns.some((c) => c.id === selectedId.id)
+        : furniture.some((f) => f.id === selectedId.id));
   const selectedFurniture =
     selectedId?.type === "furniture"
-      ? localFurniture.find((f) => f.id === selectedId.id) ?? null
+      ? furniture.find((f) => f.id === selectedId.id) ?? null
       : null;
 
   return (
@@ -206,9 +204,9 @@ export default function VenueScene({
       data-testid="venue-scene"
       data-generated="true"
       data-orbit-controls="true"
-      data-wall-mesh-count={localWalls.length}
-      data-column-mesh-count={localColumns.length}
-      data-furniture-mesh-count={localFurniture.length}
+      data-wall-mesh-count={walls.length}
+      data-column-mesh-count={columns.length}
+      data-furniture-mesh-count={furniture.length}
       data-floor-vertex-count={polygon.length}
       className="mt-4 w-full"
     >
@@ -307,7 +305,7 @@ export default function VenueScene({
           <div className="h-[480px] w-full overflow-hidden rounded border border-stone-300 bg-stone-100">
         <Canvas
           camera={{
-            position: [venueSizeM * 0.7, venueSizeM * 0.9, venueSizeM * 0.7],
+            position: [fit * 0.7, fit * 0.9, fit * 0.7],
             fov: 50,
           }}
         >
@@ -322,14 +320,14 @@ export default function VenueScene({
             maxPolarAngle={Math.PI / 2 - 0.05}
             minDistance={5}
             maxDistance={150}
-            target={[venueSizeM / 2, 0, venueSizeM / 2]}
+            target={[fit / 2, 0, fit / 2]}
           />
           <gridHelper
             args={[venueSizeM, venueSizeM]}
             position={[venueSizeM / 2, 0.01, venueSizeM / 2]}
           />
           <FloorMesh polygon={polygon} onClick={handleFloorClick} />
-          {localWalls.map((wall) => {
+          {walls.map((wall) => {
             const isSelected = selectedId?.type === "wall" && selectedId.id === wall.id;
             const rotationY = -Math.atan2(
               wall.end.y - wall.start.y,
@@ -359,7 +357,7 @@ export default function VenueScene({
               </mesh>
             );
           })}
-          {localColumns.map((col) => {
+          {columns.map((col) => {
             const isSelected = selectedId?.type === "column" && selectedId.id === col.id;
             return (
               <mesh
@@ -378,7 +376,7 @@ export default function VenueScene({
               </mesh>
             );
           })}
-          {localFurniture.map((item) => {
+          {furniture.map((item) => {
             const isSelected =
               selectedId?.type === "furniture" && selectedId.id === item.id;
             const defaults = FURNITURE_DEFAULTS[item.kind];
@@ -406,7 +404,7 @@ export default function VenueScene({
               </mesh>
             );
           })}
-          {selectedId && (
+          {selectionExists && (
             <TransformControls
               key={`${selectedId.type}-${selectedId.id}-${transformMode}`}
               object={selectedMeshRef as RefObject<THREE.Object3D>}
@@ -415,7 +413,7 @@ export default function VenueScene({
               showY={isFurnitureRotate}
               showZ={!isFurnitureRotate}
               rotationSnap={Math.PI / 12}
-              size={Math.max(1, venueSizeM * 0.04)}
+              size={Math.max(1, fit * 0.04)}
               onMouseDown={handleDragMouseDown}
               onMouseUp={commitTransform}
             />

@@ -10,8 +10,8 @@ import type Anthropic from "@anthropic-ai/sdk";
 const POINT_SCHEMA = {
   type: "object" as const,
   properties: {
-    x: { type: "number" as const, description: "公尺,0-50" },
-    y: { type: "number" as const, description: "公尺,0-50" },
+    x: { type: "number" as const, description: "公尺,0-200" },
+    y: { type: "number" as const, description: "公尺,0-200" },
   },
   required: ["x", "y"],
   additionalProperties: false,
@@ -28,7 +28,7 @@ export const AI_TOOLS: Anthropic.Tool[] = [
       properties: {
         floor: {
           type: "array",
-          description: "地板多邊形頂點(至少3點,依序連線),座標 0-50 公尺、0.5 對齊",
+          description: "地板多邊形頂點(至少3點,依序連線),座標 0-200 公尺、0.5 對齊",
           items: POINT_SCHEMA,
         },
         walls: {
@@ -64,7 +64,20 @@ export const AI_TOOLS: Anthropic.Tool[] = [
           items: {
             type: "object",
             properties: {
-              kind: { type: "string", enum: ["table", "chair", "cabinet"] },
+              kind: {
+                type: "string",
+                enum: [
+                  "table",
+                  "chair",
+                  "cabinet",
+                  "counter",
+                  "bannerStand",
+                  "sofa",
+                  "podium",
+                  "plant",
+                  "display",
+                ],
+              },
               center: POINT_SCHEMA,
               rotationDeg: {
                 type: "number",
@@ -82,12 +95,26 @@ export const AI_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "add_furniture",
-    description: "新增一件家具到指定位置。尺寸用預設值(桌1.2x0.7/椅0.45x0.45/櫃0.6x1.2)。",
+    description:
+      "新增一件家具到指定位置。尺寸用預設值(桌1.2x0.7/椅0.45x0.45/櫃0.6x1.2/櫃檯1.0x0.5/展示架0.8x0.3/沙發1.8x0.8/講台0.6x0.5/植栽0.5x0.5/展示櫃1.0x0.5)。",
     strict: true,
     input_schema: {
       type: "object",
       properties: {
-        kind: { type: "string", enum: ["table", "chair", "cabinet"] },
+        kind: {
+          type: "string",
+          enum: [
+            "table",
+            "chair",
+            "cabinet",
+            "counter",
+            "bannerStand",
+            "sofa",
+            "podium",
+            "plant",
+            "display",
+          ],
+        },
         center: POINT_SCHEMA,
         rotationDeg: { type: "number", description: "旋轉角度 0-359" },
       },
@@ -137,7 +164,7 @@ export const AI_TOOLS: Anthropic.Tool[] = [
       properties: {
         points: {
           type: "array",
-          description: "新地板頂點,座標 0-50 公尺、0.5 對齊",
+          description: "新地板頂點,座標 0-200 公尺、0.5 對齊",
           items: POINT_SCHEMA,
         },
       },

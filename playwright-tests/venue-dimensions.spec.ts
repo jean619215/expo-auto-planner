@@ -148,9 +148,15 @@ test.describe("Venue Plan Editor - Task 3 dimensions", () => {
     expect(updated.center.y - updated.h / 2).toBeCloseTo(originalTop, 5);
   });
 
-  test("resizing near the 50x50m boundary clamps growth without moving the anchor/center beyond bounds", async ({
+  test("resizing near the 200x200m boundary clamps growth without moving the anchor/center beyond bounds", async ({
     page,
   }) => {
+    // Plannable range is PLAN_AREA_SIZE_M = 200 (2D 畫布 zoom/pan 任務),
+    // not the default 50m view-fit. The corner-drag itself is a native
+    // Konva node drag (tracked via document-level listeners once started),
+    // so it can be dragged past the visible canvas's physical pixel bounds
+    // same as vertex dragging — only the placeColumn() start point needs to
+    // stay within the default-view clickable area.
     const editor = new PlanEditorPage(page);
     await editor.navigate();
 
@@ -162,14 +168,14 @@ test.describe("Venue Plan Editor - Task 3 dimensions", () => {
     const originalLeft = original.center.x - original.w / 2;
     const originalTop = original.center.y - original.h / 2;
 
-    // Drag the bottom-right corner far past the venue boundary.
-    await editor.dragColumnCorner(columnId, { x: 1, y: 1 }, { x: 80, y: 80 });
+    // Drag the bottom-right corner far past the plannable-area boundary.
+    await editor.dragColumnCorner(columnId, { x: 1, y: 1 }, { x: 260, y: 260 });
 
     const { columns: after } = await editor.objects();
     const updated = after.find((c) => c.id === columnId)!;
 
-    expect(updated.center.x + updated.w / 2).toBeCloseTo(50, 5);
-    expect(updated.center.y + updated.h / 2).toBeCloseTo(50, 5);
+    expect(updated.center.x + updated.w / 2).toBeCloseTo(200, 5);
+    expect(updated.center.y + updated.h / 2).toBeCloseTo(200, 5);
     expect(updated.center.x - updated.w / 2).toBeCloseTo(originalLeft, 5);
     expect(updated.center.y - updated.h / 2).toBeCloseTo(originalTop, 5);
   });

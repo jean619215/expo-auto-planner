@@ -1,6 +1,6 @@
 # Project Documentation
-> Generated: 2026-07-08 | Mode: FULL | Last delta: 2026-07-17 (points system 補件 scan)
-> ⚠️ 已知落差:2026-07-11 至今另有 site-navigation story(全站 Header + profile 編輯模式)、venue-whitebox-generator story(場地規劃器 + 3D)、shadcn/ui 導入等變更,尚未完整回寫本文件;本次 delta 僅涵蓋點數系統 commit(5c6c7d7)。
+> Generated: 2026-07-08 | Mode: FULL | Last delta: 2026-07-26 (場地規劃器 / 2D 編輯器 / 3D 白模 補件 scan)
+> ⚠️ 已知落差:site-navigation story(全站 Header + profile 編輯模式)尚未完整回寫本文件。
 
 ## Tech Stack
 - Runtime: Node.js 22.21.1 (pinned in `.nvmrc`)
@@ -12,6 +12,9 @@
 
 ## Dependencies
 - Core: next@16.2.10, react@19.2.4, react-dom@19.2.4, @supabase/supabase-js@^2.109.0, @supabase/ssr@^0.12.0
+- 2D canvas(場地平面圖編輯):konva@^10.3.0, react-konva@^19.2.5
+- 3D(場地預覽):three@^0.185.1, @react-three/fiber@^9.6.1, @react-three/drei@^10.7.7
+- UI:shadcn@^4.13.0, lucide-react@^1.24.0
 - Dev: typescript@5, eslint@9, eslint-config-next@16.2.10, tailwindcss@4, supabase@^2.109.1 (CLI), @playwright/test@^1.61.1, @types/node, @types/react, @types/react-dom
 
 ## Architecture Pattern
@@ -25,6 +28,8 @@ src/components/    — shared client components (AuthNav.tsx: infers logged-in s
 src/lib/supabase/  — Supabase client factories (server.ts, admin.ts) + proxy helper (middleware.ts)
 src/lib/           — auth-client.ts (fetch wrapper), validation.ts, profile-client.ts, resend-cooldown.ts (localStorage helper)
 src/lib/points/    — packages.ts (點數方案定價), provider.ts (PaymentProvider adapter 介面 + MockProvider + HMAC 簽章)
+src/components/venue/ — 場地規劃器:PlanEditor.tsx(wizard 主體/state owner)、PlanToolbar.tsx、PlanSlotsDialog.tsx、AiPanel.tsx、VenueScene.tsx(3D)、*Loader.tsx(next/dynamic ssr:false 包裝,Konva/Three 需瀏覽器)
+src/lib/venue/     — 純領域模組(無 React/DOM):plan.ts(PlanPoint/FloorPolygon/WallSegment/Column/PlanSnapshot + 常數)、furniture.ts(FurnitureItem + FURNITURE_DEFAULTS 九種 kind)
 src/proxy.ts       — Next.js 16 root proxy (formerly middleware.ts): API auth gate + page route protection + session refresh
 supabase/          — CLI project: migrations, config.toml, tests (manual checklists, insomnia collection)
 playwright-tests/  — Playwright E2E suite (page-object pattern in playwright-tests/pages/), used as the FRONTEND acceptance gate
@@ -80,6 +85,20 @@ Next.js API routes (backend logic co-located with frontend). Implemented: `/api/
 - 系統提示行為規則(6a8d32e):generate_plan 前先摘要需求取得確認(增量修改不設閘門);失敗 tool_result 須說明原因+替代方案;回應去寒暄。
 - Playwright:`ai-panel.spec.ts` mock `/api/ai/chat`(page.route fixtures,不花錢),含 payload 攔截斷言(postDataJSON 驗證瘦身形狀);真模型煙霧 `@paid` 預設 skip(`PW_PAID_AI` 開啟),斷言鎖 waitForResponse 200 + ai-assistant-text。
 
+### 場地規劃器 (2D 編輯器 + 3D 預覽)
+- 路由 `src/app/venue/page.tsx` → `PlanEditorLoader`(`next/dynamic`, `ssr:false`)。Konva 與 Three 都需瀏覽器環境,一律經 `*Loader.tsx` 動態載入,勿直接 import 進 server component。
+- `PlanEditor.tsx` 是 wizard 主體與唯一 state owner(~1584 行):`WizardStep = "edit" | "preview"`(約 L76)、`WIZARD_STEPS` 陣列驅動進度列(約 L107-110,`01 繪製平面圖` / `02 預覽 3D 場景`);`handleNextStep()`(約 L440)切步驟。步驟 UI 以 `data-testid="step-edit"` / `step-preview` 標記供 Playwright 定位。
+- 資料模型(公尺為單位,集中於 `src/lib/venue/`):`PlanPoint{x,y}`、`FloorPolygon`(≥3 頂點)、`WallSegment{id,start,end}`(`WALL_THICKNESS_M=0.2`)、`Column{id,center,w,h}`、`FurnitureItem{id,kind,center,w,h,rotationDeg}`。`FURNITURE_DEFAULTS` 定義 9 種 kind 的預設 `w/h/color/height3d`。常數:`SNAP_M=0.5`、`VENUE_SIZE_M=50`、`PLAN_AREA_SIZE_M=200`。`PlanSnapshot` + 固定鍵序 `serializePlanSnapshot` 供存檔比對。
+- 步驟 01 用 `react-konva`(Stage/Layer/Line/Rect/Circle)做平面圖編輯,含 zoom/pan。
+- 步驟 02 `VenueScene.tsx`:`@react-three/fiber` `<Canvas>` + drei `OrbitControls` / `TransformControls`。**目前僅白模等級** — 地板為多邊形 `ExtrudeGeometry`(0.1m 薄板 + 平光 `meshStandardMaterial`),牆/柱/家具全為 `boxGeometry` + 單色平光材質,無貼圖、無匯入模型、未設陰影,打光僅 `ambientLight` + 單一 `directionalLight`。3D 內編輯經 `onSceneChange` 回寫同一份 walls/columns/furniture state。
+- AI tool call 只操作 2D plan 層級(`generate_plan` / `add_furniture` / `move_item` / `remove_item` / `resize_floor`),無 3D 專屬邏輯;套用後由同一份 state 反映到 3D。
+
+### 場地儲存檔 (Save Slots)
+- `venue_plans` 表:每人 3 格(slot 1–3,`check` + `unique(user_id,slot)` DB 硬上限),plan 為 jsonb 整包快照。RLS select-own;寫入僅 service_role(明確 revoke)。
+- API:`GET /api/plans`(固定 3 格概況)、`/api/plans/[slot]` GET(含 conversation+planId)/PUT(upsert,name 省略=保留原名)/PATCH(改名)/DELETE、`DELETE /api/plans/[slot]/conversation`(清空對話)。全受保護;admin client 查詢一律帶 user_id 過濾;跨用戶 404 不洩漏。Next.js 16 動態段 `ctx.params` 為 Promise 需 await。
+- 對話持久化:`ai_conversations`(plan_id unique FK cascade,1:1)+ `ai_messages`(identity bigint 保序,content 存 API 原生 blocks)。RLS 經 join venue_plans;chat API 增收 planId(所有權 404 先於扣點),回應後增量落庫(圖片換佔位符),落庫失敗僅 log 不影響回應。
+- 前端:`PlanSlotsDialog`(三格存/讀/改名/刪,AlertDialog 確認,serialize 比對 dirty);AiPanel `conversationSeed` props 續聊載入(不 key 重掛)、清空對話、100 輪軟上限;`messages.ts` `fromStoredConversation()` 還原 ChatTurn(佔位符保留,防續聊瘦身二次破壞)。
+
 ### 金流 (Payments)
 - `PaymentProvider` adapter (`src/lib/points/provider.ts`):`createCheckout` 回 redirectUrl、`verifyWebhook` 驗簽。Phase 1 僅 MockProvider(HMAC-SHA256 + timingSafeEqual);之後換綠界只需新增 EcpayProvider,購買/發點流程不動。
 - Webhook `/api/points/webhook/mock` 在 proxy.ts PUBLIC_API_PATHS 上;冪等由 `ref_id = order:{order_id}` unique constraint 承擔。
@@ -103,14 +122,11 @@ Next.js API routes (backend logic co-located with frontend). Implemented: `/api/
 - `.env.local` — local env (gitignored) / `.env.example` — env var template
 - Vercel deployment: env vars must be set per-environment in the Vercel dashboard (Production/Preview/Development are separate scopes — Development has no deployed domain, it's only for `vercel dev`); changing them requires a manual Redeploy.
 
-## Changed Files (last delta — points system, commit 5c6c7d7)
-- supabase/migrations/20260716080000_create_points.sql (new — ledger + orders + trigger + backfill)
-- src/lib/points/packages.ts, src/lib/points/provider.ts (new)
-- src/app/api/points/balance/route.ts, src/app/api/points/checkout/route.ts, src/app/api/points/webhook/mock/route.ts (new)
-- src/app/shop/page.tsx, src/app/shop/mock-checkout/page.tsx (new)
-- src/components/Header.tsx (點數餘額顯示)
-- src/proxy.ts (webhook 加入 PUBLIC_API_PATHS)
-- playwright-tests/points-shop.spec.ts, playwright-tests/pages/ShopPage.ts (new)
+## Changed Files (last delta — AI 面板常駐 + 場地規劃器補件, commit 97d548c)
+- src/components/venue/PlanEditor.tsx (AiPanel 掛載點提升至步驟切換之外,CSS 控制顯示)
+- src/components/venue/VenueScene.tsx (3D 步驟與常駐面板整合)
+- playwright-tests/ai-panel-persistent.spec.ts, playwright-tests/pages/AiPanelPage.ts
+- 補件:本次同時回寫先前未記錄的場地規劃器結構(2D 編輯器 / 3D 白模 / 領域模組 / 相關依賴)
 
 ## Last Scanned
-2026-07-22T01:42:00+08:00(delta:6a8d32e 系統提示行為規則 + 62c95fe payload 瘦身)
+2026-07-26T00:00:00+08:00(delta:97d548c AI 面板常駐 + 場地規劃器/3D 補件)

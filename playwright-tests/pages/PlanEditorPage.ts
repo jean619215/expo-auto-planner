@@ -37,13 +37,19 @@ export type EditorMode = "select" | "wall" | "column";
 //   label text or ""), data-wall-label (Task 3, current selected/dragging
 //   wall "L m" label text or ""), data-edge-labels (Task 3, JSON array of
 //   always-on floor edge-length label strings, in polygon edge order).
-// This page object owns the meter -> screen-pixel math (see
-// src/components/venue/PlanEditor.tsx: the Stage has no margin/offset —
-// meter (0,0) maps directly to the wrapper div's top-left corner, scaled
-// by data-px-per-meter) and drives all interactions via page.mouse at the
-// computed canvas coordinates. Note: a single <Stage> still renders as a
-// single <canvas> — the new toolbar (PlanToolbar.tsx) is plain DOM,
-// addressed by its own data-testid attributes below.
+// This page object owns the meter -> screen-pixel math and drives all
+// interactions via page.mouse at the computed canvas coordinates. Note: a
+// single <Stage> still renders as a single <canvas> — the toolbar
+// (PlanToolbar.tsx) is plain DOM, addressed by its own data-testid
+// attributes below.
+//
+// Two coordinate layers (architect-plan.md "兩層座標系職責分界"):
+//   meters -> world px, via data-px-per-meter (unaffected by zoom/pan)
+//   world px -> screen px, via the Stage's own scale/position transform
+//   (data-stage-scale/data-stage-x/data-stage-y), driven by wheel/buttons/
+//   drag pan. meterToScreen() below composes both layers; at the default
+//   view (scale=1, x=0, y=0) it degenerates to the original formula, so all
+//   existing call sites are transform-aware with zero changes.
 //
 // Task 5 (2-step wizard): the wrapper's children are now split into two
 // mutually exclusive containers, [data-testid="step-edit"] (toolbar +
@@ -62,6 +68,19 @@ export type EditorMode = "select" | "wall" | "column";
 // selectedObject/selectedVertex from Step 1 could be deleted via a keypress
 // while looking at the 3D preview). `pressDelete()` below focuses
 // `stepEdit`, not `editor`, accordingly.
+//
+// venue-refined-3d task (3-step wizard): the wizard now has a third
+// mutually exclusive container, [data-testid="step-refined"] (
+// back-to-preview-button + the read-only RefinedSceneLoader/RefinedScene,
+// [data-testid="refined-scene"]). Same "exactly one container mounted"
+// rule applies. `refinedScene` is a distinct locator from `scene` —
+// `scene` always addresses the step-02 `venue-scene`, `refinedScene`
+// always addresses the step-03 `refined-scene`; they are never both
+// mounted at once so this only matters for readability/intent. The AI
+// panel now lives inside a permanently-mounted wrapper,
+// [data-testid="ai-panel-slot"], whose class toggles between `contents`
+// (steps 01/02, no layout impact) and `hidden` (step 03) — the panel
+// itself is never unmounted across steps.
 export class PlanEditorPage {
   readonly page: Page;
   readonly editor: Locator;
@@ -71,6 +90,11 @@ export class PlanEditorPage {
   readonly stepEdit: Locator;
   readonly stepPreview: Locator;
   readonly scene: Locator;
+  readonly toRefinedButton: Locator;
+  readonly backToPreviewButton: Locator;
+  readonly stepRefined: Locator;
+  readonly refinedScene: Locator;
+  readonly aiPanelSlot: Locator;
 
   constructor(page: Page) {
     this.page = page;
@@ -81,6 +105,13 @@ export class PlanEditorPage {
     this.stepEdit = page.locator('[data-testid="step-edit"]');
     this.stepPreview = page.locator('[data-testid="step-preview"]');
     this.scene = page.locator('[data-testid="venue-scene"]');
+    this.toRefinedButton = page.locator('[data-testid="to-refined-button"]');
+    this.backToPreviewButton = page.locator(
+      '[data-testid="back-to-preview-button"]',
+    );
+    this.stepRefined = page.locator('[data-testid="step-refined"]');
+    this.refinedScene = page.locator('[data-testid="refined-scene"]');
+    this.aiPanelSlot = page.locator('[data-testid="ai-panel-slot"]');
   }
 
   async navigate() {
@@ -109,6 +140,21 @@ export class PlanEditorPage {
     return Number(raw);
   }
 
+  /** Current Stage zoom scale (`data-stage-scale`), 1 = default view. */
+  async stageScale(): Promise<number> {
+    const raw = await this.editor.getAttribute("data-stage-scale");
+    return Number(raw);
+  }
+
+  /** Current Stage pan position in world px (`data-stage-x`/`data-stage-y`). */
+  async stagePosition(): Promise<PlanPoint> {
+    const [x, y] = await Promise.all([
+      this.editor.getAttribute("data-stage-x"),
+      this.editor.getAttribute("data-stage-y"),
+    ]);
+    return { x: Number(x), y: Number(y) };
+  }
+
   /**
    * Bounding box of the <canvas> (the Stage's origin, no extra offset/margin).
    * Anchored on the canvas rather than the wrapper div because the Task 2
@@ -123,13 +169,15 @@ export class PlanEditorPage {
 
   /** Convert a meter-space point to absolute screen coordinates for page.mouse.* calls. */
   async meterToScreen(meter: PlanPoint): Promise<PlanPoint> {
-    const [box, ppm] = await Promise.all([
+    const [box, ppm, scale, pos] = await Promise.all([
       this.containerBox(),
       this.pxPerMeter(),
+      this.stageScale(),
+      this.stagePosition(),
     ]);
     return {
-      x: box.x + meter.x * ppm,
-      y: box.y + meter.y * ppm,
+      x: box.x + pos.x + meter.x * ppm * scale,
+      y: box.y + pos.y + meter.y * ppm * scale,
     };
   }
 
@@ -367,14 +415,102 @@ export class PlanEditorPage {
   }
 
   /** Current wizard step (`data-step` on the wrapper). */
-  async currentStep(): Promise<"edit" | "preview"> {
+  async currentStep(): Promise<"edit" | "preview" | "refined"> {
     const raw = await this.editor.getAttribute("data-step");
-    return (raw ?? "edit") as "edit" | "preview";
+    return (raw ?? "edit") as "edit" | "preview" | "refined";
   }
 
   /** Whether `data-orbit-controls="true"` is present on the mounted 3D scene. */
   async orbitControlsPresent(): Promise<boolean> {
     const raw = await this.scene.getAttribute("data-orbit-controls");
     return raw === "true";
+  }
+
+  // --- venue-refined-3d task: step 03 (read-only RefinedScene) ---------
+
+  /** Click "下一步" on step-preview — advances from Step 2 to Step 3. */
+  async clickToRefined() {
+    await this.toRefinedButton.click();
+  }
+
+  /** Click "上一步" on step-refined — returns from Step 3 to Step 2. */
+  async clickBackToPreview() {
+    await this.backToPreviewButton.click();
+  }
+
+  async goToRefined() {
+    await this.clickToRefined();
+    await this.stepRefined.waitFor({ state: "visible" });
+  }
+
+  async backToPreview() {
+    await this.clickBackToPreview();
+    await this.stepPreview.waitFor({ state: "visible" });
+  }
+
+  /** Wall mesh count of the currently mounted `[data-testid="refined-scene"]`. */
+  async refinedWallMeshCount(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute("data-wall-mesh-count");
+    return Number(raw);
+  }
+
+  /** Column mesh count of the currently mounted `[data-testid="refined-scene"]`. */
+  async refinedColumnMeshCount(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute("data-column-mesh-count");
+    return Number(raw);
+  }
+
+  /** Furniture mesh count of the currently mounted `[data-testid="refined-scene"]`. */
+  async refinedFurnitureMeshCount(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute(
+      "data-furniture-mesh-count",
+    );
+    return Number(raw);
+  }
+
+  /** Floor polygon vertex count of the currently mounted `[data-testid="refined-scene"]`. */
+  async refinedFloorVertexCount(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute("data-floor-vertex-count");
+    return Number(raw);
+  }
+
+  // --- zoom/pan --------------------------------------------------------
+
+  async clickZoomIn() {
+    await this.page.locator('[data-testid="zoom-in-button"]').click();
+  }
+
+  async clickZoomOut() {
+    await this.page.locator('[data-testid="zoom-out-button"]').click();
+  }
+
+  async clickZoomReset() {
+    await this.page.locator('[data-testid="zoom-reset-button"]').click();
+  }
+
+  /** Current zoom-level display text (e.g. "100%"). */
+  async zoomLevel(): Promise<string> {
+    return (
+      (await this.page.locator('[data-testid="zoom-level"]').textContent()) ??
+      ""
+    );
+  }
+
+  /** Scroll-wheel zoom, anchored at the given meter-space point. */
+  async wheelZoomAt(meter: PlanPoint, deltaY: number) {
+    const pt = await this.meterToScreen(meter);
+    await this.page.mouse.move(pt.x, pt.y);
+    await this.page.mouse.wheel(0, deltaY);
+  }
+
+  /** Press-drag pan the Stage from one meter-space point to another (blank canvas area). */
+  async panByDrag(fromMeter: PlanPoint, toMeter: PlanPoint) {
+    const start = await this.meterToScreen(fromMeter);
+    const end = await this.meterToScreen(toMeter);
+
+    await this.page.mouse.move(start.x, start.y);
+    await this.page.mouse.down();
+    await this.page.mouse.move(end.x, end.y, { steps: 8 });
+    await this.page.mouse.up();
   }
 }

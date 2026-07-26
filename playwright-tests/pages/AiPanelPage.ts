@@ -3,8 +3,14 @@ import path from "path";
 
 /**
  * Page object for src/components/venue/AiPanel.tsx, mounted inside the
- * plan editor at /venue (step "edit" only). All acceptance testids come
- * from .claude/pipeline/orchestrator-output.md AC1/AC3/AC4.
+ * plan editor at /venue. Since the "AiPanel 跨步驟常駐" task
+ * (.claude/pipeline/architect-plan.md D2), AiPanel is a permanent flex
+ * sibling of the left column and stays mounted across both wizard steps
+ * ("edit" and "preview") — it is never unmounted on step switch, so every
+ * locator below resolves identically regardless of the current step. All
+ * acceptance testids come from .claude/pipeline/orchestrator-output.md
+ * AC1/AC3/AC4 (original AiPanel task) and the persistent-mount task's own
+ * Clarified Acceptance Criteria.
  */
 export class AiPanelPage {
   readonly page: Page;

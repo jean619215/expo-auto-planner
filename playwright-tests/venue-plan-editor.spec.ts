@@ -15,8 +15,10 @@ function snapToGrid(v: number): number {
   return Math.round(v / 0.5) * 0.5;
 }
 
+// PLAN_AREA_SIZE_M(src/lib/venue/plan.ts)— clamp 上限,zoom/pan 任務將可規劃
+// 範圍由 50 擴大為 200(architect-plan.md 2D 畫布 zoom/pan)。
 function clampToBounds(v: number): number {
-  return Math.min(50, Math.max(0, v));
+  return Math.min(200, Math.max(0, v));
 }
 
 test.describe("Venue Plan Editor - Task 1 acceptance", () => {
@@ -85,17 +87,17 @@ test.describe("Venue Plan Editor - Task 1 acceptance", () => {
     expect(await editor.vertexCount()).toBe(4);
   });
 
-  test("AC7 (bounds): dragging a vertex far outside 50x50m clamps to nearest in-bounds point", async ({
+  test("AC7 (bounds): dragging a vertex far outside 200x200m clamps to nearest in-bounds point", async ({
     page,
   }) => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
 
-    const farOutside = { x: 120, y: -30 };
+    const farOutside = { x: 260, y: -30 };
     await editor.dragVertexTo(2, farOutside);
 
     const verts = await editor.vertices();
-    expect(verts[2].x).toBeCloseTo(50, 5); // clamped to max bound
+    expect(verts[2].x).toBeCloseTo(200, 5); // clamped to max bound (PLAN_AREA_SIZE_M)
     expect(verts[2].y).toBeCloseTo(0, 5); // clamped to min bound
     expect(Number.isNaN(verts[2].x)).toBe(false);
     expect(Number.isNaN(verts[2].y)).toBe(false);
