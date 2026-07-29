@@ -12,8 +12,8 @@
 ## POST /api/points/checkout
 - [x] 未登入 → 401
 - [x] body 非 JSON → 400 `請求格式錯誤`
-- [x] packageId 非字串 → 400 `無效的點數方案`
-- [x] packageId 查無方案 → 400 `無效的點數方案`
+- [x] packageId 非字串 → 400 `無效的服務方案`
+- [x] packageId 查無方案 → 400 `無效的服務方案`
 - [x] packageId=basic(body 夾帶偽造 amountTwd/points)→ 200 `{orderId, redirectUrl}`;訂單為 server 端定價快照(amount_twd=100、points=100、pending、provider=mock、user_id 正確)— client 傳入值被忽略
 
 ## POST /api/points/webhook/mock(public 路由,簽章唯一守門)

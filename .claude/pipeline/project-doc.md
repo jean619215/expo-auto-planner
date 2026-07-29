@@ -90,7 +90,14 @@ Next.js API routes (backend logic co-located with frontend). Implemented: `/api/
 - `PlanEditor.tsx` 是 wizard 主體與唯一 state owner(~1584 行):`WizardStep = "edit" | "preview"`(約 L76)、`WIZARD_STEPS` 陣列驅動進度列(約 L107-110,`01 繪製平面圖` / `02 預覽 3D 場景`);`handleNextStep()`(約 L440)切步驟。步驟 UI 以 `data-testid="step-edit"` / `step-preview` 標記供 Playwright 定位。
 - 資料模型(公尺為單位,集中於 `src/lib/venue/`):`PlanPoint{x,y}`、`FloorPolygon`(≥3 頂點)、`WallSegment{id,start,end}`(`WALL_THICKNESS_M=0.2`)、`Column{id,center,w,h}`、`FurnitureItem{id,kind,center,w,h,rotationDeg}`。`FURNITURE_DEFAULTS` 定義 9 種 kind 的預設 `w/h/color/height3d`。常數:`SNAP_M=0.5`、`VENUE_SIZE_M=50`、`PLAN_AREA_SIZE_M=200`。`PlanSnapshot` + 固定鍵序 `serializePlanSnapshot` 供存檔比對。
 - 步驟 01 用 `react-konva`(Stage/Layer/Line/Rect/Circle)做平面圖編輯,含 zoom/pan。
-- 步驟 02 `VenueScene.tsx`:`@react-three/fiber` `<Canvas>` + drei `OrbitControls` / `TransformControls`。**目前僅白模等級** — 地板為多邊形 `ExtrudeGeometry`(0.1m 薄板 + 平光 `meshStandardMaterial`),牆/柱/家具全為 `boxGeometry` + 單色平光材質,無貼圖、無匯入模型、未設陰影,打光僅 `ambientLight` + 單一 `directionalLight`。3D 內編輯經 `onSceneChange` 回寫同一份 walls/columns/furniture state。
+- 步驟 02 `VenueScene.tsx`:`@react-three/fiber` `<Canvas>` + drei `OrbitControls` / `TransformControls`。**白模等級** — 牆/柱/家具為 `boxGeometry` + 單色平光材質,無貼圖、無匯入模型、未設陰影,打光僅 `ambientLight` + 單一 `directionalLight`。3D 內編輯經 `onSceneChange` 回寫同一份 walls/columns/furniture state(`VenueScene` 已完全受控,不持有幾何 local state)。
+- 步驟 03 `RefinedScene.tsx` + `RefinedSceneLoader.tsx`(commit `c7c06c5`):`WizardStep = "edit" | "preview" | "refined"`(`PlanEditor.tsx:77`),`WIZARD_STEPS` 三項(`:108`)。**唯讀** — 無 `TransformControls`、無選取、無 `onSceneChange`,僅 `OrbitControls`。讀取與步驟 02 相同的頂層 props(單一資料來源,無第二份幾何 state),02/03 互斥掛載(一次一個 WebGL context)。`AiPanel` 在 03 以 CSS 隱藏但**保持掛載**(維持 commit `97d548c` 的跨步驟對話常駐)。目前視覺仍為白模,精緻化見 `stories/venue-refined-3d.md` task 2–7。
+- 步驟 03 打光(commit `571330f`,`src/components/venue/refinedLighting.tsx`):固定 4 盞燈(hemisphere + key/fill/rim directional),**只有 key 投影**(陰影 pass 成本與家具數無關)。程序化 `<Environment>` + `<Lightformer>` 提供 IBL,**零下載**(drei `<Environment preset>` 會從 `raw.githack.com` 抓 HDRI,已因第三方 CDN 依賴否決)。tone mapping 明確設 ACES + 曝光 1.1(注意:R3F v9 `<Canvas>` 本就預設 ACES+sRGB)。同時設 roughness/metalness **純量**(貼圖屬 task 3);唯一顏色覆寫是地板 `#f5f5f4`→`#e7e5e4`(0.96 反照率會過曝毀掉陰影對比),`FURNITURE_DEFAULTS` 顏色不可動(與 2D/步驟 02 共用)。
+- **陰影機制:VSM,非 PCFSoft** —— three 0.185.1 已棄用 `PCFSoftShadowMap`,`WebGLShadowMap.render()` 會在首次陰影 pass 靜默降級為 `PCFShadowMap` 並印警告(`three.module.js:9148-9153`)。故用 `THREE.VSMShadowMap`(`shadows="variance"`)+ `VSM_RADIUS=3` / `VSM_BLUR_SAMPLES=12`,`SHADOW_NORMAL_BIAS` 提高至 0.06 以避免 VSM 貼牆漏光。**驗證方式須讀渲染器實際狀態,不可讀設定值** —— 曾發生「設定值報 PCFSoft、實際算圖是硬邊 PCF」而測試仍綠的情況。
+- 陰影視錐:`src/lib/venue/bounds.ts` 的 `planBoundsM()`(純函式,無 Three 依賴)對地板**加上**牆/柱/家具算 AABB —— 物件 clamp 到 `venueSizeM` 而非多邊形,可合法落在地板外。three r185 的 `LightShadow.updateMatrices()` **不會**呼叫 `shadowCamera.updateProjectionMatrix()`,邊界變動後需明確呼叫,否則 AI `resize_floor` 會留下失效視錐。
+- `RefinedSceneProbe.tsx`:把渲染器實際狀態寫進 `data-*` 供 Playwright 斷言(關鍵是讀 `shadow.map?.width` 這個已配置的 render target,而非 `mapSize.width` 設定值)。有 frame 上限,避免每幀遍歷 + 觸發 drei 環境貼圖重算。
+- 地板幾何抽至 `src/components/venue/floorGeometry.ts`(`useFloorGeometry` + `FLOOR_THICKNESS_M`),步驟 02/03 共用,確保凹多邊形三角化一致。**不可放 `src/lib/venue/`** — 該層禁止 import Three。
+- 家具尺寸不可由使用者調整:2D 無縮放把手(`resizeColumnCorner` 僅柱子)、3D `TransformControls` 對家具只開 translate/rotate、AI `add_furniture` schema 無 w/h 參數。尺寸唯一來源 `FURNITURE_DEFAULTS`。
 - AI tool call 只操作 2D plan 層級(`generate_plan` / `add_furniture` / `move_item` / `remove_item` / `resize_floor`),無 3D 專屬邏輯;套用後由同一份 state 反映到 3D。
 
 ### 場地儲存檔 (Save Slots)
@@ -122,11 +129,10 @@ Next.js API routes (backend logic co-located with frontend). Implemented: `/api/
 - `.env.local` — local env (gitignored) / `.env.example` — env var template
 - Vercel deployment: env vars must be set per-environment in the Vercel dashboard (Production/Preview/Development are separate scopes — Development has no deployed domain, it's only for `vercel dev`); changing them requires a manual Redeploy.
 
-## Changed Files (last delta — AI 面板常駐 + 場地規劃器補件, commit 97d548c)
-- src/components/venue/PlanEditor.tsx (AiPanel 掛載點提升至步驟切換之外,CSS 控制顯示)
-- src/components/venue/VenueScene.tsx (3D 步驟與常駐面板整合)
-- playwright-tests/ai-panel-persistent.spec.ts, playwright-tests/pages/AiPanelPage.ts
-- 補件:本次同時回寫先前未記錄的場地規劃器結構(2D 編輯器 / 3D 白模 / 領域模組 / 相關依賴)
+## Changed Files (last delta — 步驟 03 打光與陰影, commit 571330f)
+- src/components/venue/refinedLighting.tsx, RefinedSceneProbe.tsx, src/lib/venue/bounds.ts (new)
+- src/components/venue/RefinedScene.tsx (掛入燈組/探針,shadows="variance")
+- playwright-tests/venue-refined-lighting.spec.ts (new, 14 案例), playwright-tests/pages/PlanEditorPage.ts
 
 ## Last Scanned
-2026-07-26T00:00:00+08:00(delta:97d548c AI 面板常駐 + 場地規劃器/3D 補件)
+2026-07-26T06:10:00+08:00(delta:571330f 步驟 03 打光與陰影)

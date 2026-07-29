@@ -6,7 +6,7 @@ import { getPaymentProvider } from "@/lib/points/provider";
 const NOT_LOGGED_IN_ERROR = "請先登入";
 const SERVER_ERROR = "伺服器錯誤";
 const INVALID_JSON_ERROR = "請求格式錯誤";
-const INVALID_PACKAGE_ERROR = "無效的點數方案";
+const INVALID_PACKAGE_ERROR = "無效的服務方案";
 
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();

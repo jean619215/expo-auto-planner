@@ -1,294 +1,405 @@
-# Architect Plan — 步驟 03 骨架 + 唯讀 RefinedScene
+# Architect Plan — 步驟 03 程序化 PBR 材質(地板 / 牆 / 柱)
 
-> Story: 精密 3D 場景 (步驟 03) | Task type: FRONTEND | Generated: 2026-07-26T01:10+08:00
+> Story: 精密 3D 場景 (步驟 03) | Task type: FRONTEND | Generated: 2026-07-26T09:40+08:00
 
 ## Overview
 
-`WizardStep` 由兩步擴為三步(`"edit" | "preview" | "refined"`),步驟 03 掛載一個**唯讀**的 `RefinedScene`(經 `RefinedSceneLoader` 的 `ssr:false` 包裝),幾何資料**直接讀 `PlanEditor` 頂層 state**(與步驟 02 完全同一份 props)。步驟 03 不新增任何 state、不回寫任何幾何;`AiPanel` 以 CSS(`hidden` / `display:contents` 包裝層)隱藏而非卸載,維持 commit `97d548c` 的常駐掛載成果。
+把步驟 03 的地板 / 牆 / 柱從「純色 `meshStandardMaterial` + roughness/metalness 純量」升級為**零下載、GPU 一次性烘焙**的程序化 PBR 材質:每種表面各有 albedo + normal(地板另加 roughness 與一張超大尺度 macro `aoMap`),全部在**進入步驟 03 時**用 fullscreen-quad shader 渲染進 `WebGLRenderTarget`,離開時 `dispose()`。
+
+三個技術支點,皆已逐行核對 `node_modules`,不是記憶推測:
+
+1. **UV 單位統一為「公尺」**。three r185 `ExtrudeGeometry` 的 `WorldUVGenerator` 直接把 shape 座標當 UV 輸出 —— 地板 UV **本來就是平面座標公尺**,凹多邊形也一樣正確、零拉伸、零跳接。牆/柱是 `BoxGeometry`(UV 逐面 0..1,會把 0.2m 窄邊拉成條紋),因此**把每面的 UV 依該面實際公尺數重寫**,讓全場只有一種 UV 約定,一份共用材質即可服務任意尺寸的牆。
+2. **貼圖平均值 = 該表面 task 2 既有顏色的線性值,材質 `color` 改為純白**。紋理只做「圍繞既有亮度的調變」,因此 task 2 為避免 ACES 過曝所做的調校(地板 `#f5f5f4`→`#e7e5e4`)**在建構上被保留**,而且「不會比 task 2 更亮」這件事可以用貼圖回讀數值直接斷言。
+3. **測試讀真實 GPU 輸出,不讀設定值**。探針用 `gl.readRenderTargetPixels()` 把烘焙結果讀回來,回報平均值 / 變異數 / **接縫差值**,Playwright 斷言的是「shader 真的跑出了非平坦、可無縫平鋪的資料」,而非「我們設了 `generateMipmaps = true`」。這是針對 task 2 那個 bug(斷言設定值,而 renderer 實際用別的東西)的直接對策。
+
+步驟 02(`VenueScene.tsx`)一行都不改;家具材質完全不動(task 4–6 會整組換掉)。
+
+---
 
 ## Task Type Confirmed
 
-FRONTEND — 純前端步驟結構 + 新元件,無 API / schema / auth 變更。與 orchestrator-output.md 一致,無矛盾。
+**FRONTEND** — 純前端渲染。無 API route、無 DB schema、無 auth、無新增 npm 依賴、無新增靜態資產。與 orchestrator-output.md 一致,技術分析無矛盾。
 
 ## Escalation Check
 
-- 外部 API contract 變更:無(不動 `/api/plans/*`、`/api/ai/*`)。
-- DB schema / 既有資料:無(`PlanSnapshot` 不變,03 不產生需持久化資料)。
-- Auth / security model:無。
-- 複雜度:2 個新檔 + 1 支既有檔改動 + 測試,在 task 範圍內。
-- 資訊充分性:足夠,惟需修正 orchestrator 的一項過時前提(見 D0)。
-- **結論:不需 escalation。** D0 是事實澄清而非範圍變更,不阻擋實作。
+| 觸發條件 | 判定 |
+| --- | --- |
+| 外部 API contract 變更 | 無 |
+| DB schema / 既有資料 | 無(材質不進 `PlanSnapshot`,不持久化) |
+| Auth / security model | 未觸及 |
+| 新增外部資產 / 網路請求 | **零**(全程序化,不下載任何貼圖) |
+| 複雜度超出 story 顆粒 | 否。4 個新檔 + 2 支既有元件改動 + 1 支新 spec,與 task 2 同量級 |
+| 資訊是否足夠 | 足夠。orchestrator 明文授權 roughness map 的取捨由 architect 判斷(見 D6) |
+
+**結論:不需 escalation。** 但有 **一項需人工拍板的小決策**(牆面底色),見 **D9** —— 已給出預設值(不改),核准時若無異議即照預設執行。
+
+---
+
+## 事前查證(逐行核對 `node_modules`,不得依記憶假設)
+
+| 事實 | 出處 | 對本計畫的影響 |
+| --- | --- | --- |
+| `ExtrudeGeometry` 預設 `UVGenerator = WorldUVGenerator`;`generateTopUV` 回傳 `Vector2(a_x, a_y)` —— **直接就是 shape 座標** | `three/src/geometries/ExtrudeGeometry.js:99, 808-824` | **地板頂面 UV 天生就是公尺**,凹多邊形亦然(逐三角形獨立產生,不經 bounding-box 正規化)→ D2 的整個方案成立,不需自寫 UV、不需 triplanar |
+| `generateSideWallUV` 回傳 `(x 或 y, 1 - z)`,`z` 是 extrude 深度 | 同檔 `:827-862` | 地板 0.1m 側緣的 `v` 跨距 = `dz` 公尺 → **側面 UV 也是公尺**,與頂面同尺度,不會被拉成條紋 |
+| `BoxGeometry` 每面 UV 為 0..1 | `three/src/geometries/BoxGeometry.js` | 12m 長牆面與 0.2m 窄側面都拿 0..1 → **必須逐面依實際公尺重寫 UV**(D3),否則 orchestrator 明列的「牆窄邊被拉成條紋」必然發生 |
+| 渲染到 **非 XR render target** 時,program 的 `outputColorSpace` = `ColorManagement.workingColorSpace`(= Linear-sRGB),**不做 sRGB 編碼** | `WebGLPrograms.js:212`、`WebGLRenderer.js:2342` | 烘焙輸出是**線性**資料 → 三張貼圖(含 albedo)一律 `colorSpace = LinearSRGBColorSpace`。**把 albedo RT 設成 `SRGBColorSpace` 會造成二次解碼、地板暴亮 → 直接毀掉 task 2 的抗過曝調校**。這是本任務最容易踩的坑,R1 明列 |
+| 渲染到 render target 時 tone mapping 被強制關閉(`_currentRenderTarget === null` 才套用) | `WebGLRenderer.js:2353-2356` | 烘焙不會被 ACES 影響,寫進去什麼就是什麼 → D5 的「平均值 = 既有顏色線性值」在數學上成立 |
+| `WebGLRenderer.render()` 在 `_currentRenderTarget !== null && mipmapLevel === 0` 時呼叫 `textures.updateRenderTargetMipmap()` | `WebGLRenderer.js:1764-1774` | **RT 會自動產生 mipmap**,但前提是下一條 |
+| `updateRenderTargetMipmap` 只對 `textureNeedsGenerateMipmaps(texture)` 為真者動作,而該函式就是 `return texture.generateMipmaps` | `WebGLTextures.js:110, 2252-2272` | `WebGLRenderTarget` 的 `generateMipmaps` **預設 false**、`minFilter` **預設 `LinearFilter`** → **不顯式設定就沒有 mipmap**,200m 地板必然嚴重摩爾紋。D4 明列 |
+| `texture.generateMipmaps = false` 的強制覆寫只發生在 `texture.mipmaps.length > 0`(呼叫端自備 mipmap)分支 | `WebGLTextures.js:1006, 1361` | 我們不自備 mipmap,不受此影響 |
+| 各向異性上限 `capabilities.getMaxAnisotropy()`,實際套用取 `Math.min(texture.anisotropy, max)` | `WebGLCapabilities.js:6-24`、`WebGLTextures.js:702` | 直接寫死 16 在低階裝置會被靜默截斷 → 一律 `Math.min(8, gl.capabilities.getMaxAnisotropy())`,並把兩個值都回報供斷言 |
+| `Texture.channel` 存在(預設 0);`WebGLPrograms.getChannel(0)` 回傳 `'uv'`;`aoMapUv = HAS_AOMAP && getChannel(material.aoMap.channel)` | `Texture.js:118`、`WebGLPrograms.js:46-54, 273` | **`aoMap` 可用第 0 組 UV,不需要 `uv1` 屬性** → D7 的 macro 去重複方案不需動幾何 |
+| 每個貼圖槽有各自的 uv transform uniform(`aoMapTransform`、`normalMapTransform`…) | `uv_pars_vertex.glsl.js:27`、`uv_vertex.glsl.js:24` | `map` 用 `repeat=1/6`、`aoMap` 用 `repeat=1/64 + rotation` 可以並存 → macro 尺度與細節尺度互不干擾 |
+| `shadowmap_vertex.glsl` 的 `shadowWorldNormal` 來自 **`transformedNormal`(頂點法線)**,`shadowWorldPosition = worldPosition + shadowWorldNormal * shadowNormalBias` | `ShaderChunk/shadowmap_vertex.glsl.js:9, 28` | **normal map 在 fragment 階段才作用,完全影響不到 `normalBias`** → orchestrator edge case「normal map 與 VSM `normalBias: 0.06` 互動導致貼牆家具重新漏光」**在機制上不可能發生**。真正的風險是另一回事,見 D8 |
+| drei 只提供 `GradientTexture` / `NormalTexture` / `MatcapTexture`;後兩者從 GitHub CDN 下載素材 | `@react-three/drei/core/` 目錄清單 + `NormalTexture.js` / `MatcapTexture.js` | **drei 沒有任何可用的程序化噪聲 / PBR 貼圖工具**,且 `NormalTexture` / `MatcapTexture` 會打第三方 CDN → 全數否決(D1) |
+| `WebGLRenderTarget.dispose()` 會 dispatch `'dispose'` 事件(`EventDispatcher`) | `three/src/core/RenderTarget.js` + `EventDispatcher.js` | 釋放計數器可以掛在**真實 dispose 事件**上,而不是我們自己的「打算 dispose」旗標 → T7 |
 
 ---
 
 ## 架構決策
 
-### D0 —(先修正前提)orchestrator 描述的「三層 state」在目前 codebase 已不存在
+### D1 — 生成方式:**GPU fullscreen-quad 烘焙進 `WebGLRenderTarget`**
 
-orchestrator-output.md 第 24 行描述的三層資料流是**上一個 task 動工前的狀態**。上一個 task(commit `97d548c` 及其前置 commit)已依 architect-plan D1 完成收斂,實際現況經逐行查核:
+在 `RefinedScene` 的 Canvas 內部,用既有的 `gl`(`useThree`)把一組 `ShaderMaterial` 渲染進 8 個 `WebGLRenderTarget`,每個 target 一次 `gl.render()`。烘焙在 `useLayoutEffect` 內完成(先 `gl.getRenderTarget()` 存檔、結束後還原),因此**在瀏覽器 paint 之前就完成**,使用者不會看到一幀無貼圖的畫面。
 
-- `PlanEditor.tsx:208` — `sceneSnapshot` 幾何複本**已刪除**,只剩 `const [sceneGenerated, setSceneGenerated] = useState(false)` 純 boolean gate(註解見 `PlanEditor.tsx:205-207`)。
-- `VenueScene.tsx` — **已無** `localWalls/localColumns/localFurniture`。`VenueScene` 是 fully controlled:mesh 一律讀 props(`VenueScene.tsx:340/370/389`),`data-*-mesh-count` 讀 props(`:217-219`),`commitTransform`(`:144-180`)與 `handleFloorClick`(`:182-196`)只計算 next 陣列並呼叫 `onSceneChange`,不寫 local state。
-- `PlanEditor.tsx:456-467` `handleSceneChange` 直接 `setWalls/setColumns/setFurniture` 並 eager 同步 `wallsRef/columnsRef/furnitureRef`。
-- `PlanEditor.tsx:1551-1560` `VenueSceneLoader` 的幾何 props 已改傳頂層 state,不再是 snapshot。
+**為何是這個:**
 
-**結論:目前只有一層幾何資料源** = `PlanEditor` 頂層 `polygon / walls / columns / furniture`(+ 對應 `*Ref` 供 `applyActions` 跨 await 讀取)。orchestrator 擔心的「03 吃 (a) 會遺失 3D 手動調整」在現況下**不成立** —— 3D 手動調整正是寫進 (a)。實作者**不得**依 orchestrator 的舊描述去找 `sceneSnapshot` 或 `localWalls`,那些識別字已不存在。
+- **不阻塞主執行緒**。`gl.render()` 只是把指令排進 GPU 佇列就返回,CPU 時間近乎零。這一點決定性地勝過 Canvas2D —— Canvas2D 要在 JS 裡跑數百萬次 per-pixel 迴圈,不但慢,而且**會凍結那一幀**,連載入指示都畫不出來(驗收條件明文禁止「無回饋的凍結」)。
+- **法線是解析求得的,不是估的**。同一支 shader 裡有 `height(uv)` 這個高度函式,normal 用中央差分直接從它算出來。Canvas2D 路線只能先畫一張高度圖、再跑 Sobel 濾波近似,精度差且要多一份 buffer。
+- **結果本來就在 GPU 上**,沒有 `ArrayBuffer` → `texImage2D` 的上傳成本。
+- **釋放乾淨**:一個 `renderTarget.dispose()` 收掉一切,沒有 Canvas2D 路線那個「`THREE.Texture` 釋放了、底層 `<canvas>` 還在」的第二個洩漏面(orchestrator edge case 明列)。
+- 這條路徑在本專案已有先例:drei 的 `<Environment>`(task 2 採用)就是在 `useLayoutEffect` 裡對 `WebGLCubeRenderTarget` 做一次性離屏渲染。
 
-### D1 — 資料來源定案(本任務最重要的決策)
+**被否決的替代方案:**
 
-**步驟 03 讀取 `PlanEditor` 頂層 state,與步驟 02 傳給 `VenueSceneLoader` 的是同一組值(`polygon / walls / columns / furniture`),一字不差。**
+1. **Canvas2D → `CanvasTexture`** — 否決。主執行緒阻塞 + 法線只能用 Sobel 近似 + 多一個 DOM 端洩漏面。要繞開阻塞就得上 Worker + `OffscreenCanvas` + `transferToImageBitmap` + fallback 分支,複雜度遠超本任務。
+2. **每 fragment 即時計算噪聲的自訂 shader(不烘焙貼圖)** — **明確否決,理由是本任務的核心風險**。程序化噪聲沒有 mipmap,也吃不到各向異性過濾;地板在 200m 場地會被大量以**掠射角**觀看,那正是必須靠 mip + aniso 才不會爆摩爾紋的情境。即時噪聲在該情境下是所有方案裡**最差**的,直接違反 AC「不出現摩爾紋」。此外還要 `onBeforeCompile` 動 `MeshStandardMaterial`,且每幀付 ALU 成本。
+3. **drei 現成元件** — 否決。`GradientTexture` 只有漸層(無噪聲、無法線);`NormalTexture` / `MatcapTexture` 從 GitHub CDN 下載素材,直接違反「零外部網路請求」驗收條件。**drei 在這題上沒有東西可用**(已讀 `node_modules/@react-three/drei/core/` 全目錄確認,非憑記憶)。
+4. **build 階段預先產生 PNG 進版控** — 否決。等同改回貼圖檔路線(使用者已定案為程序化),且固定解析度、增加版控體積。
 
-為何這樣就能滿足全部驗收:
+### D2 — 地板 UV:**直接採用 `ExtrudeGeometry` 原生 UV,不做任何轉換**(最高風險項目的結論)
 
-| 需求 | 為何自動成立 |
-| --- | --- |
-| 03 內容 == 使用者剛在 02 看到的 | 02 的 `VenueScene` 本身就是 controlled、直接畫頂層 state;03 讀同一份 ⇒ 兩者渲染的是同一組數值 |
-| 含 02 內手動拖曳/旋轉/放置的結果 | 手動操作 → `onSceneChange` → `handleSceneChange` → 頂層 state(`PlanEditor.tsx:461-463`) |
-| 02→03→02 多次往返不倒退 | 沒有第二份副本可倒退;每次進 03 都是讀當下最新 state |
-| AI 在 02 送出後切到 03,回應才到 | `applyActions` 讀 `*Ref` → 寫頂層 state → 03 正在讀該 state,畫面即時更新;回 02 亦已套用 |
+這是計畫裡風險最高的未知數,已由原始碼確認:`WorldUVGenerator.generateTopUV` 逐三角形回傳 `(vertex.x, vertex.y)`,也就是 shape 平面座標。因為地板 shape 是用**平面公尺座標**建的(`floorGeometry.ts` 直接 `shape.moveTo(polygon[0].x, polygon[0].y)`),所以:
 
-**硬性約束(reviewer 檢查點)**:
-- `RefinedScene` **不得**有任何 `useState` 存放 `walls/columns/furniture/polygon` 或其衍生複本(不可重演 `VenueScene` 舊版 `useState(props)` 無 resync 的坑)。允許的 local state 僅限純視覺/UI(本任務其實一個都不需要)。
-- `RefinedScene` **不得**有 `onSceneChange` 之類的回寫 prop。props 介面為唯讀:`{ polygon, walls, columns, furniture, venueSizeM?, viewFitSizeM? }`。
-- 幾何以 `useMemo` 快取、依賴陣列為對應 props;非 R3F 自動管理的 geometry 需在卸載時 `dispose()`(AGENTS.md Developer 規則)。
+- **UV 值 = 公尺**,不是 0..1。
+- **凹多邊形完全不受影響** —— UV 逐頂點獨立產生,不經 bounding box 正規化,三角化怎麼切都不會有拉伸或跳接。orchestrator 列的這個 edge case **在此方案下不存在**。
+- 側緣(`FLOOR_THICKNESS_M = 0.1`)的 `v` 跨距等於實際深度公尺數,與頂面同尺度,**不會被拉成條紋**。
 
-**被否決的替代方案**:
+因此貼圖尺度靠 `texture.repeat.set(1 / TILE_M, 1 / TILE_M)` 控制,與地板大小、形狀、凹凸**完全無關**。10m 與 200m 走同一條路徑,沒有任何依尺寸分支的程式碼 —— 這也是為什麼 T10 可以斷言「`repeat` 在兩種尺寸下是同一個值」。
 
-1. **在進入 03 時 snapshot 一份 `refinedSnapshot` state**(第四份 state)—— 否決。這正是上一個 task 花整支 plan 刪掉的反模式:多資料源 + 需要 resync 機制,02→03→02→03 往返必然出現「第二次進 03 看到第一次的舊快照」(orchestrator edge case 1)。orchestrator 第 26 行也明文禁止新增第四份 state。
-2. **從 `VenueScene` 內部拉取「目前 3D 狀態」**(ref / imperative handle)—— 否決。`VenueScene` 已無內部幾何狀態可拉;硬做等於重新引入雙向耦合,且 02 卸載後 ref 失效。
-3. **共用同一個 `<Canvas>`,以 mode prop 在 02/03 間切換**(合併步驟)—— 否決。story「說明」段已定調 02/03 分開,理由為互動延遲與資源載入策略不同;後續 task 3 的貼圖 lazy load 需要「02 完全不載入」的乾淨邊界。
-4. **把 03 的資料源改成 `getSnapshot()`/`PlanSnapshot`** —— 否決。`getSnapshot` 是存檔序列化路徑,經過型別窄化與存檔語意,拿它當渲染資料源會讓 03 與 02 的資料形狀分岔,且未存檔的變更語意不明。
+備註:UV 值域達 200(不是 0..1)。Float32 屬性與 fragment shader 的 `highp` 在 200 附近的絕對精度約 2e-5 m,遠低於一個 texel(1/171 m),不構成問題。
 
-### D2 — 02 ↔ 03 的掛載/卸載策略:互斥掛載,一次只有一個 WebGL context
+**被否決的替代方案:** triplanar 投影(要 `onBeforeCompile`、三倍取樣、水平面上三軸權重退化)、box projection(對內凹邊仍拉伸)、自寫 UV generator(原生 UV 已正確,純屬多餘)。**唯一該做的防護是把這個假設變成斷言**(T3):萬一未來升級 three 改了 `WorldUVGenerator`,會立刻紅燈而不是靜默變成一團拉伸。
 
-`step === "preview"` 與 `step === "refined"` 為互斥的條件渲染區塊(比照現有 `step === "edit"` / `"preview"` 的寫法,`PlanEditor.tsx:958/1540`)。進入 03 時 `VenueScene` 卸載、`RefinedScene` 掛載;返回 02 反之。
+### D3 — 牆 / 柱 UV:**把每面的 UV 重寫成公尺**(新增 `boxGeometry.ts`)
 
-理由:
-- 瀏覽器 WebGL context 數量有上限,兩個 `<Canvas>` 同時掛載(即使一個 `display:none`)會多佔一個 context 且持續 rAF 迴圈,違背 AGENTS.md「明確界定在哪個步驟載入/釋放」,也與 task 3 的貼圖記憶體策略衝突。
-- 卸載即釋放,天然滿足 edge case「資源釋放」。
+`BoxGeometry` 六面各自 0..1。若沿用,12m 長的牆正面與 0.2m 的窄側面會拿到同樣的 UV 跨距 → 窄邊被拉伸約 60 倍成條紋,正是 orchestrator 點名的問題。
 
-**已知取捨(必須讓 QA 知悉)**:返回 02 時 `VenueScene` 重新掛載,`OrbitControls` 相機視角與 3D 內的選取狀態會**重置為預設**。驗收條件只要求「步驟 02 的 3D 場景**內容**與離開前一致(未被重置為更早的版本)」—— 內容(幾何)來自頂層 state,完全一致;相機/選取屬於視圖狀態,不在驗收範圍。此取捨換得 GPU 資源乾淨釋放,列入 Risks 與 PR 說明。
+做法:`applyMeterUv(geometry, w, h, d)` 依 `BoxGeometry` 固定的六個 group 順序(`+x, -x, +y, -y, +z, -z`,每面 4 個頂點)把 `uv` 逐面乘上該面的實際尺寸:
 
-注意:`VenueSceneLoader` 帶 `key={generation}`(`PlanEditor.tsx:1552`)。**不要**在 `handleBackToPreview` 內遞增 `generation` —— 遞增與否都會重新掛載(條件渲染),但遞增會讓 `data-generation` 語意(= 按過幾次「下一步」)失真並可能影響既有測試。`RefinedScene` **不加 key**。
+| group | 面 | `u` 乘以 | `v` 乘以 |
+| --- | --- | --- | --- |
+| 0, 1 | ±x(牆的 0.2m 窄側面) | `d` | `h` |
+| 2, 3 | ±y(頂 / 底) | `w` | `d` |
+| 4, 5 | ±z(牆的正 / 背面) | `w` | `h` |
 
-### D3 — AiPanel 在步驟 03:CSS 隱藏,掛載位置一字不動
+結果:**全場 UV 單位一律是公尺**,牆、柱、地板共用同一套 `repeat = 1/TILE_M` 約定,一種表面只需**一份材質**(不是每面牆一份),draw call 狀態切換與釋放成本都最低。
 
-`AiPanel`(`PlanEditor.tsx:1564-1570`)目前是 flex row 的第二個子節點。步驟 03 不可把它從 tree 移除或搬家,否則退化上一個 story。
+配套:牆 / 柱 geometry 改由 `useMeterUvBoxGeometries()` 以 `useMemo` 產生、卸載時 `dispose()` —— 比照 `floorGeometry.ts` 已建立的既有模式(AGENTS.md:不得在 render 期間新建 geometry)。額外好處:每面牆的 `u` 加一個由 `wall.id` 決定的**確定性**偏移(`hash(id) mod WALL_TILE_M`),讓相鄰牆面不從同一個紋理相位開始,消除「所有牆長得一模一樣」的破綻。
 
-定案做法:**永久**插入一層 wrapper(三個步驟下都存在、位置固定),只切換 wrapper 的 class:
+**被否決的替代方案:** 每面牆複製一份材質並各自設 `repeat`(N 份材質要管理與釋放,且 `texture.clone()` 與共享 `Source` 的釋放語意有踩雷風險);在 shader 裡用世界座標當 UV(又要 `onBeforeCompile`)。
 
-```
-<div
-  data-testid="ai-panel-slot"
-  data-hidden={step === "refined"}
-  inert={step === "refined"}
-  className={step === "refined" ? "hidden" : "contents"}
->
-  <AiPanel ...props 完全不變... />
-</div>
-```
+### D4 — 平鋪、mipmap 與摩爾紋:**顯式 mipmap + 各向異性,並用「大 tile + 低對比」控制重複感**
 
-- `display: contents`(Tailwind `contents`)讓 wrapper 在 01/02 下不產生 box,`AiPanel` 仍是外層 flex row 的直接 flex item ⇒ **01/02 版面逐像素不變**,既有 `ai-panel.spec.ts` / `ai-panel-persistent.spec.ts` 不需改。
-- `hidden`(`display: none`)在 03 隱藏整個面板(含收合態的 `ai-panel-toggle`,`AiPanel.tsx:326-330`)。Playwright `toBeVisible()` 即為 false,直接對應驗收條件。
-- React 對「同一位置、同一元素型別、class 改變」不會 unmount ⇒ `turns / input / imageDraft / open / pendingToolResults` 全數保留。
-- `inert`(React 19.2 原生支援 boolean 屬性)阻止 03 下鍵盤 focus 進入隱藏面板;若 lint/型別有阻礙,退回 `aria-hidden="true"` 並在 PR 註明。
+| 表面 | RT 尺寸 | 世界 tile | 有效密度 | 200m 地板重複次數 |
+| --- | --- | --- | --- | --- |
+| 地板 albedo / normal / roughness | 1024² | 6 m | ≈171 px/m | 33× |
+| 地板 macro(`aoMap`) | 256² | 64 m | 4 px/m | 3× |
+| 牆 albedo / normal | 512² | 3 m | ≈171 px/m | — |
+| 柱 albedo / normal | 512² | 3 m | ≈171 px/m | — |
 
-**被否決**:`{step !== "refined" && <AiPanel/>}` —— 直接 unmount,對話全失,明文禁止。
-**被否決**:把 `AiPanel` 移進各步驟區塊內 —— 改變掛載位置,同樣 unmount。
+- **171 px/m 的來由**:`OrbitControls` 的 `minDistance = 5`,fov 50°、視口高 480px,湊最近時 1 公尺約佔 103 px。171 px/m 留約 1.7 倍餘裕,滿足「經得起截圖放大」而不浪費記憶體。三種表面刻意取**同一密度**,避免地板細緻、牆面糊掉的不協調。
+- **必須顯式設定**(否則預設值會靜默毀掉一切):`generateMipmaps = true`、`minFilter = LinearMipmapLinearFilter`、`magFilter = LinearFilter`、`wrapS = wrapT = RepeatWrapping`。`WebGLRenderTarget` 這四項的預設值**全都是錯的**(見查證表)。
+- **各向異性**:`anisotropy = Math.min(8, gl.capabilities.getMaxAnisotropy())`。掠射角下的地板沒有這個就是一片摩爾紋;取 8 而非 16 是因為地板是全螢幕大面積取樣,8→16 的畫質增益遠小於頻寬成本。
+- **總記憶體**:1024²×4B×3 + 256²×4B + 512²×4B×4 ≈ 17.6 MB,含 mipmap ≈ 23 MB。可接受。
+- 貼圖內容刻意做成**低對比**(albedo 調變僅 ±2.5%~4.5%)。33 次重複之所以不刺眼,是因為圖案本身沒有可辨識的地標特徵 —— 這比任何去重複技巧都有效。
+- **已知殘留限制**:normal map 的 mipmap 會縮短法線向量,遠處可能出現輕微 specular aliasing。三者(`MeshStandardMaterial` / 無 normal-variance 機制 / 不做 shader 手術)的組合下無法根治,實務上被 D4 的低 `normalScale` 壓到可接受;明列於此以免日後被誤判為 bug。
 
-### D4 — 地板三角化一致性:抽共用 geometry builder
+### D5 — 亮度:**貼圖平均值 = 既有顏色的線性值,材質 `color` 設為純白**
 
-edge case「不規則凹多邊形地板…03 不得引入新的三角化行為差異」。最可靠的保證是**兩步驟用同一段程式產生 `ExtrudeGeometry`**,而非複製貼上。
+`MeshStandardMaterial` 的 diffuse 是 `color × texture(map)`。若沿用 `color = "#e7e5e4"` 再乘一張平均值 0.8 的貼圖,地板會**暗掉 20%**;若貼圖平均值設 1.0,8-bit RT 又存不下 `1.0 ± 4%` 的上緣。
 
-`src/lib/venue/` 是純領域模組,**禁止 import Three**(AGENTS.md Modularity),因此共用點放在 component 層:新增 `src/components/venue/floorGeometry.ts`,匯出 `useFloorGeometry(polygon)`(`useMemo` 建 `THREE.Shape` + `ExtrudeGeometry`,並以 `useEffect` cleanup `dispose()`),以及常數 `FLOOR_THICKNESS_M`。`VenueScene` 的 `FloorMesh`(`VenueScene.tsx:83-106`)改用此 hook(行為等價,額外修掉一個既有的 geometry 未 dispose 洩漏),`RefinedScene` 亦用之。
+定案:**把 `REFINED_SURFACE.<surface>.color` 轉成線性 RGB 當 uniform 餵進烘焙 shader 作為基準值,調變環繞它;材質 `color` 改為 `0xffffff`。**
 
-牆/柱/家具的 box 幾何由 R3F 的 `<boxGeometry>` JSX 建立,R3F 會在卸載時自動 dispose,**不需**手動處理,也**不抽共用** —— 後續 task 2–4 會整批替換 03 的材質與家具幾何,現在抽共用只會在 task 4 被拆掉。此為刻意的重複,記於 Architecture Notes。
+好處是這個性質變成**可證明**而非可宣稱:
 
-### D5 — 導覽與 testid 命名
+- 亮度與 task 2 **在建構上相同** —— task 2 為避免 ACES 過曝所做的 `#f5f5f4 → #e7e5e4` 調校自動被繼承,不需要重新調一次。
+- `REFINED_SURFACE` 仍是顏色的**唯一來源**,沒有新增第二處色票。
+- 可直接斷言:回讀貼圖的**平均值** ≈ `linear(#e7e5e4)`(±2%)、**最大值** ≤ 該值 ×1.05 → 「材質不可能比 task 2 更亮 / 不會過曝」有了數字證據(T5)。
 
-- 步驟 02 新增「下一步」按鈕:`data-testid="to-refined-button"`。**不重用** `next-step-button` —— 該 id 目前唯一存在於 step-edit(`PlanEditor.tsx:1030`),`PlanEditorPage.nextStepButton` 直接以它定位,重用會在 preview 下造成語意混淆與潛在重複匹配。
-- 步驟 03「上一步」:`data-testid="back-to-preview-button"`(既有 `back-to-edit-button` 留在 02 不動)。
-- 步驟 03 沒有再下一步、沒有存檔入口(`plan-slots-button` 僅存在於 step-edit,天然滿足)。
+配套:8-bit **線性** RT 在低亮度區間的量化步階較粗(牆的 `#78350f` 線性值約 0.19,±4% 只跨約 2 個階),因此烘焙 shader 在輸出端加一道 `±0.5/255` 的 hash dither,消除大面積漸變的階梯帶。
+
+### D6 — roughness map:**只做地板,牆與柱維持純量**
+
+orchestrator 授權此項由 architect 判投入產出比。定案:
+
+- **地板做**。環氧 / 拋光地坪的辨識度**主要來自反光強弱的空間變化**(打蠟不均、動線磨痕),而不是顏色變化。在 roughness 0.55 附近做 ±0.12 的大尺度變化,是本任務裡「像不像真的」CP 值最高的一項 —— 沒有它,地板只會變成「有雜訊的塑膠」。
+- **牆與柱不做**。烤漆板與塗裝混凝土在現實中反光高度均勻,加 roughness 變化幾乎看不出來,卻要多 2 張 512² 貼圖與 2 次烘焙。維持 task 2 的純量(0.85 / 0.7)。
+
+`metalness` 三者全部維持純量,不做貼圖(展場地板 / 牆 / 柱沒有金屬成分,`metalnessMap` 純屬浪費)。
+
+### D7 — 大尺度去重複:**用 `aoMap` 承載 64m 尺度的緩慢明暗漂移**(零 shader 手術)
+
+6m tile 在 200m 地板上重複 33 次。即使圖案低對比,人眼仍可能在大俯角截圖裡讀出格律。解法是疊一層**週期完全不同、且不對齊**的低頻變化。
+
+因為 `MeshStandardMaterial` 沒有第二個 albedo 槽,改用 `aoMap`:
+
+- `aoMap.channel = 0`(已查證 `getChannel(0) → 'uv'`,**不需要 `uv1` 屬性**,幾何完全不用動)。
+- `aoMap.repeat = 1/64`、`aoMap.rotation = 0.7 rad`、`aoMap.center = (0.5, 0.5)`。**旋轉是關鍵**:讓 macro 的格律與 6m 的格律不共軸,兩者不會週期性對齊成一個更大的可見圖樣。
+- 內容:平滑低對比 fbm,值域 [0.75, 1.0];`aoMapIntensity = 0.6`。
+- `aoMap` 只影響間接光。本場景間接光佔比不小(hemisphere 0.45 + IBL `environmentIntensity` 0.35),因此**會看得出來**,呈現為橫跨整片地板的緩慢明暗起伏,正是真實展場地坪該有的樣子。
+
+**被否決的替代方案:** `onBeforeCompile` 做 stochastic / hex-tiling texture blending。效果最好,但要對 `MeshStandardMaterial` 動 shader 手術(跨 three 版本脆弱)、貼圖取樣變三倍、且會破壞自動 mipmap 導數而必須改用 `textureGrad` 手動計算 LOD —— 那又繞回 D4 好不容易解決的摩爾紋問題。投入產出比不成立。
+
+### D8 — 與 task 2 的 VSM 陰影互動:**`normalBias` 不受影響;真正的風險是 shading noise**
+
+已由 `shadowmap_vertex.glsl.js:9, 28` 確認:`shadowWorldNormal` 取自 **`transformedNormal`(頂點法線)**,而 normal map 是在 fragment 階段才擾動法線。兩者在管線上根本不相交,因此:
+
+> **orchestrator edge case「normal map 擾動法線 → 影響 `SHADOW_NORMAL_BIAS = 0.06` → 貼牆家具重新漏光 / acne」在機制上不可能發生。`SHADOW_NORMAL_BIAS`、`SHADOW_BIAS`、`VSM_RADIUS`、`VSM_BLUR_SAMPLES`、`SHADOW_MAP_SIZE` 一律不動。**(附帶效應:家具在 task 4–6 前不加貼圖,`castShadow` 的深度 pass 也完全不受本任務影響。)
+
+真正存在的風險是另一件事:normal map 改變 `dotNL`,**高振幅法線會在受光面產生逐 texel 的明暗雜訊,肉眼可能誤判為 shadow acne**,進而誘使後續開發者去亂調陰影參數。對策是把 `normalScale` 壓低並訂為常數:**地板 0.25**(環氧地坪本就近乎平整)、**牆 0.35**(烤漆滾塗紋)、**柱 0.5**(塗裝混凝土最粗)。QA 需以「貼牆家具接觸線」與 2.0m `bannerStand` 這兩個 task 2 已用過的測試物件複驗一次(T13),確認接觸陰影既沒漏光也沒新雜訊。
+
+### D9 — 牆面底色:**預設不改(需人工拍板)**
+
+牆目前是 `#78350f`(飽和深棕,與步驟 02 共用)。以「烤漆板牆面」為目標,深棕有兩個客觀問題:(a) 線性值僅約 0.19,normal map 造成的受光起伏在這個亮度被壓縮到幾乎看不見,等於白做;(b) 與「展場實景」的觀感不符。
+
+但 task 2 在 `refinedLighting.tsx` 留下明文規範:「不要在沒有客觀理由下新增顏色覆寫」,而 orchestrator 的範圍界線只點名材質、未提顏色(其禁止改色的對象是 `FURNITURE_DEFAULTS`,牆不在其中)。
+
+**預設決策:不改**,`REFINED_SURFACE.wall` 維持無 `color` 覆寫。D5 的設計讓這件事**日後可一行反轉** —— 只要在 `REFINED_SURFACE.wall` 加一個 03-only 的 `color`,烘焙自動跟著改,不需要動任何其他程式碼。
+
+**若核准者同意改**,建議值 `#d6d3d1`(暖淺灰,linear ≈ 0.66,與地板 0.79 拉開層次且不過曝),請在核准時明說,implement 階段一併處理。
 
 ---
 
 ## Files to Create
 
 | File path | Purpose |
-| --------- | ------- |
-| `src/components/venue/RefinedScene.tsx` | 唯讀 3D 場景:`<Canvas>` + `OrbitControls` + 現有 box 幾何/打光。無 `TransformControls`、無 onClick 選取、無側欄、無回寫 callback |
-| `src/components/venue/RefinedSceneLoader.tsx` | `next/dynamic` `ssr:false` 包裝(比照 `VenueSceneLoader.tsx:7-14`,含 `loading` 佔位),Three 不進 server bundle |
-| `src/components/venue/floorGeometry.ts` | 共用 `useFloorGeometry(polygon)` + `FLOOR_THICKNESS_M`,保證 02/03 地板三角化完全一致(D4) |
-| `playwright-tests/venue-refined-3d.spec.ts` | 本任務驗收 spec |
+| --- | --- |
+| `src/components/venue/surfaceBakeShader.ts` | 烘焙用 GLSL 字串:共用可平鋪噪聲庫(週期性 hash / value noise / fbm)、每種表面的 `height()` 與 `albedoTint()`、以及 albedo / normal / roughness / macro 四種輸出模式。純字串,不 import THREE |
+| `src/components/venue/surfaceTextures.ts` | `SURFACE_TEXTURE_SPEC`(尺寸 / tile / normalScale 等常數)、`bakeSurfaceTextures(gl)`(建 8 個 RT、逐一渲染、設 filter / wrap / aniso / colorSpace)、`disposeSurfaceTextureSet()`、以及掛在**真實 `'dispose'` 事件**上的存活計數器 `getSurfaceTextureStats()` |
+| `src/components/venue/SurfaceMaterials.tsx` | React context provider:在 `useLayoutEffect` 內烘焙、以 `useMemo` 建立 floor / wall / column 三份 `MeshStandardMaterial`、卸載時 dispose、回報 ready。`useSurfaceMaterials()` hook 供子元件取用 |
+| `src/components/venue/boxGeometry.ts` | `applyMeterUv(geometry, w, h, d)` 與 `useMeterUvBoxGeometries(specs)`(公尺 UV 的 box geometry,含 memo 與 dispose),比照 `floorGeometry.ts` 模式 |
+| `playwright-tests/venue-refined-materials.spec.ts` | 本任務的驗收 gate |
 
 ## Files to Modify
 
 | File path | What changes |
-| --------- | ------------ |
-| `src/components/venue/PlanEditor.tsx` | `WizardStep`(`:76`)加 `"refined"`;`WIZARD_STEPS`(`:107-110`)加第三筆;step-preview 區塊(`:1540-1562`)加「下一步」按鈕;新增 step-refined 區塊;`AiPanel`(`:1564-1570`)包 wrapper;新增 `handleToRefined` / `handleBackToPreview` |
-| `src/components/venue/VenueScene.tsx` | 僅 `FloorMesh`(`:83-106`)改用 `useFloorGeometry`,並移除本地 `FLOOR_THICKNESS_M`(`:49`)改由共用模組匯入。其餘零改動 |
-| `playwright-tests/pages/PlanEditorPage.ts` | 新增 step-03 locators 與 helper(`stepRefined` / `refinedScene` / `toRefinedButton` / `backToPreviewButton` / mesh count getters / `aiPanelSlot`),更新檔頭註解(wizard 已是三步) |
+| --- | --- |
+| `src/components/venue/RefinedScene.tsx` | 以 `<SurfaceMaterials>` 包住場景內容;地板 / 牆 / 柱改用共用材質(`<primitive object={material} attach="material">`)而非 inline `<meshStandardMaterial>`;牆 / 柱幾何改用 `useMeterUvBoxGeometries`;牆 / 柱 mesh 加 `name` 供探針定位;新增 `data-materials-*` 屬性與載入指示 overlay。**家具 mesh 一行不動** |
+| `src/components/venue/RefinedSceneProbe.tsx` | 擴充 `RefinedDiagnostics`:逐表面回報**實際材質實例**上的貼圖狀態(存在性、尺寸、wrap / minFilter / anisotropy / colorSpace / channel / repeat)、`gl.readRenderTargetPixels` 回讀的統計量(mean / max / variance / **接縫差值**)、地板 UV 邊界 vs XY 邊界、牆 UV 公尺誤差、貼圖存活 / 累計烘焙計數、裝置 anisotropy 上限 |
+| `playwright-tests/pages/PlanEditorPage.ts` | 新增讀取上述 `data-*` 的存取器(沿用既有 `refinedLightingReady()` 寫法) |
 
-**不修改**:`AiPanel.tsx`、`VenueSceneLoader.tsx`、`src/lib/venue/*`(`plan.ts` / `furniture.ts` 型別與常數一律不動)、任何 `src/app/api/*`、`src/proxy.ts`(未新增 page 路由)、`PlanSlotsDialog.tsx`。
+**明確不動的檔案(範圍界線):** `src/components/venue/VenueScene.tsx`、`PlanEditor.tsx`、`RefinedSceneLoader.tsx`、`floorGeometry.ts`、`src/lib/venue/*`(含 `FURNITURE_DEFAULTS`)、`refinedLighting.tsx`(D9 若獲核准則例外,僅加一個 `color` 欄位)。
 
 ---
 
 ## Implementation Steps
 
-1. **建立 `src/components/venue/floorGeometry.ts`**
-   匯出 `export const FLOOR_THICKNESS_M = 0.1;` 與 `export function useFloorGeometry(polygon: FloorPolygon): THREE.ExtrudeGeometry`。內容照搬 `VenueScene.tsx:90-99` 的 `useMemo` 邏輯(`THREE.Shape` → `moveTo/lineTo/closePath` → `ExtrudeGeometry({ depth: FLOOR_THICKNESS_M, bevelEnabled: false })`),**演算法一字不改**;額外加 `useEffect(() => () => geometry.dispose(), [geometry])`。此檔屬 component 層(可 import Three),不放 `src/lib/venue/`。
+### 階段 A — 烘焙核心
 
-2. **改 `src/components/venue/VenueScene.tsx`**
-   刪除 `:49` 的 `const FLOOR_THICKNESS_M = 0.1;`,改 `import { useFloorGeometry, FLOOR_THICKNESS_M } from "./floorGeometry";`(若檔內其他處未用到常數則不匯入常數)。`FloorMesh`(`:83-106`)的 `useMemo` 區塊改為 `const geometry = useFloorGeometry(polygon);`,`return` 的 JSX 完全不動。**其餘全檔不得有任何其他改動** —— 這步是行為等價重構,任何 mesh/data attribute/互動變更都算越界。
+1. **建立 `src/components/venue/surfaceBakeShader.ts`。** 匯出 `BAKE_VERTEX_SHADER`(fullscreen triangle,把 `uv` 傳給 fragment)與 `buildBakeFragmentShader(surface, mode)`。內含:
+   - **可平鋪噪聲庫**:`hash21(vec2 cell, float period)` 先做 `mod(cell, period)` 再 hash;`valueNoise(vec2 p, float period)`;`fbm(vec2 p, float period, int octaves)`,第 `i` 個 octave 用 `period * 2^i` —— **每個 octave 都在貼圖邊界完美接合,整張貼圖因此嚴格可無縫平鋪**。這是 T4「接縫差值」斷言能過的機制基礎;漏掉任一 octave 的 `mod` 就會紅燈(R4)。
+   - `uniform vec3 uBaseColor`(線性)、`uniform float uResolution`、`uniform float uNormalStrength`、`uniform float uRoughBase`。
+   - **`height(vec2 uv)` 逐表面配方**:
+     - `floor`(環氧 / 拋光地坪):`fbm(uv*1.5, 4 oct) * 0.35` + 細橘皮 `fbm(uv*24.0, 2 oct) * 0.08` + 稀疏骨材斑點(對 `uv*40` 的 cell hash 取閾值,低對比)。
+     - `wall`(烤漆板):滾塗紋 `fbm(uv*40.0, 2 oct) * 0.6` + 極低頻板面起伏 `fbm(uv*0.8, 2 oct) * 0.4`。
+     - `column`(塗裝混凝土):**方向性** `fbm(vec2(uv.x*3.0, uv.y*18.0), 3 oct)`(模板 / 刷痕的垂直走向)+ `fbm(uv*8.0, 2 oct)`。
+   - **輸出模式**:
+     - `ALBEDO`:`uBaseColor * (1.0 + amp * (tint - 0.5) * 2.0)`,`amp` = 地板 0.045 / 牆 0.025 / 柱 0.035;輸出前加 dither。
+     - `NORMAL`:對 `height()` 做中央差分(步長 = 1 texel = `1.0/uResolution`),`n = normalize(vec3(-dhdx * uNormalStrength, -dhdy * uNormalStrength, 1.0))`,輸出 `n * 0.5 + 0.5`。
+     - `ROUGHNESS`:`uRoughBase + 0.12 * (fbm(uv*0.9, 3 oct) - 0.5) * 2.0`,寫進 **`.g` 通道**(three 的 `roughnessMap` 只讀 `.g`),加 dither。
+     - `MACRO`:平滑 fbm 映射到 `[0.75, 1.0]`,寫滿 RGB。
+   - **明確不做**:木紋、大理石、磁磚縫格線。磁磚縫在 200m 上重複 33 次會是最刺眼的「一眼看穿的規律平鋪」,而且高對比細線正是掠射角摩爾紋的溫床 —— 與 orchestrator「素面才是程序化的主場、不要碰複雜有機紋理」的指示一致。
 
-3. **建立 `src/components/venue/RefinedScene.tsx`**(`"use client"`)
-   - Props 介面:`{ polygon: FloorPolygon; walls: WallSegment[]; columns: Column[]; furniture: FurnitureItem[]; venueSizeM?: number; viewFitSizeM?: number }`。**無** `onSceneChange`。
-   - 根節點 `<div data-testid="refined-scene" data-readonly="true" data-orbit-controls="true" data-wall-mesh-count={walls.length} data-column-mesh-count={columns.length} data-furniture-mesh-count={furniture.length} data-floor-vertex-count={polygon.length} className="mt-4 w-full">`,內含 `<div className="h-[480px] w-full overflow-hidden rounded border border-stone-300 bg-stone-100">` 包 `<Canvas>`(尺寸與 02 一致,`VenueScene.tsx:315`)。
-   - `<Canvas camera={{ position: [fit*0.7, fit*0.9, fit*0.7], fov: 50 }}>`,`const fit = viewFitSizeM ?? venueSizeM ?? VENUE_SIZE_M`(比照 `VenueScene.tsx:117`)。
-   - 打光沿用現況:`<ambientLight intensity={0.6} />` + `<directionalLight position={[25,40,25]} intensity={0.8} />`(`VenueScene.tsx:322-323`)。**本任務不加 shadow / 額外光源 / tone mapping** —— 那是 task 2。
-   - `<OrbitControls makeDefault enableRotate enableZoom enablePan maxPolarAngle={Math.PI/2 - 0.05} minDistance={5} maxDistance={150} target={[fit/2, 0, fit/2]} />`(照 `VenueScene.tsx:324-334`)。不需要 `orbitRef`(03 無重設視角按鈕)。
-   - `<gridHelper args={[venueSizeM, venueSizeM]} position={[venueSizeM/2, 0.01, venueSizeM/2]} />`,與 02 一致。
-   - 地板:`<mesh geometry={useFloorGeometry(polygon) 的結果} rotation={[Math.PI/2,0,0]}>` + `<meshStandardMaterial color="#f5f5f4" side={THREE.DoubleSide} />`,**不掛 `onClick`**。建議沿用一個 local `FloorMesh` 小元件包裝以符合 hook 規則。
-   - 牆/柱/家具:照 `VenueScene.tsx:340-416` 的 position / rotation / boxGeometry args / 顏色計算,但**逐一移除**:`ref={(node)=>...}`、`onClick`、`isSelected` 判斷與選取色 —— 顏色一律用非選取值(牆 `#78350f`、柱 `#78716c`、家具 `FURNITURE_DEFAULTS[kind].color`)。
-   - **不得**出現 `TransformControls`、`selectedId`、`placingKind`、`sidebarOpen`、`aside` 側欄、`furniture-place-*` 按鈕。
-   - 空場景(walls/columns/furniture 皆為 `[]`)時 `.map` 自然產出空陣列,只渲染地板 + grid,不需額外分支(edge case「空場景」)。
+2. **建立 `src/components/venue/surfaceTextures.ts`。**
+   - 匯出常數:`FLOOR_TILE_M = 6`、`WALL_TILE_M = 3`、`COLUMN_TILE_M = 3`、`FLOOR_MACRO_TILE_M = 64`、`FLOOR_RES = 1024`、`WALL_RES = 512`、`COLUMN_RES = 512`、`MACRO_RES = 256`、`NORMAL_SCALE = { floor: 0.25, wall: 0.35, column: 0.5 }`、`MAX_ANISOTROPY = 8`、`AO_MAP_INTENSITY = 0.6`、`MACRO_ROTATION_RAD = 0.7`。
+   - `bakeSurfaceTextures(gl: THREE.WebGLRenderer): SurfaceTextureSet` —— 建一個共用的 `THREE.Scene` + `OrthographicCamera` + fullscreen `BufferGeometry`,依序:
+     1. `const prevTarget = gl.getRenderTarget()`。
+     2. 對 8 個目標各建 `new THREE.WebGLRenderTarget(res, res, { depthBuffer: false, stencilBuffer: false, generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping, colorSpace: THREE.LinearSRGBColorSpace })`。
+     3. 設好對應 `ShaderMaterial` 的 uniform → `gl.setRenderTarget(rt)` → `gl.render(quadScene, quadCam)`(mipmap 由 `WebGLRenderer.render()` 自動產生)。
+     4. `rt.texture.anisotropy = Math.min(MAX_ANISOTROPY, gl.capabilities.getMaxAnisotropy())`。
+     5. 全數完成後 `gl.setRenderTarget(prevTarget)`,並 dispose 臨時的 `ShaderMaterial` 與 quad geometry。
+   - **`colorSpace` 一律 `LinearSRGBColorSpace`,含 albedo。** 加註解說明理由(RT 路徑不做 sRGB 編碼,設成 `SRGBColorSpace` 會二次解碼把地板炸亮)—— 見 R1。
+   - **計數器**:模組層 `let liveTargets = 0; let totalBakes = 0;`。建立時 `liveTargets++`,並對每個 RT 掛 `rt.addEventListener('dispose', () => { liveTargets--; })` —— **減量掛在 three 實際派發的 dispose 事件上,而不是我們自己的意圖旗標**,這樣計數反映的是真實釋放。匯出 `getSurfaceTextureStats()`。
+   - `disposeSurfaceTextureSet(set)`:對 8 個 RT 逐一 `dispose()`。
 
-4. **建立 `src/components/venue/RefinedSceneLoader.tsx`**(`"use client"`)
-   照 `VenueSceneLoader.tsx` 逐行對應:`dynamic(() => import("./RefinedScene"), { ssr: false, loading: () => <div className="mt-4 flex h-[480px] w-full items-center justify-center rounded border border-stone-200 bg-stone-50 text-sm text-stone-500">載入中…</div> })`,props 型別鏡射 RefinedScene(**不含** `onSceneChange`),直接透傳。
+3. **建立 `src/components/venue/SurfaceMaterials.tsx`。**
+   - `useLayoutEffect` 呼叫 `bakeSurfaceTextures(gl)` → `setState(set)`;cleanup 呼叫 `disposeSurfaceTextureSet(set)`。依賴**只有 `[gl]`** —— 貼圖與平面圖內容完全無關(UV 是世界公尺),所以場地改變不重烘焙,`revision` 不參與。
+   - `useMemo` 依 `[set]` 建三份 `MeshStandardMaterial`:
+     - floor:`{ map, normalMap, roughnessMap, aoMap, color: 0xffffff, metalness: REFINED_SURFACE.floor.metalness, side: THREE.DoubleSide, normalScale: new THREE.Vector2(0.25, 0.25), aoMapIntensity: 0.6 }`;`aoMap.channel = 0`;各貼圖 `repeat` 依其 tile 設定,`aoMap.rotation = 0.7`、`aoMap.center.set(0.5, 0.5)`。
+     - wall / column:`{ map, normalMap, color: 0xffffff, roughness: REFINED_SURFACE.<s>.roughness, metalness: ... , normalScale }`。
+   - 對應 `useEffect` cleanup 逐一 `material.dispose()`。
+   - Context 值 `{ materials, ready }`;`set` 尚未就緒時 `materials = null`,消費端回退到 task 2 的純色材質。因 `useLayoutEffect` + `setState` 在同一次 commit 內完成,實務上使用者不會看到這個中間態,但它保證場景永遠不會有破洞。
+   - 以 `onReady` callback 把 ready 狀態往上送給 `RefinedScene`(DOM 層要用)。
 
-5. **`PlanEditor.tsx:76` 擴充步驟型別**
-   `type WizardStep = "edit" | "preview" | "refined";`
+### 階段 B — 幾何 UV
 
-6. **`PlanEditor.tsx:107-110` 擴充步驟陣列**
-   加入 `{ step: "refined", no: "03", label: "精密 3D" }`。`StepProgress`(`:114-145`)為陣列驅動,無需改動即正確標示三步目前位置。確認 `max-w-md`(`:118`)容納三項不換行,必要時放寬為 `max-w-xl`(純樣式)。
+4. **建立 `src/components/venue/boxGeometry.ts`。** `applyMeterUv(geometry, w, h, d)` 依 D3 表格逐 group(每 4 頂點)就地縮放 `uv` 屬性並設 `needsUpdate = true`。`useMeterUvBoxGeometries(specs: { id, w, h, d, uOffset? }[])` 用 `useMemo` 產生 `Map<string, BufferGeometry>`,`useEffect` cleanup 逐一 `dispose()` —— 與 `useFloorGeometry` 同一套模式,符合 AGENTS.md「不得在 render 期間新建 geometry;卸載時 dispose」。
 
-7. **`PlanEditor.tsx` 新增兩個 handler**(置於 `handleBackToEdit`,`:469-471` 附近)
-   ```
-   function handleToRefined() { setStep("refined"); }
-   function handleBackToPreview() { setStep("preview"); }
-   ```
-   **不**遞增 `generation`、**不**碰 `sceneGenerated`、**不**改任何幾何 state(D2)。
+5. **`RefinedScene.tsx` 的牆與柱改用 `useMeterUvBoxGeometries`。** 牆 spec `{ id: wall.id, w: wallLengthM(wall), h: WALL_HEIGHT_M, d: WALL_THICKNESS_M, uOffset: hash(wall.id) % WALL_TILE_M }`;柱 spec `{ id: col.id, w: col.w, h: WALL_HEIGHT_M, d: col.h }`。移除 inline `<boxGeometry args={...}>`,改為 `geometry={geoMap.get(id)}`。**位置 / 旋轉 / `castShadow` / `receiveShadow` 全部不動。**
 
-8. **`PlanEditor.tsx:1540-1562` step-preview 區塊加「下一步」**
-   在既有 `back-to-edit-button` 同一列後方加:
-   ```
-   <Button type="button" data-testid="to-refined-button" onClick={handleToRefined} className="mb-2 ml-2">下一步</Button>
-   ```
-   `VenueSceneLoader` 的 props(含 `key={generation}`、`onSceneChange`)完全不動。
+### 階段 C — 場景接線與載入指示
 
-9. **`PlanEditor.tsx` 新增 step-refined 區塊**(緊接 step-preview 區塊之後,同一個 `min-w-0 flex-1` 左欄內)
-   ```
-   {step === "refined" && sceneGenerated && (
-     <div data-testid="step-refined">
-       <Button type="button" variant="outline" data-testid="back-to-preview-button" onClick={handleBackToPreview} className="mb-2">上一步</Button>
-       <RefinedSceneLoader
-         polygon={polygon} walls={walls} columns={columns} furniture={furniture}
-         venueSizeM={PLAN_AREA_SIZE_M} viewFitSizeM={VENUE_SIZE_M}
-       />
-     </div>
-   )}
-   ```
-   `sceneGenerated` guard 比照 `:1540`(Error States:snapshot/gate 未成立時不渲染 3D,不拋錯白畫面)。幾何 props 與 `:1553-1558` **完全相同** —— 這就是 D1。
+6. **`RefinedScene.tsx`:以 `<SurfaceMaterials onReady={setMaterialsReady}>` 包住 `<FloorMesh>` / 牆 / 柱。** 材質改成 `<primitive object={material} attach="material" />`(材質由 provider 擁有與釋放,**不可**用 `<meshStandardMaterial>` 讓 R3F 重複建立 —— 見 R8)。**家具 mesh 保持原樣的 inline `<meshStandardMaterial>`,一行不改。** 牆 / 柱 mesh 各加 `name={REFINED_WALL_NAME}` / `name={REFINED_COLUMN_NAME}`(新常數放 `RefinedSceneProbe.tsx`,比照既有 `REFINED_FLOOR_NAME`)供探針定位實際材質。
 
-10. **`PlanEditor.tsx:1564-1570` 包 AiPanel wrapper**
-    依 D3 的程式碼片段插入 wrapper。`AiPanel` 的 5 個 props(`plan` / `applyActions` / `planId` / `slot` / `conversationSeed`)一字不改;`AiPanel.tsx` 本身零修改。
+7. **載入指示。** `RefinedScene` 以 `materialsReady` 控制一個 `[data-testid="refined-materials-loading"]` 的絕對定位 overlay(覆在 canvas 容器上,文案「材質產生中…」),並在容器根加 `data-materials-ready={String(materialsReady)}`。既有 `RefinedSceneLoader` 的動態載入 fallback 保留不動 —— 兩者分工:前者蓋 JS chunk 載入,後者蓋烘焙。**誠實說明:在有 GPU 的機器上烘焙在單一 commit 內完成,這個 overlay 實際上不會被看見;它存在是為了低階裝置與 CI(SwiftShader)不會出現無回饋的凍結。**
 
-11. **靜態檢查**:`npx tsc --noEmit` 與 `npm run lint` 通過。
+8. **`RefinedSceneProbe.tsx` 擴充診斷。** 全部**從場景實際物件讀取**,不從常數檔讀:
+   - 依 `REFINED_FLOOR_NAME` / `REFINED_WALL_NAME` / `REFINED_COLUMN_NAME` traverse 取得**實際 material 實例**,回報每個 `map` / `normalMap` / `roughnessMap` / `aoMap` 的:存在性、`image.width/height`、`wrapS` / `wrapT` / `minFilter` / `magFilter` / `anisotropy` / `colorSpace` / `channel` / `repeat` / `generateMipmaps`(列舉值轉成常數名字串回報),以及 `material.color.getHexString()`、`material.normalScale.x`。
+   - 一併回報 `gl.capabilities.getMaxAnisotropy()`,讓測試能斷言「有效各向異性 = `min(8, 上限)`」而不是硬碰 8。
+   - **回讀統計(真實 GPU 輸出)**:`gl.readRenderTargetPixels()` 對地板 albedo RT 取樣 —— (a) 一塊 64×64 內部區塊 → `mean` / `max` / `variance`;(b) 第 0 行與第 `N-1` 行整列 → `seamDelta`(平均絕對差);(c) 第 `N/2` 與 `N/2+1` 兩相鄰行 → `adjacentDelta`。同樣對地板 normal RT 取 `meanZ` 與 `varianceXY`。**只在首次報告時做一次**,不進每幀路徑(沿用既有 `PROBE_ACTIVE_FRAMES` 機制)。
+   - **UV 假設守衛**:回報地板 geometry `uv` 屬性的 bounding box 與 `position` 屬性在 shape 平面上的 bounding box(兩者理應相等);回報任一面牆 geometry 各 group 的「uv 跨距 ÷ 該面實際公尺數」對 1 的最大偏差(`wallUvMeterError`)。
+   - 回報 `getSurfaceTextureStats()` 的 `liveTargets` / `totalBakes`,以及烘焙耗時(僅供人工參考,不斷言)。
 
-12. **手動 smoke**:畫牆+柱+放家具 → 下一步 → 02 內拖曳移動一件家具 → 下一步 → 03 顯示移動後位置、點物件無反應、拖曳可轉視角、無 AI 側欄 → 上一步 → 02 幾何完整 → 上一步 → 01 的 2D 內容一致。
+9. **`playwright-tests/pages/PlanEditorPage.ts`** 新增對應存取器。
 
-13. **`playwright-tests/pages/PlanEditorPage.ts` 擴充**
-    新增 locators:`stepRefined` (`[data-testid="step-refined"]`)、`refinedScene` (`[data-testid="refined-scene"]`)、`toRefinedButton`、`backToPreviewButton`、`aiPanelSlot` (`[data-testid="ai-panel-slot"]`);helper:`goToRefined()`、`backToPreview()`、`refinedWallMeshCount()` / `refinedColumnMeshCount()` / `refinedFurnitureMeshCount()` / `refinedFloorVertexCount()`。更新檔頭 `:55-65` 註解(三個互斥步驟容器)。既有 `scene` locator 仍指 `venue-scene`,**不得**讓 `refined-scene` 共用該 id。
+### 階段 D — 驗收與收尾
 
-14. **新增 `playwright-tests/venue-refined-3d.spec.ts`**,案例見 Test Plan。
-
-15. **跑迴歸**:`venue-3d-scene.spec.ts`、`venue-objects.spec.ts`、`venue-zoom-pan.spec.ts`、`venue-plan-editor.spec.ts`、`venue-dimensions.spec.ts`、`ai-panel.spec.ts`、`ai-panel-persistent.spec.ts`、`plan-slots.spec.ts` 全綠(live dev server + `.env.playwright.local` 測試帳號)。預期零改動 —— 若任一支需改,必須在 PR 逐條說明理由。
+10. **撰寫 `playwright-tests/venue-refined-materials.spec.ts`**(內容見 Test Plan)。
+11. **`npm run lint` 零錯誤**(AGENTS.md 硬性要求)。
+12. **產出人工判讀截圖**進 `playwright-report/`:(a) 10m 預設場地俯視、(b) 大場地**掠射角**、(c) 貼牆家具接觸線特寫。
 
 ---
 
 ## Data Flow
 
 ```
-        ┌──────────────────────────────────────────────────────────┐
-        │ PlanEditor 頂層 state(唯一幾何資料源)                     │
-        │ polygon / walls / columns / furniture (+ *Ref)            │
-        └───┬──────────────┬──────────────┬──────────────┬─────────┘
-   props ↓  │              │ props ↓      │ props ↓      │ plan prop ↓
-   ┌────────▼───────┐ ┌────▼──────────┐ ┌─▼───────────┐ ┌▼────────────────┐
-   │ 2D Stage(01)  │ │ VenueScene(02)│ │ RefinedScene│ │ AiPanel(常駐)   │
-   │ 直接 setState  │ │ controlled     │ │ (03)        │ │ 03 下 CSS 隱藏  │
-   └────────┬───────┘ └────┬───────────┘ │ 唯讀,無回寫 │ └┬────────────────┘
-            │              │ onSceneChange└─────────────┘  │ tool call
-            │              ▼ (handleSceneChange:            ▼ applyActions
-            └──────────► setState + eager ref) ──────► 同一份 state
-```
+進入步驟 03(PlanEditor: step === "refined")
+  └─ RefinedSceneLoader  ── next/dynamic ssr:false ── 「載入中…」(JS chunk)
+       └─ RefinedScene
+            └─ <Canvas>                     ← gl (WebGLRenderer)
+                 └─ <SurfaceMaterials>      ← useThree(gl)
+                      │ useLayoutEffect(一次,依賴 [gl])
+                      │   bakeSurfaceTextures(gl)
+                      │     prev = gl.getRenderTarget()
+                      │     for 8 targets:
+                      │       ShaderMaterial(uBaseColor = linear(REFINED_SURFACE.*.color))
+                      │       gl.setRenderTarget(rt) → gl.render(quad)
+                      │       → RT 自動產生 mipmap(WebGLRenderer.js:1773)
+                      │       → colorSpace = Linear, wrap = Repeat, aniso = min(8, cap)
+                      │     gl.setRenderTarget(prev)
+                      │   → setState(set) → onReady(true) → data-materials-ready="true"
+                      │
+                      │ useMemo([set]) → 3 份 MeshStandardMaterial
+                      │   color = 0xffffff(亮度已烘進貼圖 → D5)
+                      │   repeat = 1 / TILE_M   ←── UV 單位是公尺
+                      ▼
+            ┌─────────┴──────────────────────────────────┐
+       FloorMesh                                 牆 / 柱 mesh
+       useFloorGeometry(不改)                    useMeterUvBoxGeometries
+       ExtrudeGeometry UV = (x, y) 公尺           BoxGeometry UV × 該面公尺數
+       凹多邊形亦成立(D2)                        0.2m 窄面不再被拉伸(D3)
+            └─────────┬──────────────────────────────────┘
+                      ▼
+            MeshStandardMaterial:
+              diffuse = white × map(uv / 6)
+              normal ← normalMap(uv / 6) × normalScale
+              rough  ← roughnessMap(uv / 6).g      (僅地板)
+              indirect × aoMap(rot(uv) / 64)       (僅地板,D7 去重複)
+                      ▼
+            task 2 的燈組 / VSM 陰影 / ACES 曝光 1.1(完全不動)
+              normalBias 走頂點法線 → 與 normal map 無交集(D8)
 
-步驟切換只改變「哪個消費者掛載」,不搬動資料。因此 02→03→02→03 任意往返,每次讀到的都是當下最新值,不存在快照倒退路徑。
+離開步驟 03(step !== "refined" → RefinedScene unmount)
+  └─ SurfaceMaterials cleanup
+       ├─ material.dispose() ×3
+       └─ disposeSurfaceTextureSet() → rt.dispose() ×8
+            → three 派發 'dispose' 事件 → liveTargets -= 8   ← 測試讀的就是這個
+```
 
 ---
 
 ## Test Plan
 
-無 unit/integration test framework(AGENTS.md)。驗收 = Playwright(`playwright-tests/venue-refined-3d.spec.ts`)+ 上述迴歸。
+**驗證紀律(針對 task 2 的教訓):** 每條斷言的來源必須是 **renderer / scene / GPU 的實際狀態**,不得是原始碼字面量或「我們請求的設定」。task 2 的 bug 是斷言了 `PCFSoftShadowMap` 這個*設定*,而 renderer 已把它靜默降級。本計畫的對策:凡能回讀真實輸出的一律回讀(`readRenderTargetPixels`);只能讀設定的,就讀**實際材質實例上的那個貼圖物件**(不是常數檔),並額外斷言一個只有「機制真的跑起來」才成立的推論值。
 
-新 spec 案例(對應 orchestrator 的 10 條驗收條件):
+**沒有單元測試框架的因應:** 本專案無 JS 單元測試框架。`applyMeterUv` 這類純函式的正確性改由**探針回報 + Playwright 斷言**覆蓋 —— T3 的 `wallUvMeterError` 就是 `applyMeterUv` 的等價單元測試,而且是在真實 geometry 上跑的,比單元測試更接近真相。
 
-1. **進入 03 + 進度列**(AC1):畫一面牆 → 下一步 → 下一步 → `stepRefined` 可見、`stepPreview` count 0、`data-step="refined"`;`step-progress` 內有 3 個 `li`,第三項含「03」與「精密 3D」且帶目前步驟樣式標記。
-2. **返回 02 內容一致**(AC2):承 1 → `back-to-preview-button` → `stepPreview` 可見、`venue-scene` 的 `data-wall-mesh-count` 與進 03 前相同。
-3. **手動拖曳後進 03 位置正確**(AC3):02 選取一件家具、以 `TransformControls` 拖曳 commit → 記下 `plan-editor` 的 `data-furniture`(JSON)→ 進 03 → 回 02 → `data-furniture` 不變;並斷言 03 的 `data-furniture-mesh-count` 等於 02。(mesh 世界座標無法直接讀,以「唯一資料源 + JSON 快照不變」佐證,對應 D1。)
-4. **往返多次不倒退**(edge case 1):02 拖曳 → 03 → 02 再拖曳另一件 → 03 → 回 02,`data-furniture` 累積兩次調整皆在,無回復到任何中間版本。
-5. **唯讀:無選取/無 gizmo**(AC4):03 下點擊 canvas 中央 → `refined-scene` 的 `data-readonly` 為 `"true"`;頁面上 `furniture-place-table` / `venue-sidebar` / `reset-view-button` count 皆為 0(側欄與工具列不存在 ⇒ 無選取入口);點擊前後 `data-furniture` JSON 完全不變(無位移)。
-6. **OrbitControls 可用**(AC5):`data-orbit-controls="true"`;於 canvas 上做一次 mouse drag,不拋 console error 且 `data-furniture` 不變(視角操作不改資料)。
-7. **AI 側欄隱藏但未卸載**(AC6 + AC7):02 下 mock `/api/ai/chat` 對話一輪(沿用 `ai-panel-persistent.spec.ts` 的 `page.route` fixture,不花錢)+ 在輸入框留未送出草稿 → 進 03 → `ai-panel` 與 `ai-panel-toggle` 皆 `not.toBeVisible()`、`ai-panel-slot` 的 `data-hidden="true"` → 回 02 → 對話 `ai-assistant-text` 仍在、`ai-input` 草稿原樣。
-8. **無存檔入口**(AC8):03 下 `plan-slots-button` count 0。
-9. **未產生場景不可達 03**(AC9):首頁載入(`data-scene-generated="false"`)→ 頁面上 `to-refined-button` count 0(僅存在於 step-preview),無法直達 03。
-10. **空場景**(edge case 3):不畫任何牆/柱/家具直接 下一步 → 下一步 → `stepRefined` 可見、`data-wall-mesh-count="0"`、`data-floor-vertex-count="4"`,無 console error。
-11. **凹多邊形地板一致**(edge case 4):以既有 `venue-3d-scene.spec.ts` 凹多邊形 fixture 建場 → 02 與 03 的 `data-floor-vertex-count` 相同,兩步驟皆無 error(三角化共用 `useFloorGeometry`,D4)。
-12. **版面不水平溢出**(edge case 5):03 下斷言 `document.documentElement.scrollWidth <= clientWidth`,且 canvas 元素寬度 > 02 時的寬度(AI 側欄隱藏後左欄變寬)。
+### Playwright 驗收(`venue-refined-materials.spec.ts`)
 
-迴歸(必須全綠、原則上零改動):步驟 15 所列 8 支 spec。
+| # | 測試 | 斷言(讀真實狀態) | 對應 AC |
+| --- | --- | --- | --- |
+| T1 | 貼圖確實掛在實際材質上 | traverse 場景取得地板 / 牆 / 柱**實際 material**:`map` 與 `normalMap` 皆非 null;`image.width` 分別為 1024 / 512 / 512;地板另有 `roughnessMap` 與 `aoMap`(`channel === 0`) | 「表面呈現紋理且有法線起伏」 |
+| T2 | **貼圖內容非平坦(shader 真的跑了)** | 回讀地板 albedo RT:`variance > 0.0002`(不是純色);回讀 normal RT:`meanZ > 0.9` 且 `varianceXY > 0`(有真實法線擾動,且不是全 `(0.5,0.5,1)` 的空白法線圖)。**這是唯一能證明烘焙 shader 真的執行的斷言 —— 若設定值全對但 shader 沒跑,T1 仍會過,T2 會紅** | 同上 |
+| T3 | **UV 假設守衛** | 地板:`uvBounds` 與 `xyBounds` 之差 < 1e-3(證明 `WorldUVGenerator` 仍輸出公尺 UV;three 升級若改了它會立刻紅燈,而不是靜默出現拉伸)。牆:`wallUvMeterError < 1e-3`(證明 `applyMeterUv` 對**含 0.2m 窄面在內的六個面**都正確) | 「凹多邊形無拉伸」「牆窄邊不成條紋」 |
+| T4 | **無縫平鋪(數值化)** | `seamDelta <= 2 × adjacentDelta`。若噪聲不是週期性的,首末行的差會遠大於相鄰行的差 → 紅燈。**這是把「看起來沒接縫」變成可斷言命題的關鍵設計** | 「200m 無明顯接縫」 |
+| T5 | **不過曝(繼承 task 2 調校)** | 回讀地板 albedo:`mean` 落在 `linear(REFINED_SURFACE.floor.color) ± 2%`;`max <= mean × 1.05`;且實際 `material.color.getHexString() === "ffffff"`。三者合起來證明「材質在數學上不可能比 task 2 亮」 | 「ACES 曝光 1.1 下不過曝」 |
+| T6 | 摩爾紋防護機制到位 | 讀**實際貼圖物件**:`minFilter === LinearMipmapLinearFilter`、`generateMipmaps === true`、`wrapS`/`wrapT === RepeatWrapping`、`anisotropy === Math.min(8, reportedMaxAnisotropy)`(對照探針回報的裝置上限,不硬碰 8) | 「200m 不出現摩爾紋」 |
+| T7 | **往返不累積(真實 dispose 事件)** | 02→03→02→03→02→03 三輪後:`totalBakes === 3`(證明每次進入才烘焙 → 步驟 02 沒有預付成本)且 `liveTargets === 8`(證明前兩輪的 16 個 RT **確實派發過 dispose 事件**,不是 24)。最後回到 02 再讀一次,`liveTargets === 0` | 「往返不累積」「02 不付成本」 |
+| T8 | 步驟 02 不付成本(結構面) | 停留在 02 時 `[data-testid="step-refined"]` 不存在;首次進入 03 前 `totalBakes === 0` | 「02 不預先生成貼圖」 |
+| T9 | 陰影未退化 | 沿用 `venue-refined-lighting.spec.ts` 既有探針欄位:`shadowMapType === "VSM"`、`shadowMapAllocatedWidth === 2048`、`floorCastsShadow === false`、`toneMappingExposure === "1.1"` 全數不變 | 「既有行為不退化」 |
+| T10 | **零外部網路請求** | `page.route('**/*')` 全程監聽;斷言無任何請求命中 `.png` / `.jpg` / `.jpeg` / `.ktx2` / `.hdr` / `.exr` / `githack.com` / `polyhaven`(擴充 `venue-refined-lighting.spec.ts` 既有的 `FORBIDDEN_ENV_ASSET_PATTERNS`) | 「全程零外部網路請求」 |
+| T11 | 尺寸無關性 | 10m 預設場地與放大後的大場地,探針回報的 `repeat` 值**完全相同**(證明沒有依尺寸分支的縮放邏輯,平鋪正確性不隨尺寸改變) | 「10m 與 200m 皆正常」 |
+| T12 | 空場景 | 只有地板、無牆無柱時:`materials-ready === true`、地板貼圖齊備、`liveTargets === 8`(牆 / 柱貼圖仍烘焙 —— 刻意如此,見 Architecture Notes)、無 console error | edge case「空場景」 |
+| T13 | 載入指示 | `data-materials-ready` 最終為 `"true"`;為 `"true"` 時 `[data-testid="refined-materials-loading"]` 不可見。**不斷言「overlay 曾經可見」**(在有 GPU 的機器上它是 sub-frame 的,斷言必然 flaky)—— 該支路由人工判讀覆蓋 | 「有可感知延遲時顯示載入指示」 |
+| T14 | 人工判讀截圖(非斷言) | 產出三張截圖:10m 俯視、大場地**掠射角**、貼牆家具接觸線特寫。掠射角是摩爾紋唯一有效的判讀方式;接觸線那張驗 D8 的 shading noise 與 VSM 漏光 | 品質基準(對外提案用) |
+| T15 | 步驟 01 / 02 不退化 | 既有 `venue-3d-scene.spec.ts` / `venue-plan-editor.spec.ts` / `venue-objects.spec.ts` / `ai-panel-persistent.spec.ts` / `venue-refined-3d.spec.ts` 全綠;另補一條:步驟 02 白模外觀與本任務前一致 | 「02 維持白模」「既有行為不變」 |
+
+### 明說「不可斷言」的部分
+
+- **「看起來像不像展場」無法自動化斷言。** WebGL 輸出跨機器 / 驅動不可能逐像素一致(task 2 已確立此原則),因此本任務不做像素比對。品質判斷由 T14 的人工截圖負責,**QA 需在報告中明確給出通過與否,不得略過**。
+- **「烘焙耗時」不設斷言門檻。** CI 跑 SwiftShader(軟體光柵化),耗時與真實 GPU 差一到兩個數量級,任何時間門檻都是 flaky 來源。探針**回報**耗時供人工參考,但不斷言。
+- **「overlay 曾經可見」不斷言**,理由見 T13。
 
 ---
 
 ## Architecture Notes
 
-- **本任務最大的風險其實是「照著 orchestrator 的舊描述改」**。D0 已逐行核對現況;實作者若在檔案裡找不到 `sceneSnapshot` / `localWalls`,那是正確的,不要「補回來」。
-- **刻意的重複**:`RefinedScene` 的牆/柱/家具 mesh 與 `VenueScene` 高度雷同。不抽共用元件是刻意決策 —— story task 2–4 會把 03 的材質、打光、家具幾何整批換掉,現在抽共用只是製造 task 4 必須拆除的耦合。唯一抽共用的是地板 geometry(D4),因為驗收明文要求兩步驟三角化一致。
-- **PlanEditor 檔案長度**:AGENTS.md 提醒此檔已 1584 行、勿再堆邏輯。本任務新增邏輯僅 2 個 3 行 handler + 1 個 JSX 區塊(約 15 行),重量級部分(3D 場景)全部落在新檔;符合「優先拆成子元件並以 props/callback 串接」的精神。若 review 認為 step-refined 區塊應再抽出,可作為後續 refactor,不在本任務範圍。
-- **效能**:03 掛載時 02 已卸載,同時間只有一個 WebGL context;本任務沿用 box 幾何,量體與 02 相同,無新增負擔。task 3 的貼圖 lazy load 將建立在此互斥掛載邊界上。
-- **Next.js 16 breaking changes**:本任務為純 client component(`"use client"`)+ `next/dynamic ssr:false`,與現有 `VenueSceneLoader` 同模式。developer 動工前仍依 AGENTS.md 查閱 `node_modules/next/dist/docs/` 的 dynamic import 章節,確認 `ssr:false` 用法在 16.2.10 未變更。
-- **`inert` 屬性**:React 19.2 原生支援。若型別或 lint 有阻礙,退回 `aria-hidden="true"`,並在 PR 註明(對驗收無影響,`display:none` 本身已使其不可 focus)。
+- **`SurfaceMaterials.tsx` 的存在是刻意的分層。** AGENTS.md 已標記 `PlanEditor.tsx`(約 1584 行)為複雜度熱點並要求新功能拆子元件;本任務全部新邏輯都在新檔,`RefinedScene.tsx` 的改動限於「接線」(換材質來源、換幾何來源、加兩個 DOM 屬性),不新增業務邏輯。
+- **常數放在 `src/components/venue/surfaceTextures.ts` 而非 `src/lib/venue/`,是刻意的、也是本計畫唯一的慣例偏離,在此明說。** AGENTS.md 規定「場地相關型別或尺寸常數一律進 `src/lib/venue/`」,但那條規則服務的是**平面圖領域**(公尺、吸附刻度、家具尺寸)—— 2D 編輯器與步驟 02 都需要那些值。貼圖 tile 尺寸與 RT 解析度是**步驟 03 專屬的渲染參數**,2D 編輯器永遠不會讀;放進 `lib/venue/` 反而讓純領域層背上渲染語意。此外 `src/lib/venue/` 禁止 import Three,而 `bakeSurfaceTextures` 必須用 `THREE.WebGLRenderTarget`。這與 task 2 把 `refinedLighting.tsx` 放 components 層、卻把純幾何的 `bounds.ts` 放進 `lib/venue/` 的分法完全一致。
+- **貼圖與平面圖內容解耦。** 因為 UV 是世界公尺,貼圖對「地板長什麼形狀」一無所知 → 場地改變(含 AI `resize_floor` / `move_item`)**不觸發重烘焙**,`revision` 完全不參與 `SurfaceMaterials`。這是 D2 帶來、容易被低估的一項收益:AI 在步驟 03 連續改動場景時,材質成本恆為零。
+- **空場景仍烘焙全部 8 張,是刻意的取捨。** 依牆 / 柱數量條件式烘焙可省 4 張 512²(約 4MB),但會讓貼圖數量隨場景內容變動,T7 的洩漏偵測就失去確定的期望值。GPU 上烘焙 4 張 512² 是微秒級,拿它換一個確定可斷言的資源計數是划算的。
+- **`RefinedScene` 的唯讀約束未被觸碰。** 新增的 state 只有 `materialsReady`(布林,渲染設定,非幾何);沒有 `TransformControls`、沒有 `onSceneChange`、沒有幾何 state、沒有快照 —— 02↔03 仍讀同一份頂層 props。
+- **`AiPanel` 完全未觸及**(`PlanEditor.tsx` 不改),commit `97d548c` 的跨步驟對話常駐不受影響。
+- **02 / 03 互斥掛載未改動**,單一 WebGL context 的前提維持。
+- **效能**:烘焙是每次進入 03 一次的 GPU 工作(8 個 fullscreen quad,合計約 1.6M fragment),真實 GPU 上是零點幾毫秒級;之後每幀只多出貼圖取樣成本。AGENTS.md 要求的「明確界定資源在哪個步驟載入 / 釋放」已由 D1(進入 03 烘焙)與 T7(離開 03 釋放,以真實 dispose 事件計數證明)滿足。**步驟 02 的 2D 編輯互動延遲在結構上不可能受影響** —— 這些程式碼只被 `RefinedScene` import,而 02 / 03 互斥掛載。
+- **8-bit 線性 RT 的量化**:牆的深色底(linear ≈ 0.19)在 8-bit 線性下階距較粗,已用 dither 處理(D5)。若日後 D9 把牆改成淺色,這個顧慮自動消失。
 
 ## Risks
 
-| 風險 | 影響 | 緩解 |
-| --- | --- | --- |
-| 返回 02 時相機視角/選取重置(D2 取捨) | 使用者體感「視角跳掉」 | 驗收條件只要求內容一致,已明確記錄;若日後要保留視角,做法是把相機參數提升為 PlanEditor state,屬後續 story |
-| `display:contents` wrapper 影響 01/02 版面 | 既有版面/測試退化 | `contents` 不產生 box,`AiPanel` 仍是 flex item;步驟 15 迴歸 spec 為守門 |
-| 誤把 `AiPanel` 條件渲染成 unmount | 退化上一個 story 成果 | Test case 7 直接驗證對話與草稿保留;reviewer 檢查點:`AiPanel` 前不得出現 `step !== ...&&` |
-| 改 `VenueScene` 的 `FloorMesh` 造成 02 退化 | 既有 3D 預覽受影響 | 步驟 2 限定為行為等價重構(僅換 geometry 來源),`venue-3d-scene.spec.ts` 迴歸為守門 |
-| `RefinedScene` 被實作成持有 local 幾何 state | 重演往返資料倒退坑 | D1 硬性約束 + test case 4;reviewer 檢查點:`RefinedScene` 內不得出現存放幾何的 `useState` |
-| 新 testid 與既有 `venue-scene` 混淆 | 測試偽陽/偽陰 | 03 一律用 `refined-scene` 前綴;`PlanEditorPage.scene` 仍專指 02 |
-| `to-refined-button` 誤用既有 `next-step-button` id | 既有 page object 定位錯亂 | D5 明定使用新 id |
+| # | 風險 | 影響 | 對策 |
+| --- | --- | --- | --- |
+| R1 | **albedo RT 的 `colorSpace` 被誤設為 `SRGBColorSpace`** | 地板亮度暴增、ACES 下過曝,直接毀掉 task 2 的調校 —— 而且畫面「只是有點亮」,極易被誤認為調得不錯 | 已逐行查證 RT 路徑不做 sRGB 編碼(`WebGLPrograms.js:212`);程式碼加註解;**T5 用回讀平均值把它變成紅燈而非觀感問題** |
+| R2 | **忘了設 `generateMipmaps` / `minFilter`** | `WebGLRenderTarget` 預設無 mipmap → 200m 地板嚴重摩爾紋。**近距離測試完全看不出來**,只有掠射角遠景才炸 | T6 讀實際貼圖物件斷言;T14 專門產出掠射角截圖 |
+| R3 | CI(SwiftShader)烘焙耗時遠高於真實 GPU,或 `readRenderTargetPixels` 行為有差異 | 測試 flaky | 不設任何時間門檻(明列於 Test Plan);ready 一律用 `expect.poll` 搭配寬鬆 timeout;回讀只在首次報告做一次。若 SwiftShader 下 `readRenderTargetPixels` 真的不可用,退路是把統計改由烘焙後立即回讀並存進模組層,**但不得改成回報常數** |
+| R4 | 週期性噪聲若沒對**每個 octave** 都取 `mod(period)`,高頻 octave 會破壞接縫 | 200m 地板出現規律接縫線 | T4 的 `seamDelta` 斷言直接量到;實作步驟 1 明文要求逐 octave `period * 2^i` |
+| R5 | normal map 造成受光面逐 texel 的明暗雜訊,被誤判為 shadow acne | 觀感倒退,且可能誘使後續開發者去亂調 `SHADOW_NORMAL_BIAS` | D8 已證明 `normalBias` 與 normal map 無交集,**明文禁止調整 task 2 的陰影參數**;`normalScale` 壓在 0.25–0.5;T14 的接觸線特寫供判讀 |
+| R6 | 33 次重複在大俯角截圖仍被看出格律 | 品質未達「對外提案」基準 | D7 的 64m macro `aoMap` + 旋轉錯開;低對比圖案。若人工判讀仍不滿意,`FLOOR_TILE_M` 與 macro 強度是兩個可獨立微調的旋鈕,**不需改結構** |
+| R7 | 牆的深棕底色讓 normal map 幾乎看不見,牆面仍像塑膠 | 未完全達成「不像塑膠玩具」 | D9 已列為需人工拍板項,並備妥一行反轉的改法 |
+| R8 | 材質改由 provider 擁有,若消費端誤用 `<meshStandardMaterial>` 會重複建立且不被釋放 | GPU 資源洩漏 | 實作步驟 6 明文要求用 `<primitive object={material} attach="material">`;T7 的 `liveTargets` 計數會抓到 RT 端洩漏;review 階段列為檢查點 |
+| R9 | `useMeterUvBoxGeometries` 的 memo 依賴若寫錯,牆數量變動時 geometry 漏 dispose | GPU 資源洩漏,且 AI 在 03 加減物件時會累積 | 比照 `useFloorGeometry` 的既有寫法(`useMemo` + `useEffect` cleanup);探針同時回報 `gl.info.memory.geometries`,QA 在 03 內以 AI 連續增刪物件後檢查該值不單調成長 |
+
+---
 
 ## Security Checklist
 
-- [ ] 無硬編碼 secrets/credentials(Playwright 測試帳號一律走 `.env.playwright.local`)
-- [ ] 無新增系統邊界輸入(本任務不新增/修改任何 API 呼叫;AI 路由 mock 僅存在於測試)
-- [ ] Auth/permission:不觸及(未新增 page 路由,`src/proxy.ts` 無需改動)
-- [ ] 不 log 任何 token/session/敏感資料
-- [ ] 不 import `admin.ts` / service_role 至 client component
-- [ ] 不動 `src/lib/ai/` server-only 邊界與凍結系統提示
-- [ ] `src/lib/venue/` 純領域模組維持零 React/DOM/Konva/Three import(新 Three 程式碼一律放 `src/components/venue/`)
+- [ ] 無硬編碼 secrets / tokens / credentials(本任務不涉及任何憑證)
+- [ ] 系統邊界輸入驗證:不適用(無 API、無使用者輸入進入本路徑;貼圖生成不吃任何使用者資料)
+- [ ] Auth / 權限檢查:不適用(純渲染,未觸及 `src/proxy.ts`、`src/lib/supabase/*`)
+- [ ] 不記錄敏感資料:不新增任何 log
+- [ ] **零外部網路請求**(專案特定):不下載貼圖 / HDRI / CDN 資源 —— 由 T10 以 route 監聽強制
+- [ ] `service_role` / `admin.ts` 未被觸及
+- [ ] 未新增 npm 依賴(無新增供應鏈風險面)
+- [ ] `data-*` 診斷屬性只暴露渲染器狀態,不含任何使用者或帳號資訊
 
 ## Definition of Done
 
-- [ ] 全部 15 個 Implementation Steps 完成
-- [ ] `playwright-tests/venue-refined-3d.spec.ts` 12 個案例全綠
-- [ ] 步驟 15 所列 8 支既有 spec 全綠且零改動(有改動則逐條說明)
-- [ ] orchestrator-output.md 的 10 條 Clarified Acceptance Criteria 逐條對應到通過的測試或手動驗證
-- [ ] 無 TODO、註解掉的程式碼、debug log
-- [ ] `npm run lint` + `npx tsc --noEmit` 通過
-- [ ] 符合 AGENTS.md 全部規則(尤其:`src/lib/venue/` 不碰 Three、Three 元件走 `*Loader.tsx` ssr:false、geometry `useMemo` + `dispose()`、新步驟同步更新 `WizardStep` 與 `WIZARD_STEPS` 並給步驟容器 `data-testid`)
-- [ ] 本任務不含材質/陰影/參數化家具幾何(task 2–4 範圍),未越界
-- [ ] Security Checklist 通過
+- [ ] 實作步驟 1–12 全數完成
+- [ ] T1–T15 全綠;T14 的三張人工判讀截圖已產出,且 QA 在報告中明確判定「對外提案品質」通過與否
+- [ ] `npm run lint` 零錯誤
+- [ ] 無 TODO、無註解掉的程式碼、無 debug log
+- [ ] `VenueScene.tsx` / `PlanEditor.tsx` / `RefinedSceneLoader.tsx` / `floorGeometry.ts` / `src/lib/venue/*` / `FURNITURE_DEFAULTS` **零改動**(以 `git diff --stat` 佐證)
+- [ ] task 2 的陰影參數(`SHADOW_BIAS` / `SHADOW_NORMAL_BIAS` / `VSM_RADIUS` / `VSM_BLUR_SAMPLES` / `SHADOW_MAP_SIZE`)與燈組常數**零改動**
+- [ ] 家具 mesh 與其材質零改動(task 4–6 的地盤)
+- [ ] 符合 AGENTS.md 全部規則;唯一的慣例偏離(常數放置位置)已在 Architecture Notes 明文說明理由
+- [ ] Security checklist 通過

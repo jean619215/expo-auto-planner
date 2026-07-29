@@ -22,6 +22,15 @@ export default function Header() {
       </Link>
 
       <nav className="flex flex-1 items-center justify-center gap-6">
+        {/* 方案與價格是公開商品頁(金流審核指定的免登入商品網址),
+            必須對未登入訪客也可見 — 不要移進下方的 loggedIn 分支。 */}
+        <Link
+          href="/pricing"
+          data-testid="header-nav-pricing-link"
+          className={navLinkClassName}
+        >
+          方案與價格
+        </Link>
         {state === "loggedIn" && (
           <>
             <Link
@@ -36,7 +45,7 @@ export default function Header() {
               data-testid="header-nav-shop-link"
               className={navLinkClassName}
             >
-              點數商店
+              我的方案
             </Link>
           </>
         )}

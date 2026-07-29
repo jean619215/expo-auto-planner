@@ -47,6 +47,10 @@ Next.js 16.2.10 (App Router, breaking-changes version — see warning above) + T
 - 瀏覽器限定函式庫(Konva、Three)不可直接被 server component import — 一律透過 `*Loader.tsx`(`next/dynamic`, `ssr:false`)包一層,現有範例 `PlanEditorLoader.tsx` / `VenueSceneLoader.tsx`。新增這類重元件時比照辦理。
 - 場地單位一律公尺,吸附刻度 `SNAP_M`,尺寸上限用 `VENUE_SIZE_M` / `PLAN_AREA_SIZE_M` 常數 — 不要在元件內寫死數字。家具預設尺寸/顏色/3D 高度統一由 `FURNITURE_DEFAULTS` 驅動。
 - `PlanEditor.tsx` 是場地 wizard 的唯一 state owner;步驟由 `WizardStep` 型別 + `WIZARD_STEPS` 陣列驅動,新增步驟要同時更新兩者,並給步驟容器 `data-testid`(Playwright 定位靠它)。子元件(含 3D 場景)透過 props/callback 回寫,不各自持有平面圖 state。
+- 步驟 03(`RefinedScene`)是**唯讀**場景:不得持有任何幾何 `useState`、不得掛 `TransformControls`、不得回寫 `onSceneChange`。它與步驟 02 讀同一份頂層 props(單一資料來源),02↔03 往返的正確性靠這點保證 —— 不要為了「快取」而在 03 存快照,那會讓資料倒退。
+- 步驟 02 與 03 **互斥掛載**(一次只有一個 WebGL context),確保 GPU 資源乾淨釋放;不要改成同時掛載並用 CSS 切換。
+- `AiPanel` 在步驟 03 只能用 CSS 隱藏,**不可 unmount、不可改變其在 React tree 中的掛載位置** —— 否則跨步驟對話與草稿輸入會遺失(commit `97d548c` 的成果)。
+- 家具尺寸不可由使用者調整,只能移動與旋轉;尺寸唯一來源是 `FURNITURE_DEFAULTS` 的 `w`/`h`/`height3d`。不要為家具加縮放把手、不要在 AI tool schema 加 w/h 參數;匯入的外部 3D 模型一律**等比**縮放至該尺寸,不得非等比拉伸變形。
 - AI (`src/lib/ai/`): all Anthropic calls go through this module (client.ts factory / system.ts frozen prompt / tools.ts strict schemas) — never construct an Anthropic client inline in a route. Every file in `src/lib/ai/` must `import "server-only"` (ANTHROPIC_API_KEY boundary). The system prompt is a frozen string — NO interpolation (dates, user ids, per-request values); prompt cache is prefix-matched and the cache_control breakpoint sits on the system block. Model/cost via env vars `AI_MODEL`/`AI_CHAT_COST`. AI routes deduct points BEFORE the model call (`reason='ai_usage'`, `refId='ai:{uuid}'`); upstream failure does not refund (phase 1 — usage log is the compensation trail). Client-supplied `system` fields are ignored, never forwarded.
 
 ## Security Rules (All Agents)

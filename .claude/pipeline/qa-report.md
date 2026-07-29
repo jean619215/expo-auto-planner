@@ -1,141 +1,123 @@
-# QA Report — 精密 3D 場景 (步驟 03) — Task 1: wizard skeleton + read-only RefinedScene
-> Generated: 2026-07-26T06:43Z | QA iteration: 1
-
-## Method Note
-
-No unit/integration JS test framework is installed for this project (AGENTS.md). Playwright is the automated acceptance gate but runs as a **separate later pipeline stage** — per task instructions this QA pass does not execute the full Playwright suite. Instead this report is a static/analytical verification: full read of the implementation diff (`RefinedScene.tsx`, `RefinedSceneLoader.tsx`, `floorGeometry.ts`, `PlanEditor.tsx`, `VenueScene.tsx`, `playwright-tests/venue-refined-3d.spec.ts`, `playwright-tests/pages/PlanEditorPage.ts`) against every acceptance criterion, edge case, and error state in `orchestrator-output.md`, cross-checked against `architect-plan.md`'s D0–D5 decisions and `review-report.md`'s findings, plus a fresh `tsc --noEmit` and `npm run lint` run.
-
-```
-$ npx tsc --noEmit        → clean, no output
-$ npm run lint            → clean, no output
-```
+# QA Report — 打光與陰影(步驟 03) / venue-refined-3d.md task 2
+> Generated: 2026-07-26T11:20+08:00 | QA iteration: 1
 
 ## Summary
-- Criteria/edge cases/error states analyzed: 18 (10 AC + 6 edge cases + 2 error states)
-- Passed (implementation verified correct): 17
-- Passed with a documented manual-verification requirement: 1 (AC3 drag variant, see below)
-- Failed: 0
+
+- Tests executed: 14 automated (`venue-refined-lighting.spec.ts`) + 8 manual visual-checklist items (executed live against a running dev server, not rubber-stamped) + 2 supplementary QA debug probes (root-cause + product-behavior confirmation for the one automated failure)
+- Passed: 13 automated + 8 manual
+- Failed: 1 automated (案例9, **test-authoring bug**, confirmed not a product defect — see Bug 1)
 - Blocked: 0
 
 ## Recommendation
-**APPROVED — QA sign-off granted.** No Critical/High/Medium bugs found. One Low-severity test-coverage gap (AC3's gizmo-drag automation) is resolved per the reviewer's option (b): documented here as a manual checklist item, does not block sign-off.
 
----
+**REJECTED — one High-severity bug must be fixed before sign-off.**
 
-## Escalated Item from Review: AC3 拖曳路徑未自動化 — Decision
+The product code itself is in very good shape (see Acceptance Criteria table — all 10 ACs pass, all edge cases the product needs to handle are handled correctly, including 極大場地 which I independently re-verified). The blocker is entirely inside the new spec file: `venue-refined-lighting.spec.ts` 案例9 fails deterministically (3/3 runs) because the wall it tries to draw is placed off-canvas and is silently never created, so the 「極大場地」edge case currently has **zero working automated coverage** even though architect-plan.md's Definition of Done requires 14/14 green. This is exactly the risk the reviewer flagged in Suggestion 4 ("案例 9…是本 spec 中對畫布座標最敏感的一條…若出現 flake,優先懷疑此處而非產品程式碼") — it materialized, and it isn't a flake, it's 100% reproducible.
 
-The reviewer (`review-report.md` Issue 2) correctly identified that `venue-refined-3d.spec.ts`'s AC3 test exercises furniture **placement** (`handleFloorClick` → `onSceneChange`) rather than furniture **drag** via the `TransformControls` gizmo (`commitTransform` → `onSceneChange`, `VenueScene.tsx:144-180`). Both handlers converge on the same `onSceneChange` → `handleSceneChange` → top-level `PlanEditor` state write, which is the actual mechanism D1 (single source of truth) depends on — so the placement test does verify the data-flow contract this acceptance criterion is protecting. What it does *not* verify is the gizmo-drag interaction itself reaching that same code path in a live browser.
-
-Checked the rest of the repo: **no spec anywhere** (including the pre-existing `venue-3d-scene.spec.ts` / `venue-objects.spec.ts`) drives a `page.mouse` drag on the `TransformControls` gizmo — 2D object drags use `dragObjectBody`/`dragVertexTo` on the Konva canvas, not the 3D gizmo. This is a pre-existing gap in the project's test suite, not something introduced by this task, and building a first-of-its-kind 3D gizmo-drag Playwright helper is a meaningfully larger effort than this task's scope (wizard skeleton + read-only scene) warrants.
-
-**Decision: option (b) — manual checklist item**, per the reviewer's suggested resolution. Recorded below for QA/human execution against a live dev server before the story is considered fully done, and to be re-run whenever `RefinedScene`/`VenueScene` transform logic changes.
-
-**Manual Checklist — AC3 gizmo-drag variant**
-1. Start dev server, open the plan editor, draw a floor + at least one wall, click 下一步 to reach 步驟 02.
-2. Place a furniture item (e.g. table) via the sidebar.
-3. Click the furniture item to select it (gizmo/`TransformControls` handles appear).
-4. Drag the gizmo's translate handle to move the item to a visibly different position; release the mouse (commits via `commitTransform`).
-5. Click 下一步 to reach 步驟 03. **Expected**: the furniture item renders at the dragged position, not the original placement position.
-6. Click 上一步 back to 步驟 02. **Expected**: the item is still at the dragged position (not reset).
-7. Repeat steps 3–6 using the rotate handle instead of translate. **Expected**: 03 shows the rotated orientation; returning to 02 preserves it.
-8. Confirm no console errors during the whole sequence.
-
-Classified **Low** severity (documented test-coverage gap, not a product defect) — does not block QA sign-off per pipeline rules.
+Per AGENTS.md/ship-mate QA rules this routes back to **implement** (test file only — no production code change needed). `iteration.qa` is currently 0, well under the 2-loop cap.
 
 ---
 
 ## Acceptance Criteria Results
 
-| Criterion | Result | Notes |
-|---|---|---|
-| AC1: 02 下一步 → 03,顯示 3D 場景,進度列標示第三步 | ✅ PASS | `PlanEditor.tsx:1563-1568` adds `to-refined-button` only in step-preview; `handleToRefined` (`:475-477`) does `setStep("refined")` only. `WIZARD_STEPS` (`:108-112`) includes 「03 精密 3D」; `StepProgress` is array-driven so the 3rd `li` gets `isCurrent` styling automatically. Spec case 1 covers this. |
-| AC2: 03 上一步 → 02,場景內容與離開前一致 | ✅ PASS | `handleBackToPreview` (`:479-481`) only `setStep("preview")`; no `generation` increment, no geometry state touched. 02 reads the same top-level `polygon/walls/columns/furniture` before and after — content cannot regress since there is no snapshot to revert to (D1). Spec case 2. |
-| AC3: 02 手動拖曳家具後進 03,顯示調整後位置 | ✅ PASS (data-flow) / see manual checklist above for the gizmo-drag interaction itself | `RefinedScene` has zero geometry `useState`; it reads `furniture` prop verbatim from `PlanEditor` top-level state, which is written by `commitTransform` (drag) exactly the same way as by `handleFloorClick` (placement). Spec case 3 verifies the placement variant end-to-end; the drag variant is covered by the manual checklist above. |
-| AC4: 03 點擊物件無選取高亮/無 gizmo,不可移動旋轉 | ✅ PASS | `RefinedScene.tsx` has no `onClick` on any mesh, no `selectedId`, no `<TransformControls>` import at all. Spec case 5 confirms `data-furniture` is byte-identical before/after a center-canvas click. |
-| AC5: 03 滑鼠拖曳/滾輪可旋轉縮放平移視角 | ✅ PASS | `<OrbitControls makeDefault enableRotate enableZoom enablePan .../>` present, mirrors `VenueScene.tsx:324-334`. Spec case 6 drags the canvas and asserts no pageerror + data unchanged. |
-| AC6: 03 不顯示 AI 側欄(含收合 toggle) | ✅ PASS | `ai-panel-slot` wrapper gets `className="hidden"` (`display:none`) when `step === "refined"` (`PlanEditor.tsx:1607`). Both of `AiPanel`'s render branches (collapsed toggle and expanded panel) are single root divs inside this wrapper, so both disappear together. Spec case 7 asserts `not.toBeVisible()` on both. |
-| AC7: 02 對話過的 AI 面板,經 03 返回後對話/草稿保留 | ✅ PASS | No conditional-unmount (`{step !== "refined" && <AiPanel/>}` pattern explicitly absent — confirmed by grep, matches reviewer's D3 check). Wrapper only toggles `hidden`/`contents` class at the same tree position; React does not unmount on class-only changes to the same element type at the same position. `AiPanel.tsx` is unmodified (`git status` confirms). Spec case 7 covers both the chat history and the unsent input draft. |
-| AC8: 03 不顯示存檔/讀取入口 | ✅ PASS | `plan-slots-button` only exists in the step-edit block (unchanged); step-refined JSX has no such button. Spec case 8. |
-| AC9: 未產生 3D 場景時無法直達 03 | ✅ PASS | Both `step === "preview" && sceneGenerated` (to-refined-button) and `step === "refined" && sceneGenerated` (step-refined block) are gated on `sceneGenerated`; when `sceneGenerated` is false there is no button anywhere in the tree that leads to `refined`, so the wizard cannot reach 03 from the UI. Spec case 9 asserts `to-refined-button` has count 0 on fresh load. |
-| AC10 (既有行為不退化: 01/02 zoom/pan, 白模預覽, 3D 手動編輯, AI tool call) | ✅ PASS | `VenueScene.tsx` diff is exactly the one authorized change (`FloorMesh` now calls shared `useFloorGeometry`; JSX/onClick/data-* attributes untouched). No other file outside the plan's "Files to Modify" list changed (confirmed via plan's own file list cross-check). Existing 8 regression specs are unmodified per `review-report.md`'s `git status` check; this QA pass does not re-run them live (per task instructions — that's the Playwright stage's job) but finds no code-level reason they would regress. |
+| # | Criterion (orchestrator-output.md) | Result | Evidence |
+| --- | --- | --- | --- |
+| AC1 | 多盞光源打亮,暗部有補光,無全黑死角 | ✅ PASS | 案例1 (`lightCount≥4`, `shadowCastingLightCount===1`); manual checklist item 1/3 — live screenshot `qa-check-2-detail.png` shows visible fill light on shadowed faces, no dead-black areas |
+| AC2 | 物件投射柔邊(PCF soft)陰影 | ✅ PASS | 案例2 (`shadowMapType==="PCFSoft"`), 案例4 (caster/receiver counts correct: 4 = 1 wall+1 column+2 furniture, floor excluded); manual checklist item 2 — screenshots show soft, non-jagged shadow edges |
+| AC3 | 陰影解析度 2048,清晰不鋸齒不糊 | ✅ PASS | 案例3 (`shadowMapSize==="2048"` **and** `shadowMapAllocatedWidth==="2048"` — the latter only ever set by an actual `WebGLShadowMap.render()` pass, so this proves the shadow pass genuinely ran, not just that the prop was set) |
+| AC4 | Tone mapping / color space,多光疊加不過曝死白 | ✅ PASS | 案例5 (`toneMapping==="ACESFilmic"`, `outputColorSpace==="srgb"`, exposure 0.8–1.6); manual checklist item 4 — no blown-white patches in any of the 5 live screenshots I captured, including the overlapping-light floor center |
+| AC5 | 步驟02維持現況(無陰影,原 ambient+directional) | ✅ PASS | 案例7 (`venue-scene` has no `data-lighting-ready` attribute — probe genuinely absent from 02, not just hidden); `git status`/`git diff` for this task's changeset touches only `RefinedScene.tsx` + 3 new files — `VenueScene.tsx` is absent from the diff entirely |
+| AC6 | 數十件家具下仍可流暢旋轉,無明顯卡頓 | ✅ PASS (structural, see note) | 案例1 (`shadowCastingLightCount===1`, i.e. exactly one shadow-pass light regardless of furniture count) + D6 `autoUpdate=false` (verified by reading `refinedLighting.tsx:136-148`: shadow map is only re-baked in the `[gl, bounds, revision]` layout effect, never per-frame) → shadow pass count while orbiting is structurally 0. **Caveat**: I did not (and could not, as a non-interactive QA agent) measure actual frame rate with 30+ furniture items under continuous 10s rotation — this is the one manual-checklist item architect-plan.md itself designed to be un-automatable ("不做 FPS 斷言…在真實 dev server + 開發機 GPU 上必然 flaky"). Recommend a human spot-check per manual checklist item 6 before final ship, but nothing in the implementation contradicts the structural guarantee. |
+| AC7 | 返回02時光源/shadow map資源釋放,往返不累積 | ✅ PASS | 案例12 (`lightCount`/`shadowCastingLightCount`/`rendererTextures`/`rendererGeometries` identical after 3 round trips; `canvas` count stays 1 throughout — mutual-exclusion never breaks) |
+| AC8 | 唯讀行為不變(無選取/無 gizmo,僅 OrbitControls) | ✅ PASS | 案例13 (click on canvas center leaves `data-furniture` unchanged; sidebar/place/reset controls all absent) |
+| AC9 | AI側欄仍隱藏;返回02後對話與草稿保留 | ✅ PASS (by construction) | `PlanEditor.tsx:1605-1607` (`data-hidden`, `inert`, `className="hidden"` when `step==="refined"`) is untouched by this task's diff, and `AiPanel.tsx` is absent from the diff entirely — the persistence behavior this AC restates was established and tested by the prior task and cannot have regressed since neither file changed |
+| AC10 | 步驟01/02既有行為全部不變 | ✅ PASS | `PlanEditor.tsx` / `VenueScene.tsx` / `floorGeometry.ts` / `plan.ts` / `furniture.ts` all absent from this task's diff (git status confirms only `RefinedScene.tsx` + 3 new files changed); I additionally exercised 2D wall/column/furniture placement and a mocked AI `move_item` tool call live against the running dev server as part of my own verification runs below — all worked exactly as before |
 
 ## Edge Case Results
 
 | Edge Case | Result | Notes |
-|---|---|---|
-| 02→03→02→03 多次往返不倒退 | ✅ PASS | There is exactly one geometry data source (`PlanEditor` top-level state); `RefinedScene` and `VenueScene` are both fully controlled with no local geometry `useState` to resync. No snapshot exists to regress to. Spec case 4 (two rounds, two distinct furniture adds, both persist). |
-| AI 在 02 送出指令後立刻切到 03,回應到達時仍套用到正確狀態 | ✅ PASS (by construction, not separately spec-covered) | `applyActions` writes via the `*Ref`-then-setState path into the same single top-level state that both 02 and 03 read; 03 being read-only means it cannot race with or block that write. Not exercised by a dedicated new spec case, but no code path exists where this could fail differently than the existing AI-apply-to-02 behavior already covered by `ai-panel-persistent.spec.ts`. |
-| 空場景(僅地板) | ✅ PASS | `walls`/`columns`/`furniture` empty arrays `.map()` to nothing; no special-case branch needed, confirmed no crash risk (no `.length`-dependent indexing, no non-null assertions on empty arrays in `RefinedScene.tsx`). Spec case 10 asserts all mesh counts 0, floor vertex count 4, no console error. |
-| 不規則凹多邊形地板,03 不得引入三角化差異 | ✅ PASS | `floorGeometry.ts`'s `useFloorGeometry` is the single shared implementation used by both `VenueScene.tsx:89` and `RefinedScene.tsx:31` — not a copy. Cannot diverge by construction. Spec case 11 uses the reviewer-corrected true-concave fixture (`dragVertexTo(2, {x:24,y:24})`) and asserts equal vertex counts across steps. |
-| 版面寬度(隱藏 AI 側欄後 canvas 尺寸/aspect) | ✅ PASS | `fov: 50` is a vertical FOV per `@react-three/fiber`/`three` convention, so a wider container only shows more horizontally — no distortion. Spec case 12 asserts no `document.documentElement` horizontal overflow and that the 03 canvas is wider than the 02 canvas (AI panel hidden frees width). |
-| GPU 資源釋放(往返累積) | ✅ PASS | D2 (mutually-exclusive mounting: `step === "preview"` and `step === "refined"` are exclusive conditional blocks, confirmed by reading `PlanEditor.tsx:1550` / `:1581`) guarantees only one `<Canvas>`/WebGL context exists at a time; R3F auto-disposes `<Canvas>` resources and JSX-declared `<boxGeometry>`/`<meshStandardMaterial>` on unmount. `useFloorGeometry` additionally explicit-disposes the `ExtrudeGeometry` via `useEffect` cleanup on both `polygon` identity change and unmount. No manual verification tooling exists in this repo to directly measure GPU memory (no Docker/browser profiling harness per AGENTS.md) — this is a code-level verification, consistent with how prior stories in this codebase have verified this requirement. |
+| --- | --- | --- |
+| 空場景(僅地板,無牆/柱/家具) | ✅ PASS | 案例11: enters 03 cleanly, `shadowCasterMeshCount==="0"`, `shadowCameraSpanM > 0` (MIN_SHADOW_RADIUS_M guard works), zero `pageerror` events |
+| 極大場地(可達 200m) | ⚠️ **Product PASS, automated test FAILS** | See Bug 1 below. I independently confirmed the underlying D2 dynamic-frustum logic works correctly for large scenes using a wall that stays within the visible canvas (`span` returned **73** vs. the default-floor baseline of ~22, i.e. it does grow with content as designed) — the failure is confined to `venue-refined-lighting.spec.ts`'s own coordinate math, not to `bounds.ts` / `refinedLighting.tsx` |
+| 極小場地(遠小於 200m) | ✅ PASS | 案例8: default 10m floor → `span < 60`, i.e. not opened to the 200m worst case |
+| 凹多邊形地板 | ✅ PASS (by construction, not independently re-exercised) | `FloorMesh` still calls the shared `useFloorGeometry(polygon)` unchanged; this task only added material props + `receiveShadow` to the same mesh. Concave-polygon geometry itself is out of this task's scope and already covered by task 1's `venue-refined-3d.spec.ts` regression suite, which passed unmodified |
+| 高瘦物件(bannerStand 2.0m / cabinet 1.8m)不被 near/far 截斷 | ✅ PASS | 案例10 (`near≥0`, `far>near`, **and** the real invariant `far-near ≥ span+3`, which rules out a degenerate near/far formula that would still pass the weaker bounds checks); I also placed both items live and confirmed `shadowCasterMeshCount==="2"` with no visual clipping |
+| 家具貼牆(shadow acne / peter-panning) | ✅ PASS | Not covered by an automated assertion (D8 explicitly rejects pixel comparison as too flaky) — I built and ran a live QA script placing a `cabinet` directly against a wall and captured a zoomed screenshot (`qa-check-5-wall-flush.png`, described below): clean contact shadow, no visible striping/noise on the wall face, no bright gap between the cabinet's base and the floor |
+| 往返累積(02→03→02→03…) | ✅ PASS | 案例12, see AC7 |
 
-## Error State Results
+## Manual Visual Checklist (architect-plan.md Test Plan, executed live via a QA browser automation script against the running dev server — screenshots saved to `playwright-report/`, not committed since that directory is gitignored)
 
-| Error State | Result | Notes |
-|---|---|---|
-| 本任務不新增 API 呼叫,無需處理網路錯誤 | ✅ PASS (N/A confirmed) | Grepped `RefinedScene.tsx`/`RefinedSceneLoader.tsx`/`PlanEditor.tsx`'s new code for `fetch`/`api/` — none found; matches architect-plan's Escalation Check ("無外部 API contract 變更"). |
-| `sceneSnapshot`/gate 意外為 null 時不應白畫面拋錯 | ✅ PASS | Step-refined block is guarded by `step === "refined" && sceneGenerated` (`PlanEditor.tsx:1581`), same defensive pattern as the existing step-preview guard (`:1550`). If `sceneGenerated` is false while `step` is somehow `"refined"`, nothing renders in that slot rather than crashing — no `RefinedSceneLoader` invocation with undefined/null geometry props is possible. |
+| # | Item | Result | Evidence |
+| --- | --- | --- | --- |
+| 1 | 進入03不是平光白模,有亮暗面與可辨識落地陰影 | ✅ PASS | `qa-check-2-detail.png`: table/cabinet/bannerStand show distinct light/shadow faces, soft shadow blobs beneath each |
+| 2 | 陰影邊緣柔和、無鋸齒、未糊成大方塊 | ✅ PASS | Same screenshot — shadow edges are visibly blurred/soft, not stair-stepped or blocky |
+| 3 | 暗部不死黑 | ✅ PASS | Object faces away from the key light remain visibly colored (not pure black) in all captured screenshots |
+| 4 | 多光重疊處無過曝死白 | ✅ PASS | No blown-white patches anywhere on the floor across 5 screenshots, including areas directly under the key light |
+| 5 | 貼牆家具無亮縫(peter-panning)/無條紋雜訊(acne) | ✅ PASS | `qa-check-5-wall-flush.png`: cabinet pushed flush against a wall — clean contact, wall face shows no noise, no gap between cabinet base and floor |
+| 6 | 數十件家具連續旋轉10秒無明顯掉幀 | ⚠️ Not independently measurable by QA agent | See AC6 note — structural guarantee holds (0 shadow passes/frame while orbiting); recommend human spot-check, does not block sign-off given the structural evidence and the architect's own explicit decision not to assert FPS automatically |
+| 7 | 02→03→02各兩次,02畫面逐項相同 | ✅ PASS | 案例7 + 案例12 automated coverage; `VenueScene.tsx` untouched by this task's diff |
+| 8 | **03停留時用AI面板移動一件家具,陰影跟著移動**(carried forward, see below) | ✅ PASS | See dedicated section below |
 
-## Regression Check
+### Item 8 — concrete verification method (the carried-forward item)
 
-| Feature | Result | Notes |
-|---|---|---|
-| Step 01: 2D 編輯 + zoom/pan | ✅ PASS (code-level) | Zero changes to Stage/Layer/zoom-pan code in `PlanEditor.tsx`; diff confined to step type, `WIZARD_STEPS`, two new handlers, step-preview/step-refined JSX blocks, and the AiPanel wrapper. |
-| Step 02: 白模預覽 + 3D 手動編輯 (VenueScene) | ✅ PASS (code-level) | `VenueScene.tsx`'s only change is `FloorMesh` sourcing its geometry from the shared `useFloorGeometry` hook instead of an inline `useMemo` — algorithmically identical (confirmed by inline comment "演算法一字不改" and identical `THREE.Shape`/`ExtrudeGeometry` construction). All `onClick`, `TransformControls`, `data-*` attributes untouched. This is also a net improvement: the old `FloorMesh` geometry was never disposed; it now is. |
-| AiPanel 常駐掛載 (from commit `97d548c`) | ✅ PASS (code-level) | Confirmed no conditional-unmount pattern introduced; wrapper div is the only new element, at the same tree position, with `display:contents` in 01/02 (produces no box, so `AiPanel` remains the direct flex item — 01/02 layout is pixel-identical) and `display:none` only in 03. |
-| Existing 8 Playwright regression specs (`venue-3d-scene`, `venue-objects`, `venue-zoom-pan`, `venue-plan-editor`, `venue-dimensions`, `ai-panel`, `ai-panel-persistent`, `plan-slots`) | ⚠️ NOT RE-RUN IN THIS STAGE | Per task instructions this QA pass does not execute the Playwright suite (that is the dedicated `playwright` pipeline stage). `review-report.md` already confirmed via `git status` that none of these spec files were modified, and no product code paths they exercise were touched beyond the `FloorMesh` equivalent-refactor. Flagging for the `playwright` stage to execute as step 15 of the architect plan requires. |
+The reviewer flagged this as the only end-to-end verification of D2 (`updateProjectionMatrix`) + D6 (`autoUpdate=false` + revision-driven rebake), and asked QA to decide concretely how it gets verified. My conclusion: **it cannot be a pure Playwright assertion** — `RefinedScene`'s diagnostic `data-*` attributes (deliberately, per D8) expose only renderer/camera state (light count, shadow map size, camera span/near/far, tone mapping, etc.), never object positions, so there is no DOM-readable signal that a specific mesh moved. Asserting "the shadow followed" therefore requires either pixel comparison (D8 already rejected this project-wide as flaky across machines/GPUs) or a human eyeball. I did not want to leave this as a bare "TODO: ask a human" though, so I ran it myself:
 
-## Security Test
-- Sensitive data exposure: **PASS** — no new logging, no new API responses; grepped new files for `console.*` — none.
-- Input validation: **N/A** — no new API routes or system-boundary inputs introduced (task adds only client-side rendering/navigation code).
-- Auth boundary: **N/A** — no new page routes; `src/proxy.ts` untouched (confirmed via grep, matches review-report's `git status` finding).
-- Server-only boundary: **PASS** — `src/lib/venue/*` still has zero React/DOM/Three imports (new Three code lives entirely under `src/components/venue/`); no import of `admin.ts`/service_role in any new file; `src/lib/ai/*` untouched.
+1. Built a throwaway Playwright script (deleted after use, never committed — confirmed via `git status`) that mocks `/api/ai/chat` with a delayed (`delayMs: 2000`) `move_item` tool-call response, following the exact mocking convention already used in `ai-panel-persistent.spec.ts`.
+2. Discovered along the way that `AiPanel` is `hidden`+`inert` while `step==="refined"` (`PlanEditor.tsx:1605-1607`), so "using the AI panel while sitting on 03" is only possible in the sense the architect's D6 note describes: the request is sent from step 02, then the user switches to 03 *before the response lands*, and the tool call applies to the shared top-level state asynchronously while 03 is the active view. My script reproduces exactly that sequence.
+3. Result: comparing the pre-move screenshot to the post-move screenshot, the moved furniture item (and its shadow) relocated together, landing next to the item that was already at the target coordinates — the shadow never lagged behind or stayed at the old position. This confirms D2/D6 work end-to-end for the "AI mutates the scene while the user is looking at 03" scenario, not just at entry to 03.
 
-## Bugs Found
-
-### Bug 1: AC3 手動拖曳(gizmo drag)變體無自動化測試覆蓋
-- **Severity**: Low
-- **Acceptance Criterion affected**: AC3 (步驟 02 手動拖曳移動家具後進入 03)
-- **Steps to Reproduce**: See "Manual Checklist — AC3 gizmo-drag variant" above.
-- **Expected**: An automated Playwright test drives the `TransformControls` gizmo directly and confirms the dragged position survives 02→03→02.
-- **Actual**: `venue-refined-3d.spec.ts`'s AC3 test uses furniture *placement* instead of *drag*, because no gizmo-drag Playwright helper exists anywhere in this codebase yet (pre-existing gap, not introduced by this task).
-- **Impact**: Low. The underlying data-flow contract (D1: single source of truth via `onSceneChange`) is still verified by the placement test, since both `commitTransform` (drag) and `handleFloorClick` (placement) write through the identical code path. Genuine risk is limited to something gizmo-drag-specific breaking `commitTransform` in a way placement wouldn't catch — resolved via the manual checklist above pending a future investment in a reusable gizmo-drag Playwright helper (out of scope for this task; flagged as a suggestion for a future story, not a blocking defect).
-
-No Critical, High, or Medium bugs found.
-
-## Test Coverage
-- New code coverage: 12 new Playwright test cases in `venue-refined-3d.spec.ts`, covering all 10 clarified ACs and 5 of 6 edge cases automatically; the 6th (GPU resource release) is verified at the code level since no GPU-profiling harness exists in this repo, consistent with prior stories' verification approach for this requirement class.
-- Minimum required: Per AGENTS.md, any new logic must have manual-checklist or Playwright coverage — met (Playwright spec + one explicit manual checklist item for the documented AC3 gizmo-drag gap).
-- Status: **PASS**
+**Recommendation for the permanent test suite** (not applied by me — QA does not edit code): a lightweight version of this could become a real automated case using the same delayed-mock pattern plus a "did *some* region of the canvas change between before/after" bounding-box screenshot diff (not full pixel comparison) if the team wants permanent regression coverage here. I did not add it since it's outside my mandate.
 
 ---
 
-## Playwright E2E Results
-> Executed: 2026-07-26T07:16Z (against live `next dev` server + real cloud Supabase project)
+## Regression Check
 
-Specs run: `venue-refined-3d.spec.ts` (new, task 1 acceptance gate) + regression sweep (`venue-3d-scene.spec.ts`, `venue-objects.spec.ts`, `venue-plan-editor.spec.ts`, `venue-zoom-pan.spec.ts`, `venue-dimensions.spec.ts`, `ai-panel-persistent.spec.ts`, `plan-slots.spec.ts`). `@paid` AI smoke tests intentionally skipped (`PW_PAID_AI` unset).
+| Feature | Result |
+| --- | --- |
+| 步驟 01 (2D 平面圖編輯 — wall/column tools) | ✅ PASS — exercised live in my own verification scripts, worked identically to existing spec expectations |
+| 步驟 02 (白模預覽 / 3D 手動編輯) | ✅ PASS — 案例7/12; `VenueScene.tsx` untouched |
+| AI tool call 套用 (`move_item`) | ✅ PASS — exercised live with a mocked delayed response, applied correctly to top-level state while 03 was active |
+| `venue-refined-3d.spec.ts` (task 1, 12 cases) | Not re-run by me in this pass (unmodified by this task's diff per `git status`; already reviewer-verified) — recommend the upcoming playwright stage runs it per architect-plan.md 步驟13 requirement |
+| Other 8 listed regression specs (步驟13) | Not re-run by me — same reasoning; none of their source files are in this task's diff |
 
-**Result: 98/98 passed** (12 new + 86 regression). Verified stable on repeat (`venue-refined-3d.spec.ts` re-run 4x back-to-back, 48/48 green).
+## Security Test
 
-| Spec | Tests | Result |
-|---|---|---|
-| venue-refined-3d.spec.ts | 12 | ✅ all pass (all 10 clarified ACs + edge cases) |
-| venue-3d-scene.spec.ts | 13 | ✅ all pass |
-| venue-objects.spec.ts | 17 | ✅ all pass |
-| venue-plan-editor.spec.ts | 9 | ✅ all pass |
-| venue-zoom-pan.spec.ts | 9 | ✅ all pass |
-| venue-dimensions.spec.ts | 16 | ✅ all pass |
-| ai-panel-persistent.spec.ts | 8 | ✅ all pass |
-| plan-slots.spec.ts | 14 | ✅ all pass |
+- Sensitive data exposure: **PASS** — probe reads only renderer/scene state (`gl`, `scene`, light/shadow properties), never logs anything, no new API surface
+- Input validation: **N/A** — no new API routes or user input paths introduced
+- Auth boundary: **N/A** — `src/proxy.ts` untouched, `/venue` was already unauthenticated before this task
+- Network egress: **PASS** — re-confirmed via 案例6 (zero requests to `githack.com`/`polyhaven`/`.hdr`/`.exr`) and observed directly during my own live sessions (no external requests logged)
+- Static checks: `npx tsc --noEmit` → 0 errors; `npm run lint` → 0 errors/warnings (both re-run by me, not just trusted from the review report)
 
-### Test-environment issues found and fixed (spec-only, not product defects)
-Two flaky/failing cases surfaced on the first run of `venue-refined-3d.spec.ts`. Both were diagnosed as test-authoring bugs, not regressions in `RefinedScene.tsx`/`PlanEditor.tsx`/`VenueScene.tsx` (which are unmodified by these fixes):
+## Bugs Found
 
-1. **Canvas-resize race in `canvasCenter()`/width assertions** — the R3F `<Canvas>` starts at the HTML-default 300×150 intrinsic size and only stretches to its `w-full` container after its internal `ResizeObserver` fires a frame or two post-mount. Reading `boundingBox()` immediately after `clickNextStep()`/`goToRefined()` sometimes caught the canvas mid-resize, producing (a) flaky "click missed the floor" failures in the furniture-placement helper and (b) a false failure in the "版面寬度" (canvas width) edge-case test (`refinedCanvasBox.width` read as exactly 300 instead of the true post-resize ~1022px). Confirmed via a throwaway diagnostic spec that the actual CSS layout is correct — hiding the AI panel does free the expected ~320px of width for step 03's canvas. Fixed by adding `page.waitForFunction(...width > 300)` guards before reading canvas boxes/click points in `venue-refined-3d.spec.ts`. Verified with `--repeat-each=4` (48/48 green) after the fix; before the fix, `AC3` and the round-trip edge case failed intermittently (~1 in 3-4 runs).
-2. **Overshooting the floor polygon in the multi-placement edge case** — the round-trip test's second furniture placement originally offset the click point by 100px from canvas center to avoid landing on the already-placed item (furniture meshes call `e.stopPropagation()` on click, so clicking on top of an existing item selects it instead of reaching the floor mesh underneath — this is pre-existing, correct `VenueScene.tsx` behavior, not a bug). 100px overshot the default 10×10m floor's on-screen extent at the fixed camera angle, so the ray missed all geometry. Reduced to a 30px offset (empirically verified to land inside the floor while still missing the first item's mesh).
+### Bug 1: `venue-refined-lighting.spec.ts` 案例9 (極大場地 edge case) fails deterministically — off-canvas wall never gets drawn
 
-**Note on pre-existing flakiness (out of scope for this task):** `ai-panel-persistent.spec.ts`'s "手動 3D + AI 互不覆蓋" test failed once during a combined-suite run with the same class of canvas-resize race (its `clickFloor` helper has no post-transition wait, same as before this task's changes). Re-run in isolation 3x back-to-back — passed every time. This spec is unmodified by this task and the flakiness is not new; not fixed here as it's outside `venue-refined-3d.spec.ts`'s scope, flagged for a future test-infra story (a shared `waitForSceneReady()` helper would fix it project-wide).
+- **Severity**: High
+- **Acceptance Criterion / edge case affected**: Edge case 「極大場地」(orchestrator-output.md) — currently has **no working automated coverage**, and this is one of `architect-plan.md`'s Definition of Done items ("14 個案例全綠")
+- **File**: `playwright-tests/venue-refined-lighting.spec.ts:211-233`
+- **Steps to Reproduce**:
+  1. `npx playwright test venue-refined-lighting.spec.ts -g "案例9" --project=chromium` (reproduced 3/3 runs, not a flake)
+  2. Or manually: zoom out 30× on `/venue`, draw a wall from meter (5,5) to (195,5), check `wallCount()` — it is `0`
+- **Root cause** (confirmed by direct instrumentation of `meterToScreen`): at the zoom level the 30 `clickZoomOut()` calls converge to (25%, i.e. `pxPerMeter=16 × scale=0.25 = 4px/m`), the endpoint (195,5) maps to screen x≈1208, but the canvas element's bounding box only spans x∈[128, 928] (800px wide). The drag's `mouseup` lands ~280px outside the canvas, so Konva never registers the wall — `wallCount()` stays 0, and the scene entering 03 is just the untouched default 10m floor (`data-shadow-camera-span-m` comes back **22**, matching 案例8's baseline, not a large-scene value).
+- **Expected**: `shadowCameraSpanM` for a scene containing a ~190m-long wall should be well over 60 (strictly greater than 案例8's baseline).
+- **Actual**: The wall is never created; the test measures the default-floor case again and fails the `toBeGreaterThan(60)` assertion with `22`.
+- **This is confirmed to be a test-authoring bug, not a product defect** — I built a second throwaway script that draws a *shorter* wall ((5,5)→(65,5), which stays within the canvas at the same 25% zoom floor) and got `wallCount=1`, `shadowCameraSpanM=73` (correctly > 60 and clearly larger than the small-venue baseline), proving `bounds.ts`'s `planBoundsM` and `refinedLighting.tsx`'s dynamic-frustum effect both work correctly for large scenes. The reviewer's own Suggestion 4 predicted this exact failure mode in advance ("案例 9…是本 spec 中對畫布座標最敏感的一條").
+- **Impact**: Blocks a clean playwright-stage run (14/14 required by Definition of Done) and leaves an orchestrator-mandated edge case with zero real automated protection against a future regression in the large-scene frustum path — low product risk today (the logic is simple and I independently verified it), but the gap itself must be closed.
+- **Suggested fix** (for implement, not applied by me): shrink the wall's target x from 195 to something that both (a) stays within the canvas at whatever zoom level the test settles on, and (b) still clears the `> 60` threshold with margin — e.g. the (5,5)→(65,5) wall I used above already produces `span=73`. Alternatively, keep the far endpoint but pan the stage first, or assert against the actual `pxPerMeter()`/`stageScale()`/`stagePosition()` to pick a target guaranteed to land within `canvas.boundingBox()` regardless of exact zoom convergence.
 
-### Failures
-None outstanding — all failures observed were transient/environmental and resolved by fixing the new spec (see above); final runs are green.
+No Medium or Low bugs found in the production code changes themselves.
+
+## Test Coverage
+
+- New code coverage: 14/14 spec cases target every AC + edge case per architect-plan.md's Test Plan table; 13/14 currently pass, with the 1 failure isolated to test code (Bug 1) rather than the feature under test
+- Minimum required (AGENTS.md): Playwright is the FRONTEND acceptance gate; no unit/integration framework exists for this project, consistent with prior tasks
+- Status: **FAIL** pending Bug 1 fix — cannot proceed to the `playwright` pipeline stage with a known-failing case in the suite it will run
+
+---
+
+## Routing
+
+- `flags.qa_bugs_pending` → `true`
+- `checkpoints.qa` → stays unset (not `"completed"`)
+- Routes back to **implement** to fix `venue-refined-lighting.spec.ts` 案例9 only (High severity; no production code changes indicated)
+- `iteration.qa` was 0 going into this pass, well under the 2-loop escalation cap
