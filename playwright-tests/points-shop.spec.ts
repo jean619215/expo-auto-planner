@@ -3,8 +3,13 @@ import { LoginPage } from "./pages/LoginPage";
 import { HeaderPage } from "./pages/HeaderPage";
 import { ShopPage } from "./pages/ShopPage";
 
-// 會員點數系統 Phase 1 acceptance: shop page, mock purchase flow (full
+// 會員方案系統 Phase 1 acceptance: shop page, mock purchase flow (full
 // webhook path), ledger idempotency, and access control.
+//
+// ⚠️ 顯示層已改為「服務方案 / 可用次數」:shop-balance 顯示的是
+// 內部額度 / USAGE_UNIT_COST(10)換算後的次數,交易列的 reason label 也改成
+// 新手體驗次數 / 方案購買 / AI 規劃生成。內部 ledger(delta、reason 值)未變,
+// 所以 API/webhook 相關斷言維持原樣,只有畫面數字與文案要換算/改名。
 if (!process.env.PW_VERIFIED_EMAIL || !process.env.PW_VERIFIED_PASSWORD) {
   throw new Error(
     "缺少 PW_VERIFIED_EMAIL / PW_VERIFIED_PASSWORD — 請設定 .env.playwright.local"
@@ -66,56 +71,66 @@ test.describe("Points shop: header navigation", () => {
   });
 });
 
-test.describe("Points shop: balance and packages", () => {
-  test("shows numeric balance (signup bonus applied) and all three packages", async ({
+test.describe("Points shop: usage count and service plans", () => {
+  test("shows numeric usage count (signup bonus applied) and all three plans", async ({
     page,
   }) => {
     const shopPage = await loginAndGoToShop(page);
 
-    // Backfill/signup bonus guarantees at least the 50-point grant.
-    const balance = await shopPage.balanceNumber();
-    expect(Number.isFinite(balance)).toBe(true);
-    expect(balance).toBeGreaterThanOrEqual(50);
+    // Backfill/signup bonus guarantees at least the 50-unit grant, which the
+    // UI now renders as 50 / 10 = 5 次.
+    const usageCount = await shopPage.usageCountNumber();
+    expect(Number.isFinite(usageCount)).toBe(true);
+    expect(usageCount).toBeGreaterThanOrEqual(5);
 
     for (const id of ["basic", "plus", "mega"]) {
       await expect(shopPage.packageCard(id)).toBeVisible();
       await expect(shopPage.buyButton(id)).toBeEnabled();
     }
 
-    // Transaction list renders localized reason labels. The API returns only
-    // the most recent 20 rows, and repeated E2E purchase runs push the
-    // original 註冊禮 row out of that window on the shared test account — so
-    // assert on the list rendering known labels, not on the signup row
-    // specifically (the >= 50 balance check above already proves the grant).
+    // Transaction list renders localized reason labels (REASON_LABELS in
+    // src/app/shop/page.tsx). The API returns only the most recent 20 rows,
+    // and repeated E2E purchase runs push the original signup row out of that
+    // window on the shared test account — so assert on the list rendering
+    // known labels, not on the signup row specifically (the >= 5 usage-count
+    // check above already proves the grant).
     await expect(shopPage.transactions.locator("li").first()).toBeVisible();
-    await expect(shopPage.transactions).toContainText(/註冊禮|購買點數|AI/);
+    await expect(shopPage.transactions).toContainText(
+      /新手體驗次數|方案購買|AI 規劃生成/
+    );
+    // 對外字串不得再出現點數/儲值。
+    await expect(shopPage.transactions).not.toContainText("點數");
   });
 });
 
 test.describe("Points shop: mock purchase flow", () => {
-  test("buy basic package end-to-end: checkout → mock pay → webhook credits 100 points", async ({
+  test("buy basic plan end-to-end: checkout → mock pay → webhook credits 10 次", async ({
     page,
   }) => {
     const shopPage = await loginAndGoToShop(page);
-    const before = await shopPage.balanceNumber();
+    const before = await shopPage.usageCountNumber();
 
     await shopPage.buyButton("basic").click();
     await expect(shopPage.mockCheckoutRoot).toBeVisible();
     await expect(page).toHaveURL(/\/shop\/mock-checkout\?/);
 
+    // 模擬結帳頁同樣以「次數」呈現(basic = 100 額度 = 10 次)。
+    await expect(shopPage.mockCheckoutUsage).toHaveText("10 次");
+
     await shopPage.mockPayButton.click();
 
     await expect(page).toHaveURL(/\/shop\?paid=1$/);
     await expect(shopPage.paidSuccess).toBeVisible();
-    await expect(shopPage.balance).toHaveText(String(before + 100));
-    await expect(shopPage.transactions).toContainText("購買點數");
+    // basic 方案入帳 100 內部額度 = 10 次。
+    await expect(shopPage.balance).toHaveText(String(before + 10));
+    await expect(shopPage.transactions).toContainText("方案購買");
   });
 
   test("webhook resend is idempotent: same signed payload twice credits only once", async ({
     page,
   }) => {
     const shopPage = await loginAndGoToShop(page);
-    const before = await shopPage.balanceNumber();
+    const before = await shopPage.usageCountNumber();
 
     await shopPage.buyButton("basic").click();
     await expect(shopPage.mockCheckoutRoot).toBeVisible();
@@ -141,12 +156,12 @@ test.describe("Points shop: mock purchase flow", () => {
     expect(second.status()).toBe(200);
 
     await shopPage.navigate();
-    await expect(shopPage.balance).toHaveText(String(before + 100));
+    await expect(shopPage.balance).toHaveText(String(before + 10));
   });
 
   test("webhook rejects tampered signature", async ({ page }) => {
     const shopPage = await loginAndGoToShop(page);
-    const before = await shopPage.balanceNumber();
+    const before = await shopPage.usageCountNumber();
 
     await shopPage.buyButton("basic").click();
     await expect(shopPage.mockCheckoutRoot).toBeVisible();
@@ -169,7 +184,7 @@ test.describe("Points shop: mock purchase flow", () => {
     page,
   }) => {
     const shopPage = await loginAndGoToShop(page);
-    const before = await shopPage.balanceNumber();
+    const before = await shopPage.usageCountNumber();
 
     await shopPage.buyButton("plus").click();
     await expect(shopPage.mockCheckoutRoot).toBeVisible();

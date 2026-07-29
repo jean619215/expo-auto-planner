@@ -10,7 +10,7 @@ import { PRIOR_IMAGE_PLACEHOLDER } from "@/lib/ai-panel/messages";
 const NOT_LOGGED_IN_ERROR = "請先登入";
 const INVALID_BODY_ERROR = "請求格式錯誤";
 const PLAN_NOT_FOUND_ERROR = "找不到存檔";
-const INSUFFICIENT_ERROR = "點數不足";
+const INSUFFICIENT_ERROR = "可用次數不足";
 const UPSTREAM_ERROR = "AI 服務暫時無法回應,請稍後再試";
 const SERVER_ERROR = "伺服器錯誤";
 

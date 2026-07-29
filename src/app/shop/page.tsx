@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Coins } from "lucide-react";
-import { POINT_PACKAGES } from "@/lib/points/packages";
+import { Sparkles } from "lucide-react";
+import { SERVICE_PLANS, toUsageCount } from "@/lib/points/packages";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -18,8 +18,11 @@ interface PointTransaction {
 }
 
 const REASON_LABELS: Record<string, string> = {
-  signup_bonus: "註冊禮",
-  purchase: "購買點數",
+  signup_bonus: "新手體驗次數",
+  purchase: "方案購買",
+  ai_usage: "AI 規劃生成",
+  refund: "退款沖銷",
+  compensation: "服務補償",
 };
 
 const createdAtFormatter = new Intl.DateTimeFormat("zh-TW", {
@@ -118,7 +121,7 @@ function ShopContent() {
           <Link href="/login" className="mx-1 text-blueprint underline">
             登入
           </Link>
-          後再購買點數。
+          後再購買方案。
         </p>
       </main>
     );
@@ -127,7 +130,7 @@ function ShopContent() {
   return (
     <main data-testid="shop-page" className="mx-auto max-w-3xl px-4 py-10">
       <h1 className="mb-6 text-2xl font-black tracking-tight text-foreground">
-        點數商店
+        我的方案
       </h1>
 
       {paid && (
@@ -136,14 +139,14 @@ function ShopContent() {
           data-testid="shop-paid-success"
           className="mb-4 rounded-md border border-blueprint-light bg-blueprint-wash px-3 py-2 text-sm text-blueprint"
         >
-          付款成功，點數已入帳。
+          付款成功，使用次數已加入您的帳號。
         </p>
       )}
 
       <Card className="mb-6">
         <CardContent className="flex items-center gap-3 py-4">
-          <Coins className="size-6 text-blueprint" />
-          <span className="text-sm text-muted-foreground">目前點數</span>
+          <Sparkles className="size-6 text-blueprint" />
+          <span className="text-sm text-muted-foreground">可用次數</span>
           {pageState === "loading" ? (
             <span
               data-testid="shop-balance-loading"
@@ -154,10 +157,10 @@ function ShopContent() {
               data-testid="shop-balance"
               className="font-mono text-2xl font-bold text-blueprint"
             >
-              {pageState === "error" ? "-" : balance}
+              {pageState === "error" ? "-" : toUsageCount(balance)}
             </span>
           )}
-          <span className="text-sm text-muted-foreground">點</span>
+          <span className="text-sm text-muted-foreground">次</span>
         </CardContent>
       </Card>
 
@@ -174,7 +177,7 @@ function ShopContent() {
       )}
 
       <div className="mb-8 grid gap-4 sm:grid-cols-3">
-        {POINT_PACKAGES.map((pkg) => (
+        {SERVICE_PLANS.map((pkg) => (
           <Card key={pkg.id} data-testid={`shop-package-${pkg.id}`}>
             <CardHeader>
               <CardTitle className="text-lg font-black">{pkg.name}</CardTitle>
@@ -182,18 +185,21 @@ function ShopContent() {
             <CardContent className="flex flex-col gap-3">
               <div>
                 <span className="font-mono text-3xl font-bold text-blueprint">
-                  {pkg.points}
+                  {pkg.usageCount}
                 </span>
-                <span className="ml-1 text-sm text-muted-foreground">點</span>
+                <span className="ml-1 text-sm text-muted-foreground">
+                  次 AI 規劃
+                </span>
                 {pkg.bonusPoints > 0 && (
                   <p className="mt-1 text-xs text-blueprint">
-                    含贈送 {pkg.bonusPoints} 點
+                    含加贈 {toUsageCount(pkg.bonusPoints)} 次
                   </p>
                 )}
               </div>
               <p className="text-sm text-muted-foreground">
                 NT$ {pkg.amountTwd.toLocaleString()}
               </p>
+              <p className="text-xs text-muted-foreground">{pkg.description}</p>
               <Button
                 type="button"
                 data-testid={`shop-buy-${pkg.id}`}
@@ -229,7 +235,9 @@ function ShopContent() {
                     (t.delta > 0 ? "text-blueprint" : "text-destructive")
                   }
                 >
-                  {t.delta > 0 ? `+${t.delta}` : t.delta}
+                  {t.delta > 0
+                    ? `+${toUsageCount(t.delta)} 次`
+                    : `-${toUsageCount(-t.delta)} 次`}
                 </span>
               </span>
             </li>

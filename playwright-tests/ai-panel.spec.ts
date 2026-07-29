@@ -92,9 +92,11 @@ const GENERATE_PLAN_FIXTURE: MockResponse = {
   },
 };
 
+// 402 的 `balance` 是內部額度單位(API 契約未變),UI 會除以 chatCost 換算成
+// 對外的「可用次數」。50 / 10 = 剩餘 5 次。
 const INSUFFICIENT_BALANCE_FIXTURE: MockResponse = {
   status: 402,
-  body: { error: "點數不足", balance: 5 },
+  body: { error: "可用次數不足", balance: 50 },
 };
 
 test.describe("AI 助理面板 - AC1 面板 UI", () => {
@@ -118,9 +120,12 @@ test.describe("AI 助理面板 - AC1 面板 UI", () => {
     await expect(ai.imageInput).toBeAttached();
     await expect(ai.balance).toBeVisible();
 
-    // AC5:面板展開即見扣點值與餘額,不需先送出訊息。
-    await expect(ai.chatCost).toHaveText("10");
-    await expect(ai.balance).toHaveText("100");
+    // AC5:面板展開即見每次扣抵值與剩餘次數,不需先送出訊息。
+    // 販售型態改為服務方案後,UI 對外只講「次數」:
+    //   ai-chat-cost 固定顯示 1(每次規劃生成扣 1 次),不再顯示內部 chatCost;
+    //   ai-balance 顯示 Math.floor(balance / chatCost) = floor(100 / 10) = 10。
+    await expect(ai.chatCost).toHaveText("1");
+    await expect(ai.balance).toHaveText("10");
 
     await ai.toggle.click();
     await expect(ai.panel).toBeHidden();
@@ -128,7 +133,7 @@ test.describe("AI 助理面板 - AC1 面板 UI", () => {
 });
 
 test.describe("AI 助理面板 - AC2 對話流程", () => {
-  test("送出訊息後顯示助理文字回應與更新後的點數餘額", async ({ page }) => {
+  test("送出訊息後顯示助理文字回應與更新後的剩餘次數", async ({ page }) => {
     await mockAiConfig(page);
     await mockAiChat(page, [TEXT_REPLY_FIXTURE]);
 
@@ -140,7 +145,8 @@ test.describe("AI 助理面板 - AC2 對話流程", () => {
     await ai.sendMessage("幫我規劃一個小型攤位");
 
     await expect(ai.messages).toContainText("你好,我可以幫你規劃場地");
-    await expect(ai.balance).toHaveText("90");
+    // fixture 回傳的內部額度 90 → 顯示 floor(90 / 10) = 9 次。
+    await expect(ai.balance).toHaveText("9");
     await expect(ai.input).toHaveValue("");
   });
 
@@ -219,8 +225,8 @@ test.describe("AI 助理面板 - AC3 tool call 執行", () => {
   });
 });
 
-test.describe("AI 助理面板 - AC4 錯誤與點數狀態", () => {
-  test("402 顯示點數不足、目前餘額與商店連結,輸入保留可重送", async ({
+test.describe("AI 助理面板 - AC4 錯誤與可用次數狀態", () => {
+  test("402 顯示可用次數不足、目前餘額與方案連結,輸入保留可重送", async ({
     page,
   }) => {
     await mockAiConfig(page);
@@ -236,9 +242,13 @@ test.describe("AI 助理面板 - AC4 錯誤與點數狀態", () => {
 
     await expect(ai.error).toBeVisible();
     await expect(ai.error).toHaveAttribute("role", "alert");
-    await expect(ai.error).toContainText("點數不足");
+    await expect(ai.error).toContainText("可用次數不足");
+    // 402 body 的 balance=50(內部額度)→ 顯示「剩餘:5 次」。
     await expect(ai.error).toContainText("5");
+    // 連結文字為「前往購買方案」,不可再出現點數/儲值字樣。
     await expect(ai.error.locator("a[href='/shop']")).toBeVisible();
+    await expect(ai.error.locator("a[href='/shop']")).toHaveText("前往購買方案");
+    await expect(ai.error).not.toContainText("點數");
 
     // 輸入的訊息保留可重送(AC4)。
     await expect(ai.input).toHaveValue(message);
@@ -376,7 +386,8 @@ test.describe("AI 助理面板 - payload 瘦身", () => {
     await expect(ai.messages).toContainText("你好,我可以幫你規劃場地");
 
     await ai.sendMessage("文字後續訊息");
-    await expect(ai.balance).toHaveText("90");
+    // 內部額度 90 → 顯示 floor(90 / 10) = 9 次。
+    await expect(ai.balance).toHaveText("9");
 
     expect(captured.length).toBe(2);
     const second = captured[1] as {

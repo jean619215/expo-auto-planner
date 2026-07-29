@@ -9,6 +9,7 @@ import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { toUsageCount } from "@/lib/points/packages";
 
 export default function MockCheckoutPage() {
   return (
@@ -33,6 +34,13 @@ function MockCheckoutContent() {
 
   const valid = orderId && txnId && sig;
 
+  // points 是內部額度單位,顯示層一律換算成對外的「可用次數」。
+  const pointsNum = Number(points);
+  const usageLabel =
+    points.trim() !== "" && Number.isFinite(pointsNum)
+      ? `${toUsageCount(pointsNum)} 次`
+      : "-";
+
   async function handlePay() {
     if (paying || !valid) return;
     setPaying(true);
@@ -44,13 +52,13 @@ function MockCheckoutContent() {
         body: JSON.stringify({ orderId, txnId, sig }),
       });
       if (!res.ok) {
-        setError("模擬付款失敗，請返回商店重試。");
+        setError("模擬付款失敗，請返回方案頁重試。");
         setPaying(false);
         return;
       }
       router.push("/shop?paid=1");
     } catch {
-      setError("模擬付款失敗，請返回商店重試。");
+      setError("模擬付款失敗，請返回方案頁重試。");
       setPaying(false);
     }
   }
@@ -69,7 +77,7 @@ function MockCheckoutContent() {
         <CardContent className="flex flex-col gap-4">
           {!valid ? (
             <p role="alert" className="text-sm text-destructive">
-              訂單資訊不完整，請返回商店重新購買。
+              訂單資訊不完整，請返回方案頁重新購買。
             </p>
           ) : (
             <>
@@ -79,9 +87,9 @@ function MockCheckoutContent() {
                   <dd data-testid="mock-checkout-name">{name}</dd>
                 </div>
                 <div className="flex justify-between">
-                  <dt className="text-muted-foreground">點數</dt>
+                  <dt className="text-muted-foreground">可用次數</dt>
                   <dd data-testid="mock-checkout-points" className="font-mono">
-                    {points} 點
+                    {usageLabel}
                   </dd>
                 </div>
                 <div className="flex justify-between">
@@ -111,7 +119,7 @@ function MockCheckoutContent() {
                 disabled={paying}
                 onClick={() => router.push("/shop")}
               >
-                取消返回商店
+                取消返回方案頁
               </Button>
             </>
           )}

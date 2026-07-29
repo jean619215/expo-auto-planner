@@ -346,9 +346,13 @@ export default function AiPanel({
         <div>
           <h2 className="text-sm font-semibold">AI 場地助理</h2>
           <p className="text-xs text-muted-foreground">
-            點數餘額:<span data-testid="ai-balance">{balance ?? "-"}</span>
-            (每次呼叫扣<span data-testid="ai-chat-cost">{chatCost ?? "-"}</span>
-            點)
+            {/* 對外只講「次數」— 販售型態是服務方案而非點數儲值。
+                內部餘額/成本仍是額度單位,在此換算成剩餘可用次數。 */}
+            剩餘次數:
+            <span data-testid="ai-balance">
+              {balance !== null && chatCost ? Math.floor(balance / chatCost) : "-"}
+            </span>
+            (每次規劃生成扣<span data-testid="ai-chat-cost">1</span>次)
           </p>
         </div>
         <div className="flex shrink-0 gap-2">
@@ -450,9 +454,13 @@ export default function AiPanel({
         >
           {error.kind === "insufficient" && (
             <p>
-              點數不足(目前餘額:{error.balance ?? "-"})。
+              可用次數不足(剩餘:
+              {error.balance !== null && error.balance !== undefined && chatCost
+                ? Math.floor(error.balance / chatCost)
+                : "-"}
+              次)。
               <a href="/shop" className="ml-1 underline">
-                前往商店購買點數
+                前往購買方案
               </a>
             </p>
           )}
