@@ -124,8 +124,12 @@ test.describe("公開頁面 - 頁尾導覽", () => {
 
     await expect(pricing.footerContact).toBeVisible();
     await expect(pricing.footerContact).toContainText("客服信箱");
-    await expect(pricing.footerContact).toContainText("客服電話");
-    // site.ts 的 placeholder 若未換成真實聯絡資料,送審必被駁回 — 測試守住這條線。
+    await expect(pricing.footerContact).toContainText("LINE");
+    // 客服電話/賣家姓名/聯絡地址目前刻意不公開(見 site.ts 的說明)。若綠界
+    // 駁回理由指向聯絡資訊不足而補回這些欄位,這裡要一併加上對應斷言。
+    //
+    // placeholder 守門仍然保留:任何「請填入」字樣代表欄位加回來了卻忘了填
+    // 真實資料,那是送審必被駁回的狀態。
     await expect(pricing.footerContact).not.toContainText("請填入");
   });
 
