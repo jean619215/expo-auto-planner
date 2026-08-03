@@ -65,7 +65,7 @@ export default function RefundPage() {
 
         <h2 className="pt-4 text-lg font-black text-foreground">五、聯絡方式</h2>
         <p>
-          客服信箱 {SITE.supportEmail}；客服電話 {SITE.supportPhone}；服務時間{" "}
+          客服信箱 {SITE.supportEmail}；LINE 官方帳號 {SITE.lineId}；服務時間{" "}
           {SITE.supportHours}。
         </p>
       </section>

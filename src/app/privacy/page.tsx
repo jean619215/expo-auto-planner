@@ -68,8 +68,7 @@ export default function PrivacyPage() {
 
         <h2 className="pt-4 text-lg font-black text-foreground">七、聯絡方式</h2>
         <p>
-          {SITE.sellerName}／客服信箱 {SITE.supportEmail}；客服電話{" "}
-          {SITE.supportPhone}；聯絡地址 {SITE.address}。
+          客服信箱 {SITE.supportEmail}；LINE 官方帳號 {SITE.lineId}。
         </p>
       </section>
     </main>

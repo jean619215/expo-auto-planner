@@ -31,8 +31,16 @@ export default function Footer() {
           ))}
         </nav>
         <p data-testid="footer-contact" className="text-xs">
-          {SITE.sellerName}｜客服信箱 {SITE.supportEmail}｜客服電話{" "}
-          {SITE.supportPhone}｜{SITE.supportHours}
+          客服信箱 {SITE.supportEmail}｜LINE{" "}
+          <a
+            href={SITE.lineUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-foreground"
+          >
+            {SITE.lineId}
+          </a>
+          ｜{SITE.supportHours}
         </p>
       </div>
     </footer>

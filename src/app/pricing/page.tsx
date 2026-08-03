@@ -100,17 +100,38 @@ export default function PricingPage() {
       <section className="mt-10">
         <h2 className="text-xl font-black text-foreground">聯絡我們</h2>
         <dl className="mt-3 grid gap-1.5 text-sm text-muted-foreground sm:grid-cols-[6rem_1fr]">
-          <dt className="font-medium text-foreground">賣家名稱</dt>
-          <dd>{SITE.sellerName}</dd>
           <dt className="font-medium text-foreground">客服信箱</dt>
           <dd>{SITE.supportEmail}</dd>
-          <dt className="font-medium text-foreground">客服電話</dt>
-          <dd>{SITE.supportPhone}</dd>
-          <dt className="font-medium text-foreground">聯絡地址</dt>
-          <dd>{SITE.address}</dd>
           <dt className="font-medium text-foreground">服務時間</dt>
           <dd>{SITE.supportHours}</dd>
+          <dt className="font-medium text-foreground">LINE</dt>
+          <dd>
+            <a
+              href={SITE.lineUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="line-add-friend"
+              className="underline hover:text-foreground"
+            >
+              {SITE.lineId}
+            </a>
+          </dd>
         </dl>
+        <div className="mt-4 flex items-center gap-3">
+          {/* 未用 next/image：QR 是固定尺寸的小圖，且必須逐像素清晰可掃，
+              不希望經過任何重新編碼或縮放。 */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={SITE.lineQr}
+            alt={`加入 LINE 官方帳號 ${SITE.lineId} 的行動條碼`}
+            width={120}
+            height={120}
+            className="rounded border border-border"
+          />
+          <p className="text-xs text-muted-foreground">
+            手機請直接點上方連結加入；此行動條碼供桌機或列印使用。
+          </p>
+        </div>
       </section>
     </main>
   );
