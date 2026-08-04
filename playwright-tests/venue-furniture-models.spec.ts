@@ -1,5 +1,6 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Route } from "@playwright/test";
 import { PlanEditorPage } from "./pages/PlanEditorPage";
+import { PlanSlotsPage } from "./pages/PlanSlotsPage";
 
 // 精密 3D 場景 (步驟 03) — Task 5: 匯入 6 種真實家具模型
 //
@@ -17,6 +18,8 @@ import { PlanEditorPage } from "./pages/PlanEditorPage";
 //   M5  只請求場上真的有的 kind —— 擺一張桌子不該把六個 GLB 全拉下來。
 //   M6  02 <-> 03 往返多次不累積 GPU 資源(clone 出來的 geometry 有被 dispose)。
 //   M7  同 kind 多件共用一個 `<Instances>`,instance 數反映真實件數。
+//   M8  件數超過 `<Instances>` 初始緩衝區容量時不得靜默截斷(review 抓到的
+//       實際缺陷:300 張椅子只畫得出 256 張)。
 //
 // 全部走 [data-testid="refined-scene"] 上的 data-* 契約(探針/場景自身回報的
 // 實際狀態),不做像素比對 —— 沿用 task 2/3 的做法。
@@ -92,6 +95,9 @@ const MODEL_KINDS = [
   { kind: "plant", target: [0.5, 1.2, 0.5] },
   { kind: "display", target: [1.0, 1.6, 0.5] },
 ] as const;
+
+/** M8 用來 mock 存檔載入的 API(沿用 venue-zoom-pan.spec.ts 的寫法)。 */
+const PLAN_SLOT_RE = /\/api\/plans\/\d$/;
 
 /** 沒有 Poly Haven 資產、仍走白模 box 的展場專用家具(task 6 接手)。 */
 const BOX_ONLY_KINDS = ["counter", "bannerStand", "podium"] as const;
@@ -348,5 +354,108 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
     await expect
       .poll(() => editor.refinedShadowCasterFurnitureCount(), { timeout: 10_000 })
       .toBe(3);
+  });
+
+  test("M8: 件數超過初始緩衝區容量時,全部都要畫出來(不得靜默截斷)", async ({
+    page,
+  }) => {
+    // review 抓到的實際缺陷:`<Instances>` 的矩陣緩衝區在第一次 render 就
+    // 定案,原本寫死 256。用 300 張椅子讀存檔時,3D 只畫得出 256 張,多的 44
+    // 張人間蒸發 —— 沒有錯誤、沒有警告,平面圖上卻明明有 300 張。
+    //
+    // 用 mock 的存檔載入而不是點 300 次:UI 放置一次要好幾百毫秒,而這條要
+    // 驗的是容量,不是放置流程。
+    test.slow();
+
+    const COUNT = 300;
+    const furniture = Array.from({ length: COUNT }, (_, i) => ({
+      id: `chair-${i}`,
+      kind: "chair",
+      center: { x: 5 + (i % 50) * 0.5, y: 5 + Math.floor(i / 50) * 0.5 },
+      w: 0.45,
+      h: 0.45,
+      rotationDeg: 0,
+    }));
+
+    await page.route(PLAN_SLOT_RE, async (route: Route) => {
+      if (route.request().method() === "GET") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            planId: "33333333-3333-3333-3333-333333333333",
+            slot: 1,
+            name: "壓力測試",
+            plan: {
+              polygon: [
+                { x: 2, y: 2 },
+                { x: 40, y: 2 },
+                { x: 40, y: 40 },
+                { x: 2, y: 40 },
+              ],
+              walls: [],
+              columns: [],
+              furniture,
+              venueSizeM: 200,
+            },
+            updatedAt: "2026-08-04T00:00:00Z",
+            conversation: [],
+          }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: "{}",
+      });
+    });
+    await page.route(/\/api\/plans$/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          slots: [
+            {
+              slot: 1,
+              occupied: true,
+              name: "壓力測試",
+              updatedAt: "2026-08-04T00:00:00Z",
+            },
+            { slot: 2, occupied: false, name: null, updatedAt: null },
+            { slot: 3, occupied: false, name: null, updatedAt: null },
+          ],
+        }),
+      });
+    });
+    await page.route(/\/api\/plans\/\d\/conversation$/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: "[]",
+      });
+    });
+
+    const editor = new PlanEditorPage(page);
+    const slots = new PlanSlotsPage(page);
+    await editor.navigate();
+    await slots.open();
+    await slots.loadSlot(1);
+    await expect
+      .poll(() => editor.furnitureCount(), { timeout: 15_000 })
+      .toBe(COUNT);
+
+    await editor.clickNextStep();
+    await editor.goToRefined();
+    await waitForFurnitureModels(editor);
+
+    // 這一條讀的是探針從 `InstancedMesh.count` 量到的**實際繪製數**,不是
+    // 元件自己宣稱的件數 —— 缺陷發生時報告仍然寫 300,只有這個數字會掉到 256。
+    await expect
+      .poll(() => editor.refinedShadowCasterFurnitureCount(), { timeout: 20_000 })
+      .toBe(COUNT);
+
+    const report = await editor.refinedFurnitureModelReport("chair");
+    expect(report?.instanceCount).toBe(COUNT);
   });
 });

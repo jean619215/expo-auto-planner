@@ -25,8 +25,28 @@ import { refinedFurnitureModelName } from "./RefinedSceneProbe";
  */
 export const DRACO_DECODER_PATH = "/draco/";
 
-/** 場景中每種家具的 instance 數上限(`<Instances>` 需要預先配置緩衝區)。 */
-const INSTANCE_LIMIT = 256;
+/**
+ * `<Instances>` 的緩衝區容量下限。
+ *
+ * drei 的 `<Instances>` 在**第一次 render** 就用 `useState` 把
+ * `limit * 16` 的矩陣 Float32Array 配置好,之後把 `limit` prop 改大**不會**
+ * 重新配置(Instances.js 的 `useState(() => new Float32Array(limit * 16))`)。
+ * 而它每幀寫入的是 `instances.length` 個矩陣 —— 一旦件數超過當初的容量,
+ * 多出來的 `toArray(matrices, i * 16)` 就寫在 Float32Array 界外,typed array
+ * 會靜默丟棄,同時 `count = min(limit, range, instances.length)` 也把繪製數
+ * 卡在 limit。結果是「平面圖上有 300 張椅子,3D 只畫得出 256 張」,而且沒有
+ * 任何錯誤。
+ *
+ * 所以容量用「2 的冪次桶」算,並且**把桶編進 `key`** —— 需要更大的緩衝區時
+ * 整個 `<Instances>` 重新掛載,`useState` 才會真的重配。
+ */
+const MIN_INSTANCE_LIMIT = 64;
+
+function instanceLimitFor(count: number): number {
+  let limit = MIN_INSTANCE_LIMIT;
+  while (limit < count) limit *= 2;
+  return limit;
+}
 
 export interface FurnitureModelPart {
   geometry: THREE.BufferGeometry;
@@ -183,12 +203,17 @@ function FurnitureKindGroup({
 
   if (items.length === 0) return null;
 
+  // 容量進到 key 裡:桶變大時整個 <Instances> 重掛,矩陣緩衝區才會跟著重配
+  // (見 MIN_INSTANCE_LIMIT 的註解)。桶只會往上跳,所以一般的加減家具不會
+  // 造成重掛。
+  const limit = instanceLimitFor(items.length);
+
   return (
     <>
       {parts.map((part, index) => (
         <Instances
-          key={`${kind}-${index}`}
-          limit={INSTANCE_LIMIT}
+          key={`${kind}-${index}-${limit}`}
+          limit={limit}
           range={items.length}
           geometry={part.geometry}
           material={part.material}
