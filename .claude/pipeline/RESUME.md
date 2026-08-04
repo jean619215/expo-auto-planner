@@ -11,11 +11,11 @@
 | 2 | 打光與陰影(VSM soft shadow) | ✅ 完成 `571339f` |
 | 3 | 程序化 PBR 材質(地板/牆/柱) | ✅ 完成 `127ce70` |
 | 4 | 家具模型 asset pipeline | ✅ 完成 `76937e9` + `c54166b` |
-| 5 | 匯入 6 種真實家具模型 | ✅ **實作完成、全綠**,待 review / QA |
+| 5 | 匯入 6 種真實家具模型 | ✅ **完成**(review 抓到並修掉 1 個 🔴,QA 簽核) |
 | 6 | 3 種展場家具程序化幾何(counter / bannerStand / podium) | ⬜ 未開始 |
 | 7 | 效能與驗收 | ⬜ 未開始 |
 
-## Task 5 已完成(接手可直接進 review)
+## Task 5 已完成(pipeline 全部跑完)
 
 實作 commit:`2ae97aa`(wip)→ `4cd5cb7`(修紅燈)→ `3077017`(驗收 spec)
 → `<本次最後一個 commit>`(T14 慢速標記)。
@@ -71,11 +71,19 @@ kind / M6 往返不累積 GPU 資源 / M7 同 kind 共用一個 `<Instances>`。
       `node_modules/three/package.json`)。下載/轉檔那段自上次成功執行後
       未曾改動。在有對外網路的機器上補跑一次即可。
 
+### review 抓到的 🔴(已修)
+
+`<Instances>` 的矩陣緩衝區容量原本寫死 256,而 drei 只在第一次 render 配置、
+之後改 `limit` prop **不會重配**。實測讀入 300 張椅子的存檔:3D 只畫得出 256
+張,44 張人間蒸發,沒有錯誤也沒有警告 —— 連元件自報的 `instanceCount` 都還
+寫 300。已改為「只會往上跳的 2 冪次桶」並把容量編進 `key`(容量要成長時整個
+`<Instances>` 重掛,`useState` 才會真的重配),回歸見 M8。
+
 ## 測試現況
 
-- `venue-furniture-models` 7/7、`venue-refined-lighting` 14/14、
-  `venue-refined-materials` 14/14、`venue-furniture-assets` 6/6。
-- 免登入的 13 支 spec 全套:**150 passed / 0 failed**。
+- `venue-furniture-models` 8/8、`venue-refined-lighting` 14/14、
+  `venue-refined-materials` 14/14、`venue-furniture-assets` 6/6。(M8 為 review 修復後補的回歸)
+- 免登入的 13 支 spec 全套:**151 passed / 0 failed**(12.9 分鐘)。
 - 需要帳密的 5 支(`ai-panel` / `membership-task7-task9` / `points-shop` /
   `profile-edit-mode` / `site-header`)在本環境**沒有跑** —— 它們在檔案載入期
   就會因為缺 `.env.playwright.local` 的 `PW_VERIFIED_EMAIL` /
