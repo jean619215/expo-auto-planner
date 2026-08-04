@@ -121,11 +121,12 @@ CI/SwiftShader 上很可能超過 120 frame(約 2 秒)才 mount 完 —— 探�
 ### Task 5 還沒做的部分
 
 - [ ] 修上面那 2 個紅燈。
-- [ ] 跑一次 `node scripts/build-venue-models.mjs` 補出 `public/draco/README.md`。
-      解碼器那兩個檔案是先手動複製進去的,腳本的 `copyDracoDecoder()` 是事後
-      補寫的,還沒實際跑過(第一次跑時踩到 `require.resolve("three/package.json")`
-      因 three 的 exports 未列 package.json 而拋 ERR_PACKAGE_PATH_NOT_EXPORTED,
-      已改成直接讀 `node_modules/three/package.json`,但改完**尚未驗證**)。
+- [ ] 重跑一次 `node scripts/build-venue-models.mjs` 確認整支腳本(含 6 個 GLB
+      的重新轉檔)在修正後仍然跑得完。`copyDracoDecoder()` 本身已驗證可用
+      —— `public/draco/README.md` 正確寫出 `three@0.185.1`。修正內容:原本用
+      `require.resolve("three/package.json")` 會拋
+      ERR_PACKAGE_PATH_NOT_EXPORTED(three 的 exports 沒列 package.json),
+      已改成直接讀 `node_modules/three/package.json`。
 - [ ] 寫 task 5 自己的驗收 spec(目前一條都還沒有):六種 kind 各自的
       `scale` 三軸一致、`fittedM` 不超過 `targetM`、`cabinet` 的
       `rotationY=90` 確實讓長邊對上、植栽延後載入、往返步驟 02/03 不累積
