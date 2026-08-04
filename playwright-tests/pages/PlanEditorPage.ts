@@ -76,6 +76,27 @@ export interface FurnitureModelReport {
   instanceCount: number;
 }
 
+// task 6 (procedural exhibition furniture) — mirrors proceduralFurniture.tsx's
+// ProceduralFurnitureReport shape.
+export interface ProceduralFurnitureReport {
+  kind: string;
+  /** 程序化零件拼出來的實際外廓(公尺)。 */
+  sizeM: [number, number, number];
+  /** `FURNITURE_DEFAULTS` 的標稱尺寸(公尺)。 */
+  targetM: [number, number, number];
+  /** 這件家具由幾個零件組成。 */
+  partCount: number;
+  /** 目前場上這個 kind 有幾件。 */
+  instanceCount: number;
+}
+
+/** task 6 — 程序化家具的存活資源計數(`data-procedural-furniture-stats`)。 */
+export interface ProceduralFurnitureStats {
+  liveGeometries: number;
+  liveMaterials: number;
+  totalBuilds: number;
+}
+
 export interface AlbedoReadback {
   mean: number;
   max: number;
@@ -763,6 +784,38 @@ export class PlanEditorPage {
     kind: string,
   ): Promise<FurnitureModelReport | undefined> {
     const reports = await this.refinedFurnitureModelReports();
+    return reports.find((report) => report.kind === kind);
+  }
+
+  /** Parsed `data-furniture-procedural-reports` — one entry per procedurally-drawn kind on the plan. */
+  async refinedProceduralFurnitureReports(): Promise<ProceduralFurnitureReport[]> {
+    const raw = await this.refinedScene.getAttribute(
+      "data-furniture-procedural-reports",
+    );
+    return JSON.parse(raw ?? "[]") as ProceduralFurnitureReport[];
+  }
+
+  /**
+   * Live GPU-resource counts for procedural furniture, driven by three's own
+   * `dispose` events (`data-procedural-furniture-stats`).
+   *
+   * `refinedRendererGeometries()` / `refinedRendererTextures()` come from
+   * `gl.info.memory`, which does **not** track materials — a leaked material
+   * is invisible there. Use this for anything asserting procedural furniture
+   * releases its resources.
+   */
+  async refinedProceduralFurnitureStats(): Promise<ProceduralFurnitureStats> {
+    const raw = await this.refinedScene.getAttribute(
+      "data-procedural-furniture-stats",
+    );
+    return JSON.parse(raw ?? "null") as ProceduralFurnitureStats;
+  }
+
+  /** The single procedural report for `kind`, or `undefined`. */
+  async refinedProceduralFurnitureReport(
+    kind: string,
+  ): Promise<ProceduralFurnitureReport | undefined> {
+    const reports = await this.refinedProceduralFurnitureReports();
     return reports.find((report) => report.kind === kind);
   }
 

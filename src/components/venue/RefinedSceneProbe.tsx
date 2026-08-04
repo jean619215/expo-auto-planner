@@ -36,6 +36,10 @@ import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useSurfaceMaterials } from "./SurfaceMaterials";
 import { getSurfaceTextureStats } from "./surfaceTextures";
+import {
+  getProceduralFurnitureStats,
+  type ProceduralFurnitureStats,
+} from "./proceduralFurnitureStats";
 
 // The floor/wall/column meshes tag themselves with these names
 // (RefinedScene.tsx) so the probe can report *actual* scene-graph state
@@ -44,28 +48,37 @@ export const REFINED_FLOOR_NAME = "refined-floor";
 export const REFINED_WALL_NAME = "refined-wall";
 export const REFINED_COLUMN_NAME = "refined-column";
 
-/** 還沒有真實模型、暫時用白模 box 畫的家具(counter / bannerStand / podium)。 */
+/**
+ * 白模 box 的保底路徑。task 6 之後九種家具已經全部有造型(六種匯入模型、
+ * 三種程序化),所以正常情況下場上不會有這種 mesh —— 它只在「有人往
+ * FURNITURE_DEFAULTS 加了新 kind、卻還沒給它模型或程序化造型」時出現,
+ * 讓那件家具至少畫得出來、也仍然被算進投影件數,而不是無聲消失。
+ */
 export const REFINED_FURNITURE_BOX_NAME = "refined-furniture-box";
 
 /**
- * 匯入 GLB 畫出來的家具(task 5)。名稱帶 kind 與 part 序號 ——
- * `refined-furniture-model:cabinet:3`。
+ * 用 `<Instances>` 畫出來的家具。名稱帶 kind 與 part 序號 ——
+ * `refined-furniture-instance:cabinet:3`。
  *
- * 為什麼要把 kind 編進名字:一個 GLB 可能含多個 mesh(cabinet 就有 5 個),
- * 每個 part 各自是一個 `<Instances>` → 一個 `InstancedMesh`。所以「castShadow
- * 的 mesh 數」跟「投影的家具件數」已經不是同一回事,探針必須先照 kind 分組、
- * 每組只取一個代表讀它的 instance 數,才能還原真正的家具件數。
+ * 匯入模型(task 5)與程序化造型(task 6)**共用**這個命名,探針因此不需要
+ * 分辨一件家具是哪一種來源 —— 兩邊的座標約定與 instancing 方式本來就一樣。
+ *
+ * 為什麼要把 kind 編進名字:一件家具可能由多個零件組成(cabinet 的 GLB 有 5
+ * 個 mesh,櫃檯/講台/展示架各 3 個零件),每個零件各自是一個 `<Instances>`
+ * → 一個 `InstancedMesh`。所以「castShadow 的 mesh 數」跟「投影的家具件數」
+ * 已經不是同一回事,探針必須先照 kind 分組、每組只取一個代表讀它的 instance
+ * 數,才能還原真正的家具件數。
  */
-export const REFINED_FURNITURE_MODEL_PREFIX = "refined-furniture-model:";
+export const REFINED_FURNITURE_INSTANCE_PREFIX = "refined-furniture-instance:";
 
-export function refinedFurnitureModelName(kind: string, partIndex: number): string {
-  return `${REFINED_FURNITURE_MODEL_PREFIX}${kind}:${partIndex}`;
+export function refinedFurnitureInstanceName(kind: string, partIndex: number): string {
+  return `${REFINED_FURNITURE_INSTANCE_PREFIX}${kind}:${partIndex}`;
 }
 
-/** 從 `refined-furniture-model:cabinet:3` 取回 `cabinet`。 */
-function furnitureModelKindFromName(name: string): string | null {
-  if (!name.startsWith(REFINED_FURNITURE_MODEL_PREFIX)) return null;
-  const rest = name.slice(REFINED_FURNITURE_MODEL_PREFIX.length);
+/** 從 `refined-furniture-instance:cabinet:3` 取回 `cabinet`。 */
+function furnitureInstanceKindFromName(name: string): string | null {
+  if (!name.startsWith(REFINED_FURNITURE_INSTANCE_PREFIX)) return null;
+  const rest = name.slice(REFINED_FURNITURE_INSTANCE_PREFIX.length);
   const separator = rest.lastIndexOf(":");
   return separator > 0 ? rest.slice(0, separator) : null;
 }
@@ -116,6 +129,10 @@ export interface RefinedDiagnostics {
   environmentSet: boolean;
   rendererTextures: number;
   rendererGeometries: number;
+  // task 6 — 程序化家具的存活資源計數。刻意**不**併進 rendererTextures /
+  // rendererGeometries:那兩個來自 gl.info.memory,而 gl.info 根本不統計
+  // material,漏放 material 在那裡是看不見的。
+  proceduralFurniture: ProceduralFurnitureStats;
   materials: MaterialProbeReport;
 }
 
@@ -620,7 +637,7 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
     // kind -> 該 kind 的 instance 數。用 Map 而非累加:同一個 kind 的每個
     // part 都是獨立的 InstancedMesh 但共用同一份 instance 清單,累加會把
     // 件數乘上 partCount。
-    const furnitureModelInstances = new Map<string, number>();
+    const furnitureInstances = new Map<string, number>();
     // Held on an object rather than in `let` bindings: TypeScript's control
     // flow analysis cannot see assignments made inside the traverse callback
     // and would otherwise narrow the locals to `null` (then to `never` at every
@@ -655,8 +672,8 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
           if (object.name === REFINED_FURNITURE_BOX_NAME) {
             shadowCasterFurnitureBoxCount += 1;
           }
-          const modelKind = furnitureModelKindFromName(object.name);
-          if (modelKind) {
+          const instancedKind = furnitureInstanceKindFromName(object.name);
+          if (instancedKind) {
             // `InstancedMesh.count` is drei <Instances>'s own per-frame
             // bookkeeping (`min(limit, range, instances.length)`), so it is
             // the live instance count, not the buffer capacity. The probe's
@@ -664,8 +681,8 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
             // the very first frame after mount this still reads 0 — harmless,
             // the next frame has it, and the probe stays armed for
             // PROBE_ACTIVE_FRAMES.
-            furnitureModelInstances.set(
-              modelKind,
+            furnitureInstances.set(
+              instancedKind,
               (object as THREE.InstancedMesh).count,
             );
           }
@@ -722,7 +739,7 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
       shadowCasterColumnCount,
       shadowCasterFurnitureCount:
         shadowCasterFurnitureBoxCount +
-        [...furnitureModelInstances.values()].reduce((sum, n) => sum + n, 0),
+        [...furnitureInstances.values()].reduce((sum, n) => sum + n, 0),
       floorReceivesShadow: floor ? floor.receiveShadow : false,
       floorCastsShadow: floor ? floor.castShadow : false,
       shadowsEnabled: gl.shadowMap.enabled,
@@ -744,6 +761,7 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
       environmentSet: scene.environment !== null,
       rendererTextures: gl.info.memory.textures,
       rendererGeometries: gl.info.memory.geometries,
+      proceduralFurniture: getProceduralFurnitureStats(),
       materials: materialsCacheRef.current ?? NOT_READY_MATERIALS,
     };
 

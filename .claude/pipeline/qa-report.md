@@ -1,78 +1,80 @@
-# QA Report — [FRONTEND] 匯入 6 種真實家具模型 / venue-refined-3d.md task 5
-> Generated: 2026-08-04T23:45+08:00 | QA iteration: 1
+# QA Report — [FRONTEND] 3 種展場家具程序化幾何 / venue-refined-3d.md task 6
+> Generated: 2026-08-05T01:05+08:00 | QA iteration: 1
 
 ## Summary
 
-- Tests executed: 8 new automated(`venue-furniture-models.spec.ts` M1–M8）+ 143 既有回歸（免登入的 13 支 spec）
-- Passed: **151 / 151**
+- Tests executed: 8 new automated(`venue-procedural-furniture.spec.ts` P1–P8)+ 151 既有回歸(免登入的 14 支 spec)
+- Passed: **159 / 159**
 - Failed: 0
-- Blocked: **5 支 spec 無法執行**（見下方 Blocked 段）+ 1 個 asset pipeline 驗證項目
+- Blocked: 5 支需帳密的 spec + 1 個 asset pipeline 驗證項目(見下方)
 
 ## Recommendation
 
-**APPROVED** — 驗收條件全數有可斷言的證據支撐,回歸零失敗,lint 與 tsc 乾淨。
+**APPROVED** — 驗收條件全數有可斷言的證據,回歸零失敗,lint 與 tsc 乾淨。
 
-review 階段抓到的 🔴（`<Instances>` 靜默截斷）已修並補上 M8 回歸;本輪 QA 在修
-完之後重跑整套,151 全綠。
+review 階段抓到的 🔴(StrictMode 雙重建置導致一半資源永不釋放)已修並補上
+回歸;本輪 QA 在修完之後重跑整套。
 
 ---
 
 ## Acceptance Criteria Results
 
-| # | Criterion（story task 5） | Result | Evidence |
+| # | Criterion(story task 6) | Result | Evidence |
 | --- | --- | --- | --- |
-| AC1 | 等比縮放至 `FURNITURE_DEFAULTS` 的 `w / h / height3d` | ✅ PASS | M1。三段互補的證據:(a) 對外契約的 `scale` 是**單一純量** —— 非等比縮放在型別上就表達不出來;(b) 三軸皆 `fittedM / targetM ≤ 1`(1e-3 容差),沒有任何一軸溢出目標框;(c) 至少一軸 `≥ 1 - 1e-3`,擋掉「等比但縮得莫名其妙小」。六種 kind 逐一驗過 |
-| AC2 | 不得非等比拉伸變形 | ✅ PASS | 同 AC1(a) —— 這是結構性保證,不是抽樣。`uniformFitScale()` 取三軸比值的**最小值**,回傳型別為 `number` |
-| AC3 | `drawer_cabinet` 需轉 90° | ✅ PASS | M2。`fittedM` 的長邊落在 Z(1.092m > X 的 0.467m),且貼齊的那一軸就是長邊(`z / targetZ = 0.91 > 0.85`)。模型原生 1.141 × 0.488 長邊在 X,若 `rotationY: 90` 掉了,長邊會落回 X,兩條斷言都會紅 |
-| AC4 | 重複家具用 drei `<Instances>` | ✅ PASS | M7(3 張椅子只產生 **1 份** model report,即共用同一組 geometry/material)+ M8(容量成長路徑正確,300 件全部繪製) |
-| AC5 | 植栽單獨 lazy load | ✅ PASS | M4。斷言的是 **request/response 時序**而非單純的先後順序:`req:plant.glb` 的索引必須大於 `res:table.glb` —— 也就是 plant 的請求發生在 eager 那批**收完之後**,而不是只在它後面排隊。這正是「不綁在同一個 Suspense」的可觀測定義 |
-| AC6 | 步驟 01/02 不得載入步驟 03 專用資源 | ✅ PASS | C1–C3,且**已用反證確認三條都真的能紅**（見下方 Test Effectiveness） |
-| AC7 | 往返 02↔03 不累積 GPU 資源 | ✅ PASS | M6。三趟往返後 `gl.info.memory` 的 geometries 與 textures 與首次完全相同。這條同時證明 clone 出來的 geometry 有被 dispose、而 GLB 的 material 沒有被誤 dispose(誤 dispose 會讓後續往返貼圖數下降或報錯) |
-| AC8 | 沒有模型的三種家具維持白模、不得被畫兩次 | ✅ PASS | M3。三件家具 → `data-furniture-mesh-count = 3`、model reports 為空陣列、投影家具件數為 3。若 box 分支與模型分支同時命中,件數會翻倍 |
+| AC1 | counter / bannerStand / podium 為**可辨識的**程序化造型 | ✅ PASS | P2 斷言三者零件數皆 > 1(退回單一方塊立刻紅);「可辨識」本身無法自動斷言,由 P8 產出 `playwright-report/procedural-furniture.png` 供人工判讀 —— 已實際檢視:櫃檯有外伸檯面與內縮踢腳座、易拉寶有捲軸箱+支桿+布面、講台有傾斜讀寫台面與收窄立柱,三者輪廓互不混淆 |
+| AC2 | 尺寸由 `FURNITURE_DEFAULTS` 驅動 | ✅ PASS | P1。三種家具的三軸外廓與標稱尺寸誤差 **0**(1mm 容差內)。刻意用「等於」而非「不超過」:程序化尺寸是自己算出來的,沒有匯入模型那種原生比例對不上的問題 |
+| AC3 | 風格需與匯入模型協調 | ✅ PASS(結構性) | body/accent 直接沿用 `REFINED_SURFACE.furniture` 的粗糙度/金屬度基準 —— 與匯入模型共用同一組表面參數;顏色一律由該 kind 的 `FURNITURE_DEFAULTS.color` 推導(accent 壓深、panel 提亮),不引入獨立色票。只有易拉寶的鋁製捲軸箱與支桿給 metalness。P8 截圖中三件程序化家具與旁邊的匯入模型並置無違和 |
+| AC4 | 不得與匯入模型重複繪製 | ✅ PASS | P3(一件程序化 + 一件匯入模型,投影件數為 2 而非 3);`RefinedScene` 的三條分支互斥(模型 → 程序化 → 白模保底);`venue-furniture-models` 的 M3 從另一側守同一條線 |
+| AC5 | 往返 02↔03 不累積 GPU 資源 | ✅ PASS | P6。三趟往返後存活數仍是 9,**且 `totalBuilds` 一次都沒有再漲** —— 後者才是真正的證據:資源是被重用的,不是「每趟重建 + 每趟剛好釋放乾淨」 |
+| AC6 | 步驟 03 的資源不得提早載入 | ✅ PASS | P5。只擺這三種家具時全程零 GLB 請求(含 1.5 秒安定窗口 —— 否定斷言讀太快會恆綠) |
 
 ## Edge Case Results
 
 | Edge Case | Result | Notes |
 | --- | --- | --- |
-| 件數超過 `<Instances>` 初始緩衝區容量 | ✅ PASS（**修復後**） | M8。修復前實測:300 張椅子只畫得出 256 張,無錯誤、無警告,元件自報的 `instanceCount` 還是 300。這是 review 階段抓到的 🔴,現已修復並有回歸 |
-| 只擺一種家具 | ✅ PASS | M5。只請求 `table.glb`,其餘五個 GLB 一個都沒拉 |
-| 場上完全沒有有模型的家具 | ✅ PASS | M3（只有 counter/bannerStand/podium）—— eager Suspense 立即 commit,`data-furniture-models-loaded` 為 true,零 GLB 請求 |
-| 家具數為 0 的空場景 | ✅ PASS | `venue-refined-lighting` 案例11(既有回歸,零 pageerror) |
-| 慢速載入 / 探針過期 | ✅ PASS | 修復前 `PROBE_ACTIVE_FRAMES` 停止後家具永遠不被計入;`probeResetKey` 改為複合鍵後,模型載入完成會重新武裝探針 |
+| 傾斜檯面的外廓佔用 | ✅ PASS | 講台的斜面是本 task 唯一的幾何陷阱:傾斜的板子在高度與深度兩個方向佔的空間都比自身尺寸大,直接 `d = h` 再轉 10° 會同時撐破深度與高度。實作反解出「傾斜後剛好等於 h」的板深、再把中心壓到「傾斜後最高點剛好等於 height3d」;`partExtentM()` 把傾斜投影算進外廓,P1 因此測得到 |
+| 同 kind 多件 | ✅ PASS | P7(3 件講台只有 1 份報告、instanceCount 3、投影件數 3) |
+| 程序化 + 匯入模型混場 | ✅ PASS | P3 |
+| 既沒有模型也沒有程序化造型的 kind | ✅ PASS(結構性) | 白模 box 保底路徑保留,仍掛 `REFINED_FURNITURE_BOX_NAME`、仍被算進投影件數。目前九種家具都有造型,所以正常情況下不會產出這種 mesh —— 它是為日後往 `FURNITURE_DEFAULTS` 加新 kind 準備的 |
 
-## Test Effectiveness（這輪 QA 額外做的事）
+## Test Effectiveness（這輪額外做的事）
 
-一般 QA 只確認測試綠。這次額外**反證**了三條否定斷言,因為「零請求」型的斷言
-天生有「讀太快就恆綠」的風險:
+本 task 新增的 `data-procedural-furniture-stats`(three 自身 `dispose` 事件
+驅動的存活計數)**第一次跑就抓到一個真缺陷**:預期 9 組、實際 18 組。
 
-| 反證 | 結果 |
+這件事值得記錄,因為它說明既有的資源檢查有盲區:
+
+| 量測方式 | 看得到 StrictMode 的雙重建置嗎 |
 | --- | --- |
-| 在 `VenueScene.tsx`(步驟 02)模組層呼叫 preload | 加安定窗口**之前**:只有 C3 紅,C1/C2 仍綠（← 證明它們原本量不到東西）。加之後:C2 / C3 皆紅 ✅ |
-| 在 `PlanEditor.tsx`(步驟 01)模組層呼叫 preload | C1 紅 ✅ |
+| `gl.info.memory.geometries` | ❌ 被丟棄的 geometry 從未掛進場景圖、從未上傳 GPU,不計入 |
+| `gl.info.memory.textures` | ❌ 這些 material 沒有貼圖 |
+| `gl.info` 完全沒有 material 計數 | ❌ |
+| three 自身 `dispose` 事件計數 | ✅ |
 
-結論:C1–C3 從 task 4 時的「必然綠」變成真的有鑑別力。反證用的改動已全部還原。
+task 5 的 M6 與本 task 最初版本的 P6 都只讀 `gl.info.memory` —— 兩者都測不到。
 
 ## Blocked / 未涵蓋
 
 | 項目 | 原因 | 建議 |
 | --- | --- | --- |
 | `ai-panel` / `membership-task7-task9` / `points-shop` / `profile-edit-mode` / `site-header` 5 支 spec | 本執行環境缺 `.env.playwright.local` 的 `PW_VERIFIED_EMAIL` / `PW_VERIFIED_PASSWORD`,這些 spec 在**檔案載入期**就 throw | 在有測試帳號的機器補跑。本 task 未觸及 auth / API / 付費路徑,風險低 |
-| 重跑 `scripts/build-venue-models.mjs` 的下載階段 | `api.polyhaven.com` 被本環境的 egress policy 擋(CONNECT 403),依代理規範不得繞路 | 在有對外網路的機器補跑。**已驗證**:`copyDracoDecoder()` 正常完成並正確認出 `three@0.185.1` —— 那正是先前被修過、風險最高的一段 |
-| 「數十件家具下仍可流暢旋轉」的實際 FPS | 與 task 2 相同,非互動式環境無法量測,且軟體渲染下的數字不具代表性 | task 7（效能與驗收）處理。M8 已證明 300 件的**正確性**,效能另計 |
+| 重跑 `scripts/build-venue-models.mjs` 的下載階段 | `api.polyhaven.com` 被本環境的 egress policy 擋(CONNECT 403),依代理規範不得繞路 | 在有對外網路的機器補跑。task 6 完全沒有動這條路徑 |
+| 「數十件家具下仍可流暢旋轉」的實際 FPS | 非互動式環境無法量測,軟體渲染下的數字不具代表性 | task 7(效能與驗收)處理 |
 
-## 既有問題（非本 task 造成,不阻擋)
+## 既有問題（非本 task 造成,不阻擋）
 
 | 項目 | 說明 |
 | --- | --- |
-| `venue-refined-materials` T14 逾時 | 純截圖、不斷言的案例,在 `ae0bb60`（本 task 動手前）上重現過 —— 軟體渲染下光是後半段相機操作就超過預設 30 秒。已加 `test.slow()`,未刪改任何步驟 |
+| 匯入模型那條路也有 StrictMode 雙重建置 | `furnitureModels.tsx` 仍是「`useMemo` 建立 + `useEffect` dispose」。被丟棄的那份 clone 從未上傳 GPU,所以沒有真正的 GPU 洩漏,但也確實從未被 dispose。task 7 可順手改成依 kind 快取,同時消掉「每趟往返重新 clone 96k 面植栽」的成本 |
+| `venue-refined-materials` T14 | 純截圖、不斷言的案例,在改動前就會逾時(軟體渲染太慢),已於 task 5 加 `test.slow()` |
 | `src/app/api/plans/[slot]/conversation/route.ts` 的 tsc 錯誤 | TS2344 / TS2339,在乾淨的 `571339f` 上就存在,與本 story 無關 |
 | task 3 review 的 🟡 Issue 6 | `venue-refined-materials.spec.ts` T3 的牆面 UV 守衛複製了實作的對照表 —— 仍未修 |
 
 ## 執行紀錄
 
 ```
-venue-furniture-models.spec.ts                8 passed
-免登入全套（13 支 spec）                    151 passed / 0 failed（12.9 分鐘）
+venue-procedural-furniture.spec.ts            8 passed
+免登入全套（14 支 spec）                    159 passed / 0 failed（15.5 分鐘）
 npm run lint                                  clean
 npx tsc --noEmit                              clean（排除上述既有錯誤）
 ```

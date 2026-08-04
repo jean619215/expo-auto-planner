@@ -1,126 +1,106 @@
-# Code Review Report — [FRONTEND] 匯入 6 種真實家具模型, 步驟 03
-> Generated: 2026-08-04T23:20+08:00 | Review iteration: 1
-> Story: `stories/venue-refined-3d.md` task 5 | Plan: `.claude/pipeline/architect-plan.md`
-> Diff reviewed: `c54166b..HEAD`(涵蓋 wip commit `2ae97aa` — 它從未被審過)
+# Code Review Report — [FRONTEND] 3 種展場家具程序化幾何, 步驟 03
+> Generated: 2026-08-05T00:40+08:00 | Review iteration: 1
+> Story: `stories/venue-refined-3d.md` task 6 | Plan: `.claude/pipeline/architect-plan.md`
+> Diff reviewed: task 6 的全部改動(`f9fbb60..HEAD`)
 
 ## Overall Assessment
 
-**APPROVED WITH FIXES APPLIED** — 1 🔴 Critical(已在本輪修掉並補上回歸測試)、
-3 💡。
+**APPROVED WITH FIXES APPLIED** — 1 🔴(已修並補上回歸)、2 💡。
 
 ## Summary
 
-分層是對的:`src/lib/venue/models.ts` 維持純領域(只有 manifest 與
-`uniformFitScale`,沒有 React/three),所有畫布邏輯留在
-`src/components/venue/`。`normalizeModel()` 把節點世界矩陣、方位修正、等比縮放
-與置中全部烘進頂點的做法有充分理由(`<Instances>` 只吃單一 geometry +
-material,GLB 的節點階層會整個被丟掉),而且座標約定與既有 box 版本一致,
-呼叫端不需要知道模型是哪來的。資源生命週期分得很乾淨:clone 出來的 geometry
-自己 dispose,material 沿用 GLB 的、交給 `useGLTF` 快取管 —— M6 三趟往返
-`gl.info.memory` 完全持平,證實沒有雙重釋放也沒有洩漏。
+分層乾淨:零件規格(誰、多大、擺哪、什麼表面處理)放在純領域模組
+`src/lib/venue/proceduralFurniture.ts`,完全不 import React / three;
+`src/components/venue/proceduralFurniture.tsx` 只負責把規格變成 geometry /
+material 與 instancing。這讓「拼出來的外廓到底等不等於標稱尺寸」可以在沒有
+WebGL 的情況下驗算 —— `proceduralFurnitureSizeM()` 就是為此存在,P1 直接拿它
+跟 `FURNITURE_DEFAULTS` 比。
 
-Draco 解碼器自架(`public/draco/`)是必要的:drei 的 `useGLTF` 預設把
-decoder path 指向 gstatic.com,那會直接違反步驟 03 的「零外部下載」硬規定。
-`DRACO_DECODER_PATH` 顯式傳入這點做對了。
+與匯入模型那條路刻意保持同構:同樣的座標約定(底面貼 y=0、水平置中)、同樣用
+drei `<Instances>`、同樣的場景圖命名。因此探針不需要分辨一件家具是模型還是
+程序化的,`shadowCasterFurnitureCount` 一套邏輯兩邊通用 —— 這也是 task 5 留下的
+交接線(M3)能繼續守住的原因。
 
-範圍紀律良好:`VenueScene.tsx` / `PlanEditor.tsx` / `FURNITURE_DEFAULTS` /
-`plan.ts` / `furniture.ts` 全未動;步驟 03 仍然沒有任何 `useState` 持有幾何、
-沒有 `TransformControls`、沒有回寫。
-
-唯一的嚴重問題是一個**靜默截斷**:`<Instances>` 的緩衝區容量寫死 256,超過就
-不畫,而且不報錯 —— 詳見 Issue 1。
+尺寸紀律良好:三種家具的外廓**精準等於** `FURNITURE_DEFAULTS`(P1 實測三軸
+誤差 0)。講台的傾斜檯面是這裡唯一的陷阱 —— 傾斜的板子在高度與深度兩個方向
+佔的空間都比自身尺寸大,直接拿 `d = h` 再轉 10° 會同時撐破深度與高度;實作
+反解出「傾斜後剛好等於 h」的板深,再把中心壓到「傾斜後最高點剛好等於
+height3d」。
 
 ---
 
 ## 🔴 Critical Issues
 
-### Issue 1 — `<Instances>` 容量寫死 256,家具超過就靜默消失(已修)
+### Issue 1 — StrictMode 的雙重 render 讓一半的 GPU 資源永遠沒人釋放(已修)
 
-- **File**: `src/components/venue/furnitureModels.tsx:33`(原 `INSTANCE_LIMIT = 256`)
+- **File**: `src/components/venue/proceduralFurniture.tsx`(原本的
+  `useMemo` 建立 + `useEffect` 卸載時 dispose)
 - **Issue**:
 
-  drei 的 `<Instances>` 在**第一次 render** 就用 `useState` 把矩陣緩衝區配置好:
+  原始寫法沿用了 `furnitureModels.tsx` 的模式:在 `useMemo` 裡 `new` 出
+  geometry 與 material,在 `useEffect` 的 cleanup 裡 dispose。
 
-  ```js
-  // node_modules/@react-three/drei/core/Instances.js
-  const [[matrices, colors]] = React.useState(() => {
-    const mArray = new Float32Array(limit * 16);   // 只在掛載時算一次
-    ...
-  });
-  ```
+  React StrictMode(Next.js 預設開啟,`next.config.ts` 未關閉)會把 render
+  **跑兩次、只 commit 一次**。`useMemo` 屬於 render 階段,所以兩次都會執行、
+  建出兩組資源;而 `useEffect` 只會掛在被 commit 的那一次上 —— **被丟棄的那
+  一組永遠不會有人 dispose**。
 
-  之後把 `limit` prop 改大**不會**重新配置。而它每幀寫入的是
-  `instances.length` 個矩陣:
+- **Failure scenario**(實測,不是推論):進入步驟 03 擺三種程序化家具,
+  預期存活 9 組 geometry/material,實際讀到 **18**。
 
-  ```js
-  count = Math.min(limit, range !== undefined ? range : limit, instances.length);
-  parentRef.current.count = count;
-  for (let i = 0; i < instances.length; i++) {
-    instanceMatrix.toArray(matrices, i * 16);      // i 超過容量時寫在界外
-  }
-  ```
+- **為什麼之前沒被發現**:`gl.info.memory` 只統計 geometries 與 textures,
+  **完全不統計 material**;而被丟棄的那組 geometry 從未被掛進場景圖、也就
+  從未上傳 GPU,所以在 `gl.info.memory` 上同樣看不見。task 5 的 M6 與本 task
+  最初的 P6 都是讀 `gl.info.memory` —— 兩者都測不到這件事。是本 task 新增的
+  「three 自身 dispose 事件驅動的存活計數」第一次跑就把它抓出來的。
 
-  兩個後果同時發生:`count` 被 `limit` 卡住(第 257 件之後不繪製),而
-  `toArray()` 對 typed array 的界外寫入會被**靜默丟棄**,不拋錯。
+- **Fix applied**: 改為**依 kind 的模組層快取**
+  (`proceduralFurnitureStats.ts` 的 `getOrBuildProceduralParts()`)。理由不只
+  是繞開 StrictMode:
+  1. 一個 kind 的零件完全由 kind 決定(尺寸來自 `FURNITURE_DEFAULTS`、顏色
+     來自同一份常數),沒有任何 per-instance 變化 —— 每次進步驟 03 重建是
+     純粹的浪費。
+  2. 這與匯入模型那條路本來就一致:GLB 的 material 生命週期歸 `useGLTF` 的
+     模組層快取管,元件不碰。
+  快取上限是 3 種 x 3 個零件 = 9 組,不隨使用增長,所以「往返不累積」仍然成立。
 
-- **Failure scenario**(已實測,不是推論):
-  讀入一份有 300 張椅子的存檔 → 平面圖 `data-furniture-count` 是 300,
-  `data-furniture-model-reports` 的 `instanceCount` 也寫 300,但探針從
-  `InstancedMesh.count` 量到的實際繪製數是 **256**。44 張椅子在 3D 裡人間蒸發,
-  沒有錯誤、沒有警告,連元件自己的報告都還說有 300 張。展場擺 300 張椅子是
-  完全正常的用法,200x200m 的可規劃範圍更是鼓勵這種量級。
-
-- **Fix applied**: 容量改為「只會往上跳的 2 的冪次桶」
-  (`instanceLimitFor()`,下限 64),並且**把桶編進 `key`** —— 需要更大的緩衝區
-  時整個 `<Instances>` 重新掛載,`useState` 才會真的重配。桶只會成長,所以一般
-  的加減家具不會造成重掛。
-
-- **Regression test**: `venue-furniture-models.spec.ts` 的 M8,用 mock 的存檔
-  載入 300 張椅子,斷言探針量到的實際繪製數等於 300。這條斷言刻意讀
-  `refinedShadowCasterFurnitureCount()`(來自 `InstancedMesh.count`)而不是
-  元件自報的 `instanceCount` —— 缺陷發生時後者仍然是 300,只有前者會掉到 256。
+- **Regression test**: P6 現在斷言兩件事 —— 往返三趟後存活數仍是 9,**且
+  `totalBuilds` 一次都沒有再漲**。後者才是真正的證據:證明資源是被重用的,
+  而不是「每趟重建、每趟剛好釋放乾淨」。
 
 ---
 
 ## 💡 Suggestions(不阻擋)
 
-### Issue 2 — `normalizeModel()` 的 material 陣列分支是防禦性死碼
+### Issue 2 — cache miss 時仍然是在 render 期間建立 GPU 資源
 
-- **File**: `src/components/venue/furnitureModels.tsx`(`normalizeModel()` 內)
-- `Array.isArray(node.material) ? node.material[0] : node.material` 只取第一個
-  material,若真有多 material 的 mesh,其餘 group 會被錯誤地套上第一個
-  material。但依 glTF 規格,一個 primitive 只有一個 material,three 的
-  `GLTFLoader` 對多 primitive 的 mesh 會產生多個 `THREE.Mesh`(cabinet 的 5 個
-  part 正是這樣來的)—— 所以這個分支在 glTF 來源下走不到。留著無害,但值得在
-  註解說明它是防禦性的,免得後人以為多 material 有被正確處理。
+- **File**: `src/components/venue/proceduralFurnitureStats.ts`
+  (`getOrBuildProceduralParts()`)
+- AGENTS.md 要求「不在 render 期間新建 geometry/material/texture」。快取命中
+  時完全符合(穩態下 render 只是查表),但**第一次** cache miss 仍發生在
+  render 階段。
+- 判斷:可接受。整個頁面生命週期每個 kind 只會發生一次,而且這正是
+  `useGLTF` 的行為(本專案已經依賴它)。真正要避免的是「每次 render / 每幀
+  都新建」,那件事沒有發生。若日後要更嚴格,可以在進入步驟 03 時用一個
+  effect 預先暖機。
 
-### Issue 3 — eager `<Suspense>` 在新增未載過的 kind 時會讓既有家具短暫消失
+### Issue 3 — 同一件家具內相同表面處理會各自持有一個 material
 
-- **File**: `src/components/venue/RefinedScene.tsx`(eager `<Suspense>` 邊界)
-- 若場上的家具在步驟 03 期間新增了一個尚未載入的 kind,eager 邊界會重新
-  suspend,R3F 會把整批既有家具模型暫時從場景圖移除,直到新 GLB 載完。
-- **目前走不到**:`PlanEditor.tsx:1605-1607` 在步驟 03 對 `AiPanel` 同時上了
-  `hidden` class 與 `inert`,而步驟 03 本身唯讀 —— 沒有任何路徑能在 03 期間
-  改動家具。**但如果日後讓 AI 面板在 03 可用(那是很自然的產品需求),這個
-  閃爍會立刻變成真的。** 屆時的解法是每個 kind 各自一個 `<Suspense>`,而不是
-  整批共用一個。
-
-### Issue 4 — 每次進入步驟 03 都重新 clone + 重新上傳全部 geometry
-
-- **File**: `src/components/venue/furnitureModels.tsx`(`useMemo` + 卸載 dispose)
-- 這是 M6「往返不累積」的代價:資源確實乾淨釋放了,但也表示每趟往返都要對
-  六個模型(含 96k 面的植栽)重做一次 clone、矩陣烘焙與 GPU 上傳。以正確性
-  而言無誤,以效能而言是 task 7 該量測的對象 —— 若進入 03 的延遲不可接受,
-  可考慮把烘焙結果快取在模組層(代價是常駐記憶體)。
+- **File**: `src/components/venue/proceduralFurniture.tsx`
+- 例如接待櫃檯的踢腳座與檯面都是 `accent`,會建出兩個內容完全相同的
+  `MeshStandardMaterial`。共用一個可以少一次 shader program 查表。
+- 量級是「每個 kind 至多 3 個」,對 draw call 沒有影響(每個零件本來就是
+  獨立的 `InstancedMesh`),所以不值得為它增加一層 finish→material 的快取
+  間接性。記錄在案即可。
 
 ---
 
-## 驗收條件對照(task 5)
+## 驗收條件對照(task 6)
 
 | 條件 | 證據 |
 |---|---|
-| 等比縮放至 `FURNITURE_DEFAULTS` 的 `w/h/height3d`,不得非等比拉伸 | M1(`scale` 為單一純量 + 無軸溢出 + 至少一軸貼齊) |
-| `drawer_cabinet` 需轉 90° | M2(長邊落在 Z、且貼齊的是長邊) |
-| 重複家具用 drei `<Instances>` | M7(3 件只有 1 份報告)、M8(容量成長正確) |
-| 植栽單獨 lazy load | M4(`plant.glb` 的請求排在 eager 批**收完之後**) |
-| 步驟 01/02 不得載入 GLB | C1–C3,且已用反證確認三條都能紅 |
+| counter / bannerStand / podium 為可辨識的程序化造型 | P2(零件數 > 1,擋住「退回單一方塊」)+ P8 截圖人工判讀:櫃檯有外伸檯面與內縮踢腳座、易拉寶有捲軸箱+支桿+布面、講台有傾斜讀寫台面與收窄立柱 |
+| 尺寸由 `FURNITURE_DEFAULTS` 驅動 | P1(三軸外廓與標稱尺寸誤差 0;傾斜檯面的高度/深度佔用已算進外廓) |
+| 風格需與匯入模型協調 | body/accent 沿用 `REFINED_SURFACE.furniture` 的粗糙度基準(與匯入模型同一組表面參數),只有易拉寶的鋁製件給 metalness;顏色一律由該 kind 的 `FURNITURE_DEFAULTS.color` 推導 |
+| 不得與匯入模型重複繪製 | P3(兩種來源各一件,投影件數為 2 而非 3)、M3 |
+| 往返不累積 GPU 資源 | P6(存活數持平 + `totalBuilds` 未增,證明是重用而非重建) |

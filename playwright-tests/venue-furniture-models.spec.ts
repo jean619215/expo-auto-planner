@@ -12,8 +12,9 @@ import { PlanSlotsPage } from "./pages/PlanSlotsPage";
 //       非等比縮放無法用一個純量表示 —— 再加上「至少一軸貼齊目標、且沒有
 //       任何一軸溢出」把「等比但縮錯倍率」也擋掉。
 //   M2  cabinet 的模型方位修正(rotationY = 90°)真的讓長邊對上平面圖。
-//   M3  沒有對應模型的三種展場家具(counter / bannerStand / podium)不會
-//       產生 model report,也不會被畫兩次。
+//   M3  沒有對應模型的三種展場家具(counter / bannerStand / podium)不走匯入
+//       模型那條路,也不會被畫兩次(task 6 起改由程序化幾何繪製 —— 它們自己
+//       的驗收在 venue-procedural-furniture.spec.ts)。
 //   M4  植栽延後載入:plant.glb 必須排在 eager 那批**載完之後**才被請求。
 //   M5  只請求場上真的有的 kind —— 擺一張桌子不該把六個 GLB 全拉下來。
 //   M6  02 <-> 03 往返多次不累積 GPU 資源(clone 出來的 geometry 有被 dispose)。
@@ -99,7 +100,7 @@ const MODEL_KINDS = [
 /** M8 用來 mock 存檔載入的 API(沿用 venue-zoom-pan.spec.ts 的寫法)。 */
 const PLAN_SLOT_RE = /\/api\/plans\/\d$/;
 
-/** 沒有 Poly Haven 資產、仍走白模 box 的展場專用家具(task 6 接手)。 */
+/** 沒有 Poly Haven 資產的展場專用家具(task 6 起改由程序化幾何繪製)。 */
 const BOX_ONLY_KINDS = ["counter", "bannerStand", "podium"] as const;
 
 /**
@@ -209,7 +210,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
     expect(z / report.targetM[2]).toBeGreaterThan(0.85);
   });
 
-  test("M3: 沒有模型的三種展場家具仍走白模 box,且不會被畫兩次", async ({
+  test("M3: 沒有模型的三種展場家具不走匯入模型,且不會被畫兩次", async ({
     page,
   }) => {
     const editor = new PlanEditorPage(page);
@@ -233,8 +234,8 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
       "counter / bannerStand / podium 沒有 Poly Haven 資產,不該有 model report",
     ).toEqual([]);
 
-    // 三件家具、三個 box、零個 instanced mesh —— 若哪天 box 分支與模型分支
-    // 同時命中,這個件數會翻倍。
+    // 三件家具、一件算一次 —— 若哪天模型分支與程序化分支同時命中,這個件數
+    // 會翻倍。這條就是 task 5 -> task 6 交接時守住「不重複繪製」的那道線。
     await expect
       .poll(() => editor.refinedShadowCasterFurnitureCount(), { timeout: 10_000 })
       .toBe(BOX_ONLY_KINDS.length);
