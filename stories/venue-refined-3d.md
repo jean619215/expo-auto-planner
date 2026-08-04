@@ -7,9 +7,13 @@
 - **路線選擇**(2026-07-26 修訂): 採**混合路線** — 6 種家具匯入 Poly Haven CC0 模型,3 種展場專屬家具用程序化幾何;地板/牆/柱維持程序化 + PBR 材質。**不接 AI 3D 生成 API**(不需新後端服務、無算圖費用與非同步排隊)。
   - 原定調為「全程序化、不引入外部模型」,經查證 Poly Haven 有品質足夠且比例吻合的 CC0 家具模型後修訂。
   - **模型來源限定 Poly Haven**(全站 CC0,商用免標註)。**Sketchfab 已排除** — 其 CC0 且可下載的結果幾乎全是博物館掃描件(10 萬~290 萬三角面),不堪使用。
-  - 已確認可用模型:`wooden_table_02`(桌,196 面)、`painted_wooden_chair_01`(椅,724 面)、`sofa_02`(沙發,2,728 面)、`wooden_display_shelves_01`(展示櫃,3,174 面)、`drawer_cabinet`(櫃子,26,406 面,需轉 90°)、`potted_plant_02`(植栽,69,806 面,最重)。
+  - **定案模型**(2026-08-04,task 4 實作時以程式化挑選複核):`wooden_table_02`(桌,196 面)、`painted_wooden_chair_02`(椅,1,246 面)、`sofa_02`(沙發,2,728 面)、`wooden_display_shelves_01`(展示櫃,3,174 面)、`drawer_cabinet`(櫃子,26,406 面,需轉 90°)、`potted_plant_01`(植栽,96,030 面,最重)。
+    - 挑選方法:家具只能等比縮放,所以模型原生比例與 `FURNITURE_DEFAULTS` 目標尺寸差越多、縮進目標框後的空隙越大。對全站 521 個模型算「三軸 log 比例對最佳等比縮放的 RMS 殘差」(允許 0°/90° 旋轉),語意過濾後取殘差最小者。
+    - 與初期人工挑選的兩處差異,皆為此複核推翻:椅子改 `_02`(殘差 0.020 vs `_01` 的 0.091 —— `_01` 底面 0.432×0.540 對不上 0.45×0.45 的方形目標),植栽改 `_01`(殘差 0.051 vs `_02` 的 **0.313** —— `_02` 原生僅 0.841m 高,等比縮進 0.5×0.5×1.2 後只剩 0.772m,矮了三分之一)。植栽因此比原估更重(96k 而非 70k 面),但 Draco 壓縮後 GLB 為 1.32MB,仍在可接受範圍,且本來就要單獨 lazy load。
   - 程序化處理:`counter` 接待櫃檯、`bannerStand` 展示架、`podium` 講台 — 兩大模型庫皆無此類展場專屬物件,且形狀單純(箱體/斜面/細桿+薄板);展示架本就應支援使用者自訂視覺,程序化更合理。
-  - **Poly Haven 不提供 .glb**,下載為 `.gltf` + `.bin` + 多張 JPG 貼圖,需經 `gltf-transform` 打包為單檔 GLB + Draco + KTX2 後才進版控/上線。1k 貼圖六模型原始約 5.7MB,壓縮後約 3–4MB;植栽單一資產佔比最高,需單獨 lazy load。
+  - **Poly Haven 不提供 .glb**,下載為 `.gltf` + `.bin` + 多張 JPG 貼圖,需經 `gltf-transform` 打包為單檔 GLB 後才進版控/上線。
+    - **實際結果**(2026-08-04):1k 貼圖六模型原始 **11.3MB**(比原估的 5.7MB 高一倍,主因是植栽改用比例正確但更重的 `potted_plant_01`),經 `dedup → prune → webp(q85) → draco` 壓到 **2.78MB**。植栽 1.32MB,佔近半,單獨 lazy load。
+    - **KTX2 改為 WebP**(範圍偏離,刻意):KTX2 需要打包期的原生編碼器 `toktx`/`basisu`(本機與 CI 皆未安裝),以及執行期把 basis transcoder 的 wasm/js 自架到 `/public` 才能接 `KTX2Loader` —— 步驟 03 有「零外部下載」硬規定,自架成本是實打實的。而 KTX2 的真正好處是 GPU 記憶體常駐壓縮,在 6 模型 / 1k 貼圖的量級下 GPU 記憶體不是瓶頸、傳輸體積才是,而傳輸體積 WebP 已經解掉。日後模型數或貼圖解析度上升到 GPU 記憶體吃緊,再回頭補 KTX2。
 - **步驟 02 與 03 分開,不合併**。理由:
   - 互動需求不同:02 要即時反應(拖曳/TransformControls 低延遲),03 追求畫面品質(陰影、PBR 材質、細節幾何)運算重,混在一起會拖慢編輯。
   - 載入策略不同:精細資源在 03 才 lazy load,02 保持輕量。
@@ -34,7 +38,7 @@
 - [x] [FRONTEND] 步驟 03 骨架:`WizardStep` 新增第三步、`WIZARD_STEPS` 加入「03 精密 3D」、前後導覽與進度列、建立唯讀 `RefinedScene` 元件(先沿用現有 box 幾何),複用 02 的 plan state
 - [x] [FRONTEND] 打光與陰影:shadow map、多光源配置、tone mapping / 環境光設定,套用至步驟 03 場景
 - [x] [FRONTEND] PBR 材質:地板/牆/柱套用材質貼圖(含 lazy load 與載入指示),步驟 02 不載入這些資源
-- [ ] [FRONTEND] 家具模型 asset pipeline:下載 6 個 Poly Haven CC0 模型(1k 貼圖),經 `gltf-transform` 打包為單檔 GLB + Draco + KTX2,決定存放路徑與授權來源記錄檔
+- [x] [FRONTEND] 家具模型 asset pipeline:下載 6 個 Poly Haven CC0 模型(1k 貼圖),經 `gltf-transform` 打包為單檔 GLB + Draco + KTX2,決定存放路徑與授權來源記錄檔
 - [ ] [FRONTEND] 匯入 6 種真實家具模型:等比縮放至 `FURNITURE_DEFAULTS` 的 `w / h / height3d`(不得非等比拉伸變形),`drawer_cabinet` 需轉 90°,重複家具用 drei `<Instances>`,植栽單獨 lazy load
 - [ ] [FRONTEND] 3 種展場家具程序化幾何:`counter` 接待櫃檯、`bannerStand` 展示架、`podium` 講台,尺寸由 `FURNITURE_DEFAULTS` 驅動,風格需與匯入模型協調
 - [ ] [FRONTEND] 效能與驗收:步驟 03 資源只在進入時載入、離開可釋放,Playwright 驗收三步驟流程與唯讀行為
