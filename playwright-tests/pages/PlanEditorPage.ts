@@ -297,6 +297,12 @@ export class PlanEditorPage {
     return Number(raw);
   }
 
+  /** Number of furniture items on the plan (`data-furniture-count`). */
+  async furnitureCount(): Promise<number> {
+    const raw = await this.editor.getAttribute("data-furniture-count");
+    return Number(raw);
+  }
+
   async columnCount(): Promise<number> {
     const raw = await this.editor.getAttribute("data-column-count");
     return Number(raw);

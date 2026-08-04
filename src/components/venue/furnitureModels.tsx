@@ -14,12 +14,7 @@ import {
   type FurnitureItem,
   type FurnitureKind,
 } from "@/lib/venue/furniture";
-import {
-  furnitureModel,
-  uniformFitScale,
-  EAGER_MODEL_URLS,
-  DEFERRED_MODEL_URLS,
-} from "@/lib/venue/models";
+import { furnitureModel, uniformFitScale } from "@/lib/venue/models";
 import { refinedFurnitureModelName } from "./RefinedSceneProbe";
 
 /**
@@ -272,22 +267,4 @@ export default function FurnitureModels({
       ))}
     </>
   );
-}
-
-/**
- * 預先把 GLB 丟進 useGLTF 的快取。
- *
- * 只在**已經進入步驟 03** 之後呼叫 —— 步驟 01/02 不得請求任何 GLB
- * (venue-furniture-assets.spec.ts 的 C1–C3 就是守這條線)。
- */
-export function preloadEagerFurnitureModels() {
-  for (const url of EAGER_MODEL_URLS) {
-    useGLTF.preload(url, DRACO_DECODER_PATH);
-  }
-}
-
-export function preloadDeferredFurnitureModels() {
-  for (const url of DEFERRED_MODEL_URLS) {
-    useGLTF.preload(url, DRACO_DECODER_PATH);
-  }
 }

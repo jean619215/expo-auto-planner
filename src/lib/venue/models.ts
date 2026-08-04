@@ -46,20 +46,6 @@ export const FURNITURE_MODELS: Partial<Record<FurnitureKind, FurnitureModel>> =
     plant: { url: `${MODEL_BASE_PATH}/plant.glb`, rotationY: 0, deferred: true },
   };
 
-/** 需要在進入步驟 03 時立刻載入的模型 URL(不含 deferred)。 */
-export const EAGER_MODEL_URLS: readonly string[] = Object.values(
-  FURNITURE_MODELS
-)
-  .filter((model) => !model.deferred)
-  .map((model) => model.url);
-
-/** 延後載入的模型 URL。 */
-export const DEFERRED_MODEL_URLS: readonly string[] = Object.values(
-  FURNITURE_MODELS
-)
-  .filter((model) => model.deferred)
-  .map((model) => model.url);
-
 export function furnitureModel(kind: FurnitureKind): FurnitureModel | undefined {
   return FURNITURE_MODELS[kind];
 }

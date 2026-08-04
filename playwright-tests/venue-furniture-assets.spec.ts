@@ -13,9 +13,10 @@ import { PlanEditorPage } from "./pages/PlanEditorPage";
 //       本 story 的核心效能約束(AGENTS.md:02 與 03 互斥掛載、03 的重資源
 //       不得拖慢 2D 編輯)。
 //
-// ⚠️ (C) 在 task 4 當下是「先架好的門」—— 此刻還沒有任何程式碼會去載 GLB,
-// 所以它必然綠。真正的價值在 task 5 之後:一旦有人把模型載入接到共用元件或
-// 太早的生命週期上,這條線會立刻紅。**不要因為它現在看起來恆真就刪掉它。**
+// (C) 在 task 4 當下是「先架好的門」—— 那時還沒有任何程式碼會去載 GLB,
+// 所以它必然綠。task 5 接上真正的載入之後,它才開始有意義:反證方式是把
+// 預載提前到步驟 02(在 VenueScene 的模組層呼叫 preload),C2/C3 會立刻紅。
+// **不要因為平常看起來恆真就刪掉它。**
 
 /**
  * 對應 scripts/build-venue-models.mjs 的 MODELS 與 src/lib/venue/models.ts。
@@ -51,6 +52,18 @@ function collectGlbRequests(page: Page): string[] {
     }
   });
   return seen;
+}
+
+/**
+ * 「零請求」是個否定斷言 —— 讀太快就一定綠,量不到任何東西。
+ *
+ * 這不是假設性的顧慮:拿「在步驟 02 的模組載入時就 preload」去反證這三條線
+ * 時,C3 立刻紅了,但 C1/C2 仍然是綠的 —— 因為它們在預載請求真的發出去
+ * 之前就已經斷言完畢。等一個安定窗口之後再讀,那次反證才會如預期地讓 C2
+ * 也紅。
+ */
+async function settleForStrayRequests(page: Page) {
+  await page.waitForTimeout(1_500);
 }
 
 test.describe("精密 3D 場景 (步驟 03) - Task 4: 家具模型 asset pipeline", () => {
@@ -141,6 +154,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 4: 家具模型 asset pipelin
     await editor.placeColumn({ x: 15, y: 15 });
 
     expect(await editor.currentStep()).toBe("edit");
+    await settleForStrayRequests(page);
     expect(glbRequests, "步驟 01 不得載入任何 3D 模型").toEqual([]);
   });
 
@@ -158,6 +172,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 4: 家具模型 asset pipelin
 
     // 白模預覽是刻意的 —— 步驟 02 用 FURNITURE_DEFAULTS 的顏色畫 box,
     // 真實模型是步驟 03 才有的東西。
+    await settleForStrayRequests(page);
     expect(glbRequests, "步驟 02 不得載入任何 3D 模型").toEqual([]);
   });
 
@@ -175,6 +190,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 4: 家具模型 asset pipelin
     await editor.clickBackToEdit();
 
     expect(await editor.currentStep()).toBe("edit");
+    await settleForStrayRequests(page);
     expect(glbRequests, "01 <-> 02 往返不得載入任何 3D 模型").toEqual([]);
   });
 });
