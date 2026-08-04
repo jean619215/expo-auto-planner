@@ -33,7 +33,7 @@
 ## 任務清單
 - [x] [FRONTEND] 步驟 03 骨架:`WizardStep` 新增第三步、`WIZARD_STEPS` 加入「03 精密 3D」、前後導覽與進度列、建立唯讀 `RefinedScene` 元件(先沿用現有 box 幾何),複用 02 的 plan state
 - [x] [FRONTEND] 打光與陰影:shadow map、多光源配置、tone mapping / 環境光設定,套用至步驟 03 場景
-- [ ] [FRONTEND] PBR 材質:地板/牆/柱套用材質貼圖(含 lazy load 與載入指示),步驟 02 不載入這些資源
+- [x] [FRONTEND] PBR 材質:地板/牆/柱套用材質貼圖(含 lazy load 與載入指示),步驟 02 不載入這些資源
 - [ ] [FRONTEND] 家具模型 asset pipeline:下載 6 個 Poly Haven CC0 模型(1k 貼圖),經 `gltf-transform` 打包為單檔 GLB + Draco + KTX2,決定存放路徑與授權來源記錄檔
 - [ ] [FRONTEND] 匯入 6 種真實家具模型:等比縮放至 `FURNITURE_DEFAULTS` 的 `w / h / height3d`(不得非等比拉伸變形),`drawer_cabinet` 需轉 90°,重複家具用 drei `<Instances>`,植栽單獨 lazy load
 - [ ] [FRONTEND] 3 種展場家具程序化幾何:`counter` 接待櫃檯、`bannerStand` 展示架、`podium` 講台,尺寸由 `FURNITURE_DEFAULTS` 驅動,風格需與匯入模型協調
