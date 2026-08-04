@@ -20,6 +20,7 @@ import {
   EAGER_MODEL_URLS,
   DEFERRED_MODEL_URLS,
 } from "@/lib/venue/models";
+import { refinedFurnitureModelName } from "./RefinedSceneProbe";
 
 /**
  * Draco 解碼器路徑。**必須顯式傳給 useGLTF** —— drei 的預設值是
@@ -198,7 +199,7 @@ function FurnitureKindGroup({
           material={part.material}
           castShadow
           receiveShadow
-          name={REFINED_FURNITURE_MODEL_NAME}
+          name={refinedFurnitureModelName(kind, index)}
         >
           {items.map((item) => (
             <Instance
@@ -214,9 +215,6 @@ function FurnitureKindGroup({
     </>
   );
 }
-
-/** 探針用來認出「這是匯入模型畫出來的」的 mesh 名稱。 */
-export const REFINED_FURNITURE_MODEL_NAME = "refined-furniture-model";
 
 interface FurnitureModelsProps {
   furniture: FurnitureItem[];

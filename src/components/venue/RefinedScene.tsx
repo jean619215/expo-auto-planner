@@ -31,6 +31,7 @@ import FurnitureModels, {
 import RefinedSceneProbe, {
   REFINED_COLUMN_NAME,
   REFINED_FLOOR_NAME,
+  REFINED_FURNITURE_BOX_NAME,
   REFINED_WALL_NAME,
   type RefinedDiagnostics,
 } from "./RefinedSceneProbe";
@@ -91,6 +92,13 @@ function diagnosticsAttrs(diagnostics: RefinedDiagnostics | null): Record<string
     "data-light-count": String(diagnostics.lightCount),
     "data-shadow-casting-light-count": String(diagnostics.shadowCastingLightCount),
     "data-shadow-caster-mesh-count": String(diagnostics.shadowCasterMeshCount),
+    // AC2 按類別拆開的**件數**(不是 mesh 數 — 見 RefinedSceneProbe.tsx 的
+    // 欄位註解:匯入模型後 mesh 數與家具件數已經不再相等)。
+    "data-shadow-caster-wall-count": String(diagnostics.shadowCasterWallCount),
+    "data-shadow-caster-column-count": String(diagnostics.shadowCasterColumnCount),
+    "data-shadow-caster-furniture-count": String(
+      diagnostics.shadowCasterFurnitureCount,
+    ),
     // Read off the actual floor mesh by name, not a literal — D5 requires the
     // floor to receive but never cast (it is DoubleSide, so casting would make
     // it the scene's only real shadow-acne source).
@@ -133,14 +141,12 @@ interface RefinedSceneContentProps {
   fit: number;
   bounds: PlanBounds;
   revision: number;
+  probeResetKey: string;
   eagerLoaded: boolean;
   onEagerLoaded: () => void;
   onModelReport: (report: FurnitureModelReport) => void;
   onReport: (diagnostics: RefinedDiagnostics) => void;
 }
-
-/** 探針/測試用來認出「這是還沒有真實模型、暫時用 box 畫的家具」。 */
-export const REFINED_FURNITURE_BOX_NAME = "refined-furniture-box";
 
 // Rendered as <SurfaceMaterials>'s children so it can call
 // useSurfaceMaterials() (architect-plan.md step 6) — the provider and its
@@ -155,6 +161,7 @@ function RefinedSceneContent({
   fit,
   bounds,
   revision,
+  probeResetKey,
   eagerLoaded,
   onEagerLoaded,
   onModelReport,
@@ -189,7 +196,7 @@ function RefinedSceneContent({
     <>
       <HallLighting bounds={bounds} revision={revision} />
       <HallEnvironment />
-      <RefinedSceneProbe resetKey={revision} onReport={onReport} />
+      <RefinedSceneProbe resetKey={probeResetKey} onReport={onReport} />
       <OrbitControls
         makeDefault
         enableRotate
@@ -402,6 +409,20 @@ export default function RefinedScene({
     );
   }, [modelReports, furniture]);
 
+  // 探針的重新武裝條件 = 幾何 revision + 「目前已經畫出來的模型是哪些」。
+  // 後者是必要的:GLB 解碼是非同步的,家具的 InstancedMesh 往往在 revision
+  // 那一次武裝(PROBE_ACTIVE_FRAMES 幀)之後才進場景圖,少了它探針會停在一份
+  // 還沒有家具的過期快照(RefinedSceneProbe.tsx 的 resetKey 註解)。
+  // 用 kind + partCount 而非 instanceCount:後者每動一次家具都變,但那種
+  // 變動本來就已經 bump 了 revision。
+  const probeResetKey = useMemo(() => {
+    const signature = activeModelReports
+      .map((report) => `${report.kind}:${report.partCount}`)
+      .sort()
+      .join(",");
+    return `${revision}|${signature}`;
+  }, [revision, activeModelReports]);
+
   return (
     <div
       data-testid="refined-scene"
@@ -436,6 +457,7 @@ export default function RefinedScene({
               fit={fit}
               bounds={bounds}
               revision={revision}
+              probeResetKey={probeResetKey}
               eagerLoaded={eagerLoaded}
               onEagerLoaded={handleEagerLoaded}
               onModelReport={handleModelReport}

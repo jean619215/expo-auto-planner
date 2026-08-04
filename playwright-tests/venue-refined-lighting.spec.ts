@@ -38,6 +38,21 @@ async function waitForLightingReady(editor: PlanEditorPage) {
     .toBe(true);
 }
 
+/**
+ * Waits for the imported furniture models (task 5) to be in the scene graph.
+ *
+ * `waitForLightingReady()` is NOT enough for anything that counts furniture:
+ * the probe's first report lands on frame 2, whereas the GLBs are fetched and
+ * Draco-decoded in a worker and only mount seconds later. Reading a
+ * furniture-dependent diagnostic before this resolves reads a scene that
+ * genuinely has no furniture in it yet.
+ */
+async function waitForFurnitureModels(editor: PlanEditorPage) {
+  await expect
+    .poll(() => editor.refinedFurnitureModelsLoaded(), { timeout: 20_000 })
+    .toBe(true);
+}
+
 /** Center point of the 3D <canvas> inside [data-testid="venue-scene"] (step 02). */
 async function step2CanvasCenter(page: Page) {
   await page.waitForFunction(() => {
@@ -142,10 +157,27 @@ test.describe("精密 3D 場景 (步驟 03) - Task 2: 打光與陰影", () => {
 
     await editor.goToRefined();
     await waitForLightingReady(editor);
+    await waitForFurnitureModels(editor);
 
-    // 1 wall + 1 column + 2 furniture = 4 shadow-casting meshes; floor is
-    // deliberately excluded (architect-plan.md D5).
-    expect(await editor.refinedShadowCasterMeshCount()).toBe(4);
+    // 1 wall + 1 column + 2 furniture all cast; floor is deliberately
+    // excluded (architect-plan.md D5).
+    //
+    // Asserted per category as *item* counts rather than as one total mesh
+    // count: task 5 draws table/chair from GLBs, and a GLB kind contributes
+    // one `InstancedMesh` per part (cabinet has 5) no matter how many items
+    // are placed — so a raw mesh total no longer answers "did every piece of
+    // furniture cast?" (RefinedSceneProbe.tsx's field comment).
+    //
+    // Polled rather than read once: the GLBs decode asynchronously, the probe
+    // re-arms (RefinedScene's `probeResetKey`) only once they mount, and
+    // drei's `<Instances>` fills in `InstancedMesh.count` on its own useFrame
+    // — correct within a frame or two of `waitForFurnitureModels`, not on the
+    // same tick.
+    await expect
+      .poll(() => editor.refinedShadowCasterFurnitureCount(), { timeout: 10_000 })
+      .toBe(2);
+    expect(await editor.refinedShadowCasterWallCount()).toBe(1);
+    expect(await editor.refinedShadowCasterColumnCount()).toBe(1);
     // Both flags are read off the actual floor mesh (looked up by name in the
     // scene graph), so removing `receiveShadow` — or adding `castShadow` back,
     // which D5 forbids — fails here.
@@ -277,8 +309,14 @@ test.describe("精密 3D 場景 (步驟 03) - Task 2: 打光與陰影", () => {
 
     await editor.goToRefined();
     await waitForLightingReady(editor);
+    await waitForFurnitureModels(editor);
 
-    expect(await editor.refinedShadowCasterMeshCount()).toBe(2);
+    // bannerStand has no imported model (still a box, task 6); cabinet is a
+    // 5-part GLB — see 案例4 for why this counts items, not meshes, and why
+    // it is polled.
+    await expect
+      .poll(() => editor.refinedShadowCasterFurnitureCount(), { timeout: 10_000 })
+      .toBe(2);
     const near = await editor.refinedShadowCameraNearM();
     const far = await editor.refinedShadowCameraFarM();
     const span = await editor.refinedShadowCameraSpanM();
