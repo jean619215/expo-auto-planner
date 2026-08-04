@@ -23,13 +23,22 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, existsSync, writeFileSync, statSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  existsSync,
+  writeFileSync,
+  statSync,
+  rmSync,
+  copyFileSync,
+  readFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const CACHE_DIR = join(ROOT, ".cache", "polyhaven");
 const OUT_DIR = join(ROOT, "public", "models", "venue");
+const DRACO_DIR = join(ROOT, "public", "draco");
 const API = "https://api.polyhaven.com";
 const FORCE = process.argv.includes("--force");
 
@@ -187,8 +196,58 @@ Poly Haven 標示的公尺尺寸，Z 為高度（Blender 慣例）；\`load 時 
   );
 }
 
+/**
+ * 把 three 內附的 Draco 解碼器複製到 public/draco/。
+ *
+ * 為什麼要自架:drei 的 `useGLTF` 預設把 DRACOLoader 的 decoder path 指向
+ * `https://www.gstatic.com/draco/versioned/decoders/…`(Gltf.js 的 decoderPath)
+ * —— 步驟 03 有「零外部下載」硬規定,那條預設路徑不可接受。場景端必須顯式
+ * 傳入 `/draco/`,而檔案得先在這裡落地。
+ *
+ * 只複製 WASM 版本,不含 512KB 的純 JS fallback(`draco_decoder.js`):
+ * DRACOLoader 只在 `typeof WebAssembly !== "object"` 時才會去要那支,而能跑
+ * WebGL2 + 本場景這種 GPU 負載的瀏覽器不可能沒有 WASM。
+ *
+ * 取 `gltf/` 子目錄而非上層:那是對齊 KHR_draco_mesh_compression 擴充的建置,
+ * 正是我們 GLB 用的壓縮方式。
+ */
+function copyDracoDecoder() {
+  // 直接走檔案系統路徑,不用 require.resolve("three/package.json") ——
+  // three 的 package.json 沒有列在 exports 裡,那樣解會直接拋
+  // ERR_PACKAGE_PATH_NOT_EXPORTED。
+  const threeDir = join(ROOT, "node_modules", "three");
+  const srcDir = join(threeDir, "examples", "jsm", "libs", "draco", "gltf");
+  const version = JSON.parse(
+    readFileSync(join(threeDir, "package.json"), "utf8")
+  ).version;
+
+  mkdirSync(DRACO_DIR, { recursive: true });
+  for (const file of ["draco_wasm_wrapper.js", "draco_decoder.wasm"]) {
+    copyFileSync(join(srcDir, file), join(DRACO_DIR, file));
+  }
+  writeFileSync(
+    join(DRACO_DIR, "README.md"),
+    `# Draco 解碼器(自架)
+
+由 \`scripts/build-venue-models.mjs\` 從 \`three@${version}\` 的
+\`examples/jsm/libs/draco/gltf/\` 複製而來,請勿手改 —— 升級 three 後重跑該腳本。
+
+自架而非用 CDN 的原因:drei 的 \`useGLTF\` 預設把 decoder path 指向
+gstatic.com,而步驟 03 有「零外部下載」硬規定。場景端要顯式傳
+\`/draco/\` 才會用到這裡的檔案。
+
+只有 WASM 版本。純 JS fallback(\`draco_decoder.js\`,512KB)沒複製 —
+\`DRACOLoader\` 只在瀏覽器沒有 WebAssembly 時才需要它,而那種瀏覽器也跑不動
+本場景的 WebGL2 負載。
+`,
+    "utf8"
+  );
+  log(`draco decoder copied from three@${version}`);
+}
+
 async function main() {
   mkdirSync(OUT_DIR, { recursive: true });
+  copyDracoDecoder();
   const built = [];
   for (const entry of MODELS) {
     built.push(await buildOne(entry));

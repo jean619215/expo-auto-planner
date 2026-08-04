@@ -10,8 +10,8 @@
 | 1 | 步驟 03 骨架 + 唯讀 `RefinedScene` | ✅ 完成 `c7c06c5` |
 | 2 | 打光與陰影(VSM soft shadow) | ✅ 完成 `571330f` |
 | 3 | 程序化 PBR 材質(地板/牆/柱) | ✅ 完成 `127ce70`,全迴歸 172 passed / 1 skipped |
-| 4 | 家具模型 asset pipeline | 🟡 **進行中** — 產出物已完成,尚未接進場景 |
-| 5 | 匯入 6 種真實家具模型 | ⬜ 未開始 |
+| 4 | 家具模型 asset pipeline | ✅ 完成 `76937e9` + `c54166b` |
+| 5 | 匯入 6 種真實家具模型 | 🔴 **進行中,有 2 個紅燈** — 見下方 |
 | 6 | 3 種展場家具程序化幾何(counter / bannerStand / podium) | ⬜ 未開始 |
 | 7 | 效能與驗收 | ⬜ 未開始 |
 
@@ -57,7 +57,85 @@
    三角面)。story 要求植栽單獨 lazy load —— 這個數字就是理由,task 5 不要
    把它跟其他 5 個併在同一個載入批次。
 
-## Task 4 尚未做的部分(接下去的第一件事)
+## ⚠️ Task 5 目前狀態 — 有 2 個測試是紅的(接手第一件事就是修這個)
+
+程式碼已 commit,**但不是綠的狀態**。`venue-refined-lighting.spec.ts` 兩個
+既有案例退化:
+
+```
+案例4  AC2: 投影/受影對象正確   expect(refinedShadowCasterMeshCount()).toBe(4)
+                                Expected: 4   Received: 2   (spec:148)
+案例10 edge case 高瘦物件        expect(refinedShadowCasterMeshCount()).toBe(2)
+                                Expected: 2   Received: 1   (spec:281)
+```
+
+兩個都是「投影 mesh 少了家具那幾個」。差值剛好等於場上家具數,牆與柱的計數
+都還在,所以問題侷限在新的家具模型繪製路徑。
+
+**最可能的原因(尚未證實,接手請先驗這條)**:`RefinedSceneProbe.tsx:53` 有
+`PROBE_ACTIVE_FRAMES = 120` 的探針停止上限(task 2 review 為了避免探針每幀
+traverse 而加的)。GLB 走 `useGLTF` + Draco WASM worker 解碼是非同步的,在
+CI/SwiftShader 上很可能超過 120 frame(約 2 秒)才 mount 完 —— 探針早就停了,
+於是 `<Instances>` 產生的 `InstancedMesh` 從來沒被數到。
+
+要區分是「時序」還是「castShadow 真的沒套上」,最快的做法是把
+`PROBE_ACTIVE_FRAMES` 暫時調大重跑:
+- 調大就綠 → 時序問題。正解不是永久調大(那會把 task 2 的效能修正倒回去),
+  而是讓探針在家具模型載入完成後**重新武裝一次**(現有機制是 `resetKey`,
+  可以把 `data-furniture-models-loaded` 的那個 `eagerLoaded` 狀態接進去)。
+- 調大還是紅 → `castShadow` 沒有真的套到 drei `<Instances>` 產生的
+  `InstancedMesh` 上,要改在 `furnitureModels.tsx` 直接處理。
+
+另外注意:`InstancedMesh` 繼承 `Mesh`,`isMesh` 為 true,所以探針
+(`RefinedSceneProbe.tsx:596`)的判斷式本身沒問題,不用往那邊查。
+
+**其餘 38 個 refined 案例是綠的**,`npm run lint` 與 `tsc` 乾淨(排除既有的
+`app/api/plans/[slot]/conversation/route.ts` 與 `.next/dev/types` 雜訊)。
+**完整迴歸(17 支 spec)在這次改動後還沒跑過。**
+
+### Task 5 已經做完的部分
+
+- `public/draco/`(`draco_wasm_wrapper.js` + `draco_decoder.wasm`,自 three
+  0.185.1 複製)。**必須自架** —— drei 的 `useGLTF` 預設把 decoder path 指向
+  `gstatic.com`,違反步驟 03 的零外部下載規定。複製動作已寫進
+  `scripts/build-venue-models.mjs` 的 `copyDracoDecoder()`,升級 three 後重跑
+  該腳本即可。`eslint.config.mjs` 已把 `public/draco/**` 排除(vendored 壓縮檔)。
+- `src/components/venue/furnitureModels.tsx` — 載入、正規化、instancing。
+  - `normalizeModel()` 把 GLB 節點的世界矩陣、模型方位修正(`rotationY`)、
+    等比縮放與置中**全部烘進 geometry 頂點**。這樣做的原因:drei `<Instances>`
+    只吃單一 geometry + material,GLB 自身的節點階層變換會整個被丟掉。烘完
+    之後每個 `<Instance>` 只需要負責「擺哪裡、轉幾度」。
+  - 座標約定沿用既有 box 版本:底面貼 y=0、水平以原點為中心。
+  - clone 出來的 geometry 在卸載時 `dispose()`;material **沒有** clone
+    (沿用 GLB 的),其生命週期歸 `useGLTF` 快取管,不要去 dispose 它。
+- `RefinedScene.tsx` 接線:六種有模型的家具走 GLB,另外三種
+  (counter / bannerStand / podium)維持 box 並掛上 `REFINED_FURNITURE_BOX_NAME`,
+  等 task 6 接手。兩者互斥,同一件家具不會被畫兩次。
+- 植栽獨立一個 `<Suspense>`,而且要等 eager 那批 commit 後才掛
+  (`LoadedSignal` 元件偵測 boundary 真的解完)。
+- 新增對外量測屬性:`data-furniture-models-loaded`、
+  `data-furniture-model-reports`(每個 kind 的 `scale` / `fittedM` / `targetM` /
+  `partCount` / `instanceCount`)。**`scale` 是單一數字,這正是「等比縮放、
+  沒有非等比拉伸」的可斷言證據**,task 5 的驗收 spec 應該從這裡下手。
+
+### Task 5 還沒做的部分
+
+- [ ] 修上面那 2 個紅燈。
+- [ ] 跑一次 `node scripts/build-venue-models.mjs` 補出 `public/draco/README.md`。
+      解碼器那兩個檔案是先手動複製進去的,腳本的 `copyDracoDecoder()` 是事後
+      補寫的,還沒實際跑過(第一次跑時踩到 `require.resolve("three/package.json")`
+      因 three 的 exports 未列 package.json 而拋 ERR_PACKAGE_PATH_NOT_EXPORTED,
+      已改成直接讀 `node_modules/three/package.json`,但改完**尚未驗證**)。
+- [ ] 寫 task 5 自己的驗收 spec(目前一條都還沒有):六種 kind 各自的
+      `scale` 三軸一致、`fittedM` 不超過 `targetM`、`cabinet` 的
+      `rotationY=90` 確實讓長邊對上、植栽延後載入、往返步驟 02/03 不累積
+      GPU 資源。
+- [ ] 跑完整迴歸(17 支 spec)。
+- [ ] 把 `venue-furniture-assets.spec.ts` 的 C1–C3 從「必然綠」變成真的有效
+      —— 現在有程式碼會載 GLB 了,那三條線終於有意義,值得確認它們真的能紅
+      (蓄意破壞:把載入提前到步驟 02)。
+
+## Task 4 已完成 — 尚未做的部分(已全數補完,保留供追溯)
 
 - [ ] `src/lib/venue/models.ts` — 純領域 manifest:`kind → { file, rotationY }`。
       **不得 import three/React**(AGENTS.md:`src/lib/venue/` 是純領域模組)。

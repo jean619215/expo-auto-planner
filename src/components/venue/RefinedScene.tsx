@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
@@ -12,7 +12,12 @@ import {
   type FloorPolygon,
   type WallSegment,
 } from "@/lib/venue/plan";
-import { FURNITURE_DEFAULTS, type FurnitureItem } from "@/lib/venue/furniture";
+import {
+  FURNITURE_DEFAULTS,
+  type FurnitureItem,
+  type FurnitureKind,
+} from "@/lib/venue/furniture";
+import { hasFurnitureModel } from "@/lib/venue/models";
 import { planBoundsM } from "@/lib/venue/bounds";
 import type { PlanBounds } from "@/lib/venue/bounds";
 import { useFloorGeometry } from "./floorGeometry";
@@ -20,6 +25,9 @@ import { HallLighting, HallEnvironment, REFINED_GL, REFINED_SURFACE } from "./re
 import SurfaceMaterials, { useSurfaceMaterials } from "./SurfaceMaterials";
 import { hashStringToUnit, useMeterUvBoxGeometries } from "./boxGeometry";
 import { WALL_TILE_M } from "./surfaceTextures";
+import FurnitureModels, {
+  type FurnitureModelReport,
+} from "./furnitureModels";
 import RefinedSceneProbe, {
   REFINED_COLUMN_NAME,
   REFINED_FLOOR_NAME,
@@ -125,8 +133,14 @@ interface RefinedSceneContentProps {
   fit: number;
   bounds: PlanBounds;
   revision: number;
+  eagerLoaded: boolean;
+  onEagerLoaded: () => void;
+  onModelReport: (report: FurnitureModelReport) => void;
   onReport: (diagnostics: RefinedDiagnostics) => void;
 }
+
+/** 探針/測試用來認出「這是還沒有真實模型、暫時用 box 畫的家具」。 */
+export const REFINED_FURNITURE_BOX_NAME = "refined-furniture-box";
 
 // Rendered as <SurfaceMaterials>'s children so it can call
 // useSurfaceMaterials() (architect-plan.md step 6) — the provider and its
@@ -141,6 +155,9 @@ function RefinedSceneContent({
   fit,
   bounds,
   revision,
+  eagerLoaded,
+  onEagerLoaded,
+  onModelReport,
   onReport,
 }: RefinedSceneContentProps) {
   const surfaceMaterials = useSurfaceMaterials();
@@ -245,17 +262,45 @@ function RefinedSceneContent({
           </mesh>
         );
       })}
+      {/*
+        有真實模型的六種家具走 GLB;沒有的三種(counter / bannerStand /
+        podium)維持白模 box,等 task 6 的程序化幾何接手。兩者互斥,同一件
+        家具不會被畫兩次。
+      */}
+      <Suspense fallback={null}>
+        <FurnitureModels
+          furniture={furniture}
+          phase="eager"
+          onReport={onModelReport}
+        />
+        <LoadedSignal onLoaded={onEagerLoaded} />
+      </Suspense>
+      {/*
+        植栽單獨一批,而且要等 eager 那批就緒才掛 —— 它 GLB 1.32MB、原生
+        96k 三角面,是其餘五個加起來的量級,同批會讓整個場景一起等它。
+      */}
+      {eagerLoaded && (
+        <Suspense fallback={null}>
+          <FurnitureModels
+            furniture={furniture}
+            phase="deferred"
+            onReport={onModelReport}
+          />
+        </Suspense>
+      )}
       {furniture.map((item) => {
+        if (hasFurnitureModel(item.kind)) return null;
         const defaults = FURNITURE_DEFAULTS[item.kind];
         return (
           <mesh
             key={item.id}
+            name={REFINED_FURNITURE_BOX_NAME}
             position={[item.center.x, defaults.height3d / 2, item.center.y]}
             rotation={[0, (-item.rotationDeg * Math.PI) / 180, 0]}
             castShadow
             receiveShadow
           >
-            <boxGeometry args={[item.w, defaults.height3d, item.h]} />
+            <boxGeometry args={[defaults.w, defaults.height3d, defaults.h]} />
             <meshStandardMaterial
               color={defaults.color}
               roughness={REFINED_SURFACE.furniture.roughness}
@@ -266,6 +311,19 @@ function RefinedSceneContent({
       })}
     </>
   );
+}
+
+/**
+ * 在 `<Suspense>` 內側掛一個空元件:它自己不 suspend,所以只有等同層的
+ * `useGLTF` 全部解完、整個 boundary 真的 commit 之後,它的 effect 才會跑。
+ * 這比用 `onLoad` callback 可靠 —— drei 的載入是 Suspense 驅動的,沒有
+ * 統一的完成事件。
+ */
+function LoadedSignal({ onLoaded }: { onLoaded: () => void }) {
+  useEffect(() => {
+    onLoaded();
+  }, [onLoaded]);
+  return null;
 }
 
 // 唯讀 3D 場景(步驟 03)。無選取、無 TransformControls、無回寫 —
@@ -314,6 +372,35 @@ export default function RefinedScene({
 
   const [diagnostics, setDiagnostics] = useState<RefinedDiagnostics | null>(null);
   const [materialsReady, setMaterialsReady] = useState(false);
+  const [eagerLoaded, setEagerLoaded] = useState(false);
+  const [modelReports, setModelReports] = useState<
+    Partial<Record<FurnitureKind, FurnitureModelReport>>
+  >({});
+
+  const handleEagerLoaded = useCallback(() => setEagerLoaded(true), []);
+  const handleModelReport = useCallback((report: FurnitureModelReport) => {
+    setModelReports((prev) => {
+      const existing = prev[report.kind];
+      // 每幀都 setState 會讓 R3F 進無窮 render 迴圈 — 內容相同就原封不動
+      // 回傳同一個物件,讓 React 跳過這次更新。
+      if (existing && JSON.stringify(existing) === JSON.stringify(report)) {
+        return prev;
+      }
+      return { ...prev, [report.kind]: report };
+    });
+  }, []);
+
+  // 對外只吐「場上真的還有這個 kind」的量測 —— 家具被刪掉後,上一份報告會
+  // 留在 modelReports 裡(元件卸載不會反向清),直接吐出去測試會讀到過期資料。
+  //
+  // 刻意不在 revision 變動時整批清空:eagerLoaded 一旦被重設,植栽就會
+  // unmount 再 mount,而 AI 每動一次家具都會 bump revision。
+  const activeModelReports = useMemo(() => {
+    const kinds = new Set(furniture.map((item) => item.kind));
+    return Object.values(modelReports).filter((report) =>
+      kinds.has(report.kind)
+    );
+  }, [modelReports, furniture]);
 
   return (
     <div
@@ -325,6 +412,8 @@ export default function RefinedScene({
       data-furniture-mesh-count={furniture.length}
       data-floor-vertex-count={polygon.length}
       data-materials-ready={String(materialsReady)}
+      data-furniture-models-loaded={String(eagerLoaded)}
+      data-furniture-model-reports={JSON.stringify(activeModelReports)}
       {...diagnosticsAttrs(diagnostics)}
       className="mt-4 w-full"
     >
@@ -347,6 +436,9 @@ export default function RefinedScene({
               fit={fit}
               bounds={bounds}
               revision={revision}
+              eagerLoaded={eagerLoaded}
+              onEagerLoaded={handleEagerLoaded}
+              onModelReport={handleModelReport}
               onReport={setDiagnostics}
             />
           </SurfaceMaterials>

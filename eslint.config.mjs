@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // 第三方 vendored 產物,原封不動從 three 複製過來(由
+    // scripts/build-venue-models.mjs 維護),不該套我們的風格規則。
+    "public/draco/**",
   ]),
 ]);
 
