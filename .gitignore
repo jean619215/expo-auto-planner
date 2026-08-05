@@ -50,3 +50,6 @@ next-env.d.ts
 
 # personal file, not project-related
 /Design.pdf
+
+# Poly Haven 原始下載快取(scripts/build-venue-models.mjs) — 產出物是 public/models/venue/*.glb
+/.cache
