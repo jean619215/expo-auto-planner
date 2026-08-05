@@ -1,27 +1,27 @@
 {
   "story_file": "stories/venue-refined-3d.md",
   "story_title": "精密 3D 場景 (步驟 03)",
-  "task_index": 4,
-  "current_task": "[FRONTEND] 匯入 6 種真實家具模型:等比縮放至 FURNITURE_DEFAULTS 的 w / h / height3d(不得非等比拉伸變形),drawer_cabinet 需轉 90°,重複家具用 drei <Instances>,植栽單獨 lazy load",
+  "task_index": 5,
+  "current_task": "[FRONTEND] 3 種展場家具程序化幾何:counter 接待櫃檯、bannerStand 展示架、podium 講台,尺寸由 FURNITURE_DEFAULTS 驅動,風格需與匯入模型協調",
   "task_type": "FRONTEND",
-  "stage": "implement",
+  "stage": "complete",
   "iteration": {
-    "review": 0,
-    "qa": 0
+    "review": 1,
+    "qa": 1
   },
   "checkpoints": {
     "scan": "completed",
     "orchestrate": "completed",
     "architect": "completed",
-    "implement": "in_progress",
-    "review": "pending",
-    "qa": "pending",
-    "playwright": "pending"
+    "implement": "completed",
+    "review": "completed",
+    "qa": "completed",
+    "playwright": "completed"
   },
   "flags": {
     "review_critical_pending": false,
-    "qa_bugs_pending": true,
+    "qa_bugs_pending": false,
     "escalated": false
   },
-  "last_updated": "2026-08-04T19:55:00+08:00"
+  "last_updated": "2026-08-05T01:10:00+08:00"
 }

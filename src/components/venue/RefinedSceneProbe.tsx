@@ -36,6 +36,10 @@ import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useSurfaceMaterials } from "./SurfaceMaterials";
 import { getSurfaceTextureStats } from "./surfaceTextures";
+import {
+  getProceduralFurnitureStats,
+  type ProceduralFurnitureStats,
+} from "./proceduralFurnitureStats";
 
 // The floor/wall/column meshes tag themselves with these names
 // (RefinedScene.tsx) so the probe can report *actual* scene-graph state
@@ -43,6 +47,41 @@ import { getSurfaceTextureStats } from "./surfaceTextures";
 export const REFINED_FLOOR_NAME = "refined-floor";
 export const REFINED_WALL_NAME = "refined-wall";
 export const REFINED_COLUMN_NAME = "refined-column";
+
+/**
+ * 白模 box 的保底路徑。task 6 之後九種家具已經全部有造型(六種匯入模型、
+ * 三種程序化),所以正常情況下場上不會有這種 mesh —— 它只在「有人往
+ * FURNITURE_DEFAULTS 加了新 kind、卻還沒給它模型或程序化造型」時出現,
+ * 讓那件家具至少畫得出來、也仍然被算進投影件數,而不是無聲消失。
+ */
+export const REFINED_FURNITURE_BOX_NAME = "refined-furniture-box";
+
+/**
+ * 用 `<Instances>` 畫出來的家具。名稱帶 kind 與 part 序號 ——
+ * `refined-furniture-instance:cabinet:3`。
+ *
+ * 匯入模型(task 5)與程序化造型(task 6)**共用**這個命名,探針因此不需要
+ * 分辨一件家具是哪一種來源 —— 兩邊的座標約定與 instancing 方式本來就一樣。
+ *
+ * 為什麼要把 kind 編進名字:一件家具可能由多個零件組成(cabinet 的 GLB 有 5
+ * 個 mesh,櫃檯/講台/展示架各 3 個零件),每個零件各自是一個 `<Instances>`
+ * → 一個 `InstancedMesh`。所以「castShadow 的 mesh 數」跟「投影的家具件數」
+ * 已經不是同一回事,探針必須先照 kind 分組、每組只取一個代表讀它的 instance
+ * 數,才能還原真正的家具件數。
+ */
+export const REFINED_FURNITURE_INSTANCE_PREFIX = "refined-furniture-instance:";
+
+export function refinedFurnitureInstanceName(kind: string, partIndex: number): string {
+  return `${REFINED_FURNITURE_INSTANCE_PREFIX}${kind}:${partIndex}`;
+}
+
+/** 從 `refined-furniture-instance:cabinet:3` 取回 `cabinet`。 */
+function furnitureInstanceKindFromName(name: string): string | null {
+  if (!name.startsWith(REFINED_FURNITURE_INSTANCE_PREFIX)) return null;
+  const rest = name.slice(REFINED_FURNITURE_INSTANCE_PREFIX.length);
+  const separator = rest.lastIndexOf(":");
+  return separator > 0 ? rest.slice(0, separator) : null;
+}
 
 // Diagnostics are only collected for this many frames after mount / after a
 // `resetKey` change. Long enough for the shadow pass, the environment cube
@@ -56,6 +95,17 @@ export interface RefinedDiagnostics {
   lightCount: number;
   shadowCastingLightCount: number;
   shadowCasterMeshCount: number;
+  // AC2(地板受影但不投影,牆/柱/家具投影)按類別拆開的投影計數。
+  //
+  // 為什麼不繼續只看 `shadowCasterMeshCount`:task 5 匯入真實模型後,那個
+  // 數字同時被兩件事扭曲 —— 一個 kind 的 N 件家具共用一個 `InstancedMesh`
+  // (N 件只算 1),而一個多 mesh 的 GLB 又會拆成 partCount 個
+  // `InstancedMesh`(1 件算 partCount)。cabinet 是 5 個 part,所以
+  // 「2 件家具」在 mesh 數上會是 6。下面三個計數各自還原成**件數**,才是
+  // AC2 真正要斷言的東西。
+  shadowCasterWallCount: number;
+  shadowCasterColumnCount: number;
+  shadowCasterFurnitureCount: number;
   floorReceivesShadow: boolean;
   floorCastsShadow: boolean;
   shadowsEnabled: boolean;
@@ -79,6 +129,10 @@ export interface RefinedDiagnostics {
   environmentSet: boolean;
   rendererTextures: number;
   rendererGeometries: number;
+  // task 6 — 程序化家具的存活資源計數。刻意**不**併進 rendererTextures /
+  // rendererGeometries:那兩個來自 gl.info.memory,而 gl.info 根本不統計
+  // material,漏放 material 在那裡是看不見的。
+  proceduralFurniture: ProceduralFurnitureStats;
   materials: MaterialProbeReport;
 }
 
@@ -532,7 +586,16 @@ function resolveShadowMapType(
 }
 
 interface RefinedSceneProbeProps {
-  resetKey: number;
+  /**
+   * 值一變就把 frame 計數歸零、重新武裝探針。
+   *
+   * 除了幾何 revision,家具模型的載入狀態也編在裡面(RefinedScene 組出
+   * 複合字串)—— GLB 走 `useGLTF` + Draco worker 解碼是非同步的,在慢機器
+   * 上很可能超過 `PROBE_ACTIVE_FRAMES` 才 mount 完。少了這一項,探針早就
+   * 停了,家具的 `InstancedMesh` 永遠不會被算進 `shadowCasterMeshCount`,
+   * 對外的診斷會停在一份「還沒有家具」的過期快照。
+   */
+  resetKey: number | string;
   onReport: (diagnostics: RefinedDiagnostics) => void;
 }
 
@@ -548,8 +611,9 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
   const materialsCacheRef = useRef<MaterialProbeReport | null>(null);
 
   // `resetKey` changes whenever RefinedScene's geometry props change
-  // identity (a new revision) — re-arm the frame counter so the probe
-  // waits for a fresh shadow pass before reporting again. Deliberately
+  // identity (a new revision) or a furniture model finishes loading — re-arm
+  // the frame counter so the probe waits for a fresh shadow pass before
+  // reporting again (see the prop's own doc comment). Deliberately
   // does NOT reset `materialsCacheRef` — the bake is decoupled from scene
   // content (D2/D3), so a scene edit must never re-trigger the readback.
   useLayoutEffect(() => {
@@ -567,6 +631,13 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
     let lightCount = 0;
     let shadowCastingLightCount = 0;
     let shadowCasterMeshCount = 0;
+    let shadowCasterWallCount = 0;
+    let shadowCasterColumnCount = 0;
+    let shadowCasterFurnitureBoxCount = 0;
+    // kind -> 該 kind 的 instance 數。用 Map 而非累加:同一個 kind 的每個
+    // part 都是獨立的 InstancedMesh 但共用同一份 instance 清單,累加會把
+    // 件數乘上 partCount。
+    const furnitureInstances = new Map<string, number>();
     // Held on an object rather than in `let` bindings: TypeScript's control
     // flow analysis cannot see assignments made inside the traverse callback
     // and would otherwise narrow the locals to `null` (then to `never` at every
@@ -596,6 +667,25 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
       if ((object as THREE.Mesh).isMesh) {
         if (object.castShadow) {
           shadowCasterMeshCount += 1;
+          if (object.name === REFINED_WALL_NAME) shadowCasterWallCount += 1;
+          if (object.name === REFINED_COLUMN_NAME) shadowCasterColumnCount += 1;
+          if (object.name === REFINED_FURNITURE_BOX_NAME) {
+            shadowCasterFurnitureBoxCount += 1;
+          }
+          const instancedKind = furnitureInstanceKindFromName(object.name);
+          if (instancedKind) {
+            // `InstancedMesh.count` is drei <Instances>'s own per-frame
+            // bookkeeping (`min(limit, range, instances.length)`), so it is
+            // the live instance count, not the buffer capacity. The probe's
+            // useFrame subscribes before <Instances>'s (tree order), so on
+            // the very first frame after mount this still reads 0 — harmless,
+            // the next frame has it, and the probe stays armed for
+            // PROBE_ACTIVE_FRAMES.
+            furnitureInstances.set(
+              instancedKind,
+              (object as THREE.InstancedMesh).count,
+            );
+          }
         }
         if (!found.floor && object.name === REFINED_FLOOR_NAME) {
           found.floor = object as THREE.Mesh;
@@ -645,6 +735,11 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
       lightCount,
       shadowCastingLightCount,
       shadowCasterMeshCount,
+      shadowCasterWallCount,
+      shadowCasterColumnCount,
+      shadowCasterFurnitureCount:
+        shadowCasterFurnitureBoxCount +
+        [...furnitureInstances.values()].reduce((sum, n) => sum + n, 0),
       floorReceivesShadow: floor ? floor.receiveShadow : false,
       floorCastsShadow: floor ? floor.castShadow : false,
       shadowsEnabled: gl.shadowMap.enabled,
@@ -666,6 +761,7 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
       environmentSet: scene.environment !== null,
       rendererTextures: gl.info.memory.textures,
       rendererGeometries: gl.info.memory.geometries,
+      proceduralFurniture: getProceduralFurnitureStats(),
       materials: materialsCacheRef.current ?? NOT_READY_MATERIALS,
     };
 

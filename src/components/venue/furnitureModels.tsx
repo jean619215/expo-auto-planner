@@ -14,12 +14,9 @@ import {
   type FurnitureItem,
   type FurnitureKind,
 } from "@/lib/venue/furniture";
-import {
-  furnitureModel,
-  uniformFitScale,
-  EAGER_MODEL_URLS,
-  DEFERRED_MODEL_URLS,
-} from "@/lib/venue/models";
+import { furnitureModel, uniformFitScale } from "@/lib/venue/models";
+import { refinedFurnitureInstanceName } from "./RefinedSceneProbe";
+import { instanceLimitFor } from "./instanceLimit";
 
 /**
  * Draco 解碼器路徑。**必須顯式傳給 useGLTF** —— drei 的預設值是
@@ -28,9 +25,6 @@ import {
  * scripts/build-venue-models.mjs 從 three 複製到 public/draco/。
  */
 export const DRACO_DECODER_PATH = "/draco/";
-
-/** 場景中每種家具的 instance 數上限(`<Instances>` 需要預先配置緩衝區)。 */
-const INSTANCE_LIMIT = 256;
 
 export interface FurnitureModelPart {
   geometry: THREE.BufferGeometry;
@@ -187,18 +181,23 @@ function FurnitureKindGroup({
 
   if (items.length === 0) return null;
 
+  // 容量進到 key 裡:桶變大時整個 <Instances> 重掛,矩陣緩衝區才會跟著重配
+  // (見 MIN_INSTANCE_LIMIT 的註解)。桶只會往上跳,所以一般的加減家具不會
+  // 造成重掛。
+  const limit = instanceLimitFor(items.length);
+
   return (
     <>
       {parts.map((part, index) => (
         <Instances
-          key={`${kind}-${index}`}
-          limit={INSTANCE_LIMIT}
+          key={`${kind}-${index}-${limit}`}
+          limit={limit}
           range={items.length}
           geometry={part.geometry}
           material={part.material}
           castShadow
           receiveShadow
-          name={REFINED_FURNITURE_MODEL_NAME}
+          name={refinedFurnitureInstanceName(kind, index)}
         >
           {items.map((item) => (
             <Instance
@@ -214,9 +213,6 @@ function FurnitureKindGroup({
     </>
   );
 }
-
-/** 探針用來認出「這是匯入模型畫出來的」的 mesh 名稱。 */
-export const REFINED_FURNITURE_MODEL_NAME = "refined-furniture-model";
 
 interface FurnitureModelsProps {
   furniture: FurnitureItem[];
@@ -274,22 +270,4 @@ export default function FurnitureModels({
       ))}
     </>
   );
-}
-
-/**
- * 預先把 GLB 丟進 useGLTF 的快取。
- *
- * 只在**已經進入步驟 03** 之後呼叫 —— 步驟 01/02 不得請求任何 GLB
- * (venue-furniture-assets.spec.ts 的 C1–C3 就是守這條線)。
- */
-export function preloadEagerFurnitureModels() {
-  for (const url of EAGER_MODEL_URLS) {
-    useGLTF.preload(url, DRACO_DECODER_PATH);
-  }
-}
-
-export function preloadDeferredFurnitureModels() {
-  for (const url of DEFERRED_MODEL_URLS) {
-    useGLTF.preload(url, DRACO_DECODER_PATH);
-  }
 }

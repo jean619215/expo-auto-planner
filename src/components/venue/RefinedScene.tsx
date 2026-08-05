@@ -18,6 +18,7 @@ import {
   type FurnitureKind,
 } from "@/lib/venue/furniture";
 import { hasFurnitureModel } from "@/lib/venue/models";
+import { hasProceduralFurniture } from "@/lib/venue/proceduralFurniture";
 import { planBoundsM } from "@/lib/venue/bounds";
 import type { PlanBounds } from "@/lib/venue/bounds";
 import { useFloorGeometry } from "./floorGeometry";
@@ -28,9 +29,13 @@ import { WALL_TILE_M } from "./surfaceTextures";
 import FurnitureModels, {
   type FurnitureModelReport,
 } from "./furnitureModels";
+import ProceduralFurniture, {
+  type ProceduralFurnitureReport,
+} from "./proceduralFurniture";
 import RefinedSceneProbe, {
   REFINED_COLUMN_NAME,
   REFINED_FLOOR_NAME,
+  REFINED_FURNITURE_BOX_NAME,
   REFINED_WALL_NAME,
   type RefinedDiagnostics,
 } from "./RefinedSceneProbe";
@@ -91,6 +96,13 @@ function diagnosticsAttrs(diagnostics: RefinedDiagnostics | null): Record<string
     "data-light-count": String(diagnostics.lightCount),
     "data-shadow-casting-light-count": String(diagnostics.shadowCastingLightCount),
     "data-shadow-caster-mesh-count": String(diagnostics.shadowCasterMeshCount),
+    // AC2 按類別拆開的**件數**(不是 mesh 數 — 見 RefinedSceneProbe.tsx 的
+    // 欄位註解:匯入模型後 mesh 數與家具件數已經不再相等)。
+    "data-shadow-caster-wall-count": String(diagnostics.shadowCasterWallCount),
+    "data-shadow-caster-column-count": String(diagnostics.shadowCasterColumnCount),
+    "data-shadow-caster-furniture-count": String(
+      diagnostics.shadowCasterFurnitureCount,
+    ),
     // Read off the actual floor mesh by name, not a literal — D5 requires the
     // floor to receive but never cast (it is DoubleSide, so casting would make
     // it the scene's only real shadow-acne source).
@@ -116,6 +128,9 @@ function diagnosticsAttrs(diagnostics: RefinedDiagnostics | null): Record<string
     "data-environment-set": String(diagnostics.environmentSet),
     "data-renderer-textures": String(diagnostics.rendererTextures),
     "data-renderer-geometries": String(diagnostics.rendererGeometries),
+    "data-procedural-furniture-stats": JSON.stringify(
+      diagnostics.proceduralFurniture,
+    ),
     // task 3 — structured material diagnostics (see RefinedSceneProbe.tsx's
     // MaterialProbeReport), following this file's existing JSON-attribute
     // convention (PlanEditorPage.ts: data-vertices/data-objects/etc.) since
@@ -133,14 +148,13 @@ interface RefinedSceneContentProps {
   fit: number;
   bounds: PlanBounds;
   revision: number;
+  probeResetKey: string;
   eagerLoaded: boolean;
   onEagerLoaded: () => void;
   onModelReport: (report: FurnitureModelReport) => void;
+  onProceduralReport: (report: ProceduralFurnitureReport) => void;
   onReport: (diagnostics: RefinedDiagnostics) => void;
 }
-
-/** 探針/測試用來認出「這是還沒有真實模型、暫時用 box 畫的家具」。 */
-export const REFINED_FURNITURE_BOX_NAME = "refined-furniture-box";
 
 // Rendered as <SurfaceMaterials>'s children so it can call
 // useSurfaceMaterials() (architect-plan.md step 6) — the provider and its
@@ -155,9 +169,11 @@ function RefinedSceneContent({
   fit,
   bounds,
   revision,
+  probeResetKey,
   eagerLoaded,
   onEagerLoaded,
   onModelReport,
+  onProceduralReport,
   onReport,
 }: RefinedSceneContentProps) {
   const surfaceMaterials = useSurfaceMaterials();
@@ -189,7 +205,7 @@ function RefinedSceneContent({
     <>
       <HallLighting bounds={bounds} revision={revision} />
       <HallEnvironment />
-      <RefinedSceneProbe resetKey={revision} onReport={onReport} />
+      <RefinedSceneProbe resetKey={probeResetKey} onReport={onReport} />
       <OrbitControls
         makeDefault
         enableRotate
@@ -288,8 +304,19 @@ function RefinedSceneContent({
           />
         </Suspense>
       )}
+      {/*
+        counter / bannerStand / podium 沒有 Poly Haven 資產,改由程序化幾何
+        繪製(task 6)。它與匯入模型互斥,同一件家具不會被畫兩次。純幾何、
+        零網路請求,所以不需要 <Suspense>。
+      */}
+      <ProceduralFurniture furniture={furniture} onReport={onProceduralReport} />
       {furniture.map((item) => {
-        if (hasFurnitureModel(item.kind)) return null;
+        // 保底路徑:既沒有模型、也還沒給程序化造型的 kind(目前九種家具都有
+        // 造型,所以正常情況下這裡不會產出任何東西)。留著是為了讓日後新增
+        // 的 kind 至少畫得出來,而不是無聲消失。
+        if (hasFurnitureModel(item.kind) || hasProceduralFurniture(item.kind)) {
+          return null;
+        }
         const defaults = FURNITURE_DEFAULTS[item.kind];
         return (
           <mesh
@@ -376,6 +403,9 @@ export default function RefinedScene({
   const [modelReports, setModelReports] = useState<
     Partial<Record<FurnitureKind, FurnitureModelReport>>
   >({});
+  const [proceduralReports, setProceduralReports] = useState<
+    Partial<Record<FurnitureKind, ProceduralFurnitureReport>>
+  >({});
 
   const handleEagerLoaded = useCallback(() => setEagerLoaded(true), []);
   const handleModelReport = useCallback((report: FurnitureModelReport) => {
@@ -395,12 +425,47 @@ export default function RefinedScene({
   //
   // 刻意不在 revision 變動時整批清空:eagerLoaded 一旦被重設,植栽就會
   // unmount 再 mount,而 AI 每動一次家具都會 bump revision。
+  const handleProceduralReport = useCallback(
+    (report: ProceduralFurnitureReport) => {
+      setProceduralReports((prev) => {
+        const existing = prev[report.kind];
+        if (existing && JSON.stringify(existing) === JSON.stringify(report)) {
+          return prev;
+        }
+        return { ...prev, [report.kind]: report };
+      });
+    },
+    [],
+  );
+
   const activeModelReports = useMemo(() => {
     const kinds = new Set(furniture.map((item) => item.kind));
     return Object.values(modelReports).filter((report) =>
       kinds.has(report.kind)
     );
   }, [modelReports, furniture]);
+
+  // 與 activeModelReports 同理:家具被刪掉後,上一份報告會留在 state 裡。
+  const activeProceduralReports = useMemo(() => {
+    const kinds = new Set(furniture.map((item) => item.kind));
+    return Object.values(proceduralReports).filter((report) =>
+      kinds.has(report.kind)
+    );
+  }, [proceduralReports, furniture]);
+
+  // 探針的重新武裝條件 = 幾何 revision + 「目前已經畫出來的模型是哪些」。
+  // 後者是必要的:GLB 解碼是非同步的,家具的 InstancedMesh 往往在 revision
+  // 那一次武裝(PROBE_ACTIVE_FRAMES 幀)之後才進場景圖,少了它探針會停在一份
+  // 還沒有家具的過期快照(RefinedSceneProbe.tsx 的 resetKey 註解)。
+  // 用 kind + partCount 而非 instanceCount:後者每動一次家具都變,但那種
+  // 變動本來就已經 bump 了 revision。
+  const probeResetKey = useMemo(() => {
+    const signature = activeModelReports
+      .map((report) => `${report.kind}:${report.partCount}`)
+      .sort()
+      .join(",");
+    return `${revision}|${signature}`;
+  }, [revision, activeModelReports]);
 
   return (
     <div
@@ -414,6 +479,7 @@ export default function RefinedScene({
       data-materials-ready={String(materialsReady)}
       data-furniture-models-loaded={String(eagerLoaded)}
       data-furniture-model-reports={JSON.stringify(activeModelReports)}
+      data-furniture-procedural-reports={JSON.stringify(activeProceduralReports)}
       {...diagnosticsAttrs(diagnostics)}
       className="mt-4 w-full"
     >
@@ -436,9 +502,11 @@ export default function RefinedScene({
               fit={fit}
               bounds={bounds}
               revision={revision}
+              probeResetKey={probeResetKey}
               eagerLoaded={eagerLoaded}
               onEagerLoaded={handleEagerLoaded}
               onModelReport={handleModelReport}
+              onProceduralReport={handleProceduralReport}
               onReport={setDiagnostics}
             />
           </SurfaceMaterials>

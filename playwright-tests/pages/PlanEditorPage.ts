@@ -56,6 +56,47 @@ export interface SurfaceTextureDiagnostics {
   normalScaleX: number;
 }
 
+// task 5 (imported furniture models) — mirrors furnitureModels.tsx's
+// FurnitureModelReport shape. Kept independent of the app source (same
+// convention as the material types below).
+export interface FurnitureModelReport {
+  kind: string;
+  /**
+   * 等比縮放倍率。**單一數字**這件事本身就是「三軸同倍率、沒有非等比拉伸」
+   * 的證據 —— 非等比縮放無法用一個純量表示(AGENTS.md 的家具尺寸規則)。
+   */
+  scale: number;
+  /** 縮放後的實際包圍盒尺寸(公尺,已套用模型方位修正 rotationY)。 */
+  fittedM: [number, number, number];
+  /** `FURNITURE_DEFAULTS` 的目標尺寸(公尺)。 */
+  targetM: [number, number, number];
+  /** 這個 kind 被拆成幾個 instanced mesh(GLB 內的 mesh 數)。 */
+  partCount: number;
+  /** 目前場上這個 kind 有幾件。 */
+  instanceCount: number;
+}
+
+// task 6 (procedural exhibition furniture) — mirrors proceduralFurniture.tsx's
+// ProceduralFurnitureReport shape.
+export interface ProceduralFurnitureReport {
+  kind: string;
+  /** 程序化零件拼出來的實際外廓(公尺)。 */
+  sizeM: [number, number, number];
+  /** `FURNITURE_DEFAULTS` 的標稱尺寸(公尺)。 */
+  targetM: [number, number, number];
+  /** 這件家具由幾個零件組成。 */
+  partCount: number;
+  /** 目前場上這個 kind 有幾件。 */
+  instanceCount: number;
+}
+
+/** task 6 — 程序化家具的存活資源計數(`data-procedural-furniture-stats`)。 */
+export interface ProceduralFurnitureStats {
+  liveGeometries: number;
+  liveMaterials: number;
+  totalBuilds: number;
+}
+
 export interface AlbedoReadback {
   mean: number;
   max: number;
@@ -274,6 +315,12 @@ export class PlanEditorPage {
 
   async wallCount(): Promise<number> {
     const raw = await this.editor.getAttribute("data-wall-count");
+    return Number(raw);
+  }
+
+  /** Number of furniture items on the plan (`data-furniture-count`). */
+  async furnitureCount(): Promise<number> {
+    const raw = await this.editor.getAttribute("data-furniture-count");
     return Number(raw);
   }
 
@@ -569,6 +616,36 @@ export class PlanEditorPage {
     return Number(raw);
   }
 
+  /**
+   * Shadow-casting **item** counts by category (`data-shadow-caster-{wall,
+   * column,furniture}-count`).
+   *
+   * Prefer these over `refinedShadowCasterMeshCount()` for AC2: since task 5
+   * imports real GLBs, mesh count and item count diverge — N items of one
+   * kind share a single `InstancedMesh`, and a multi-mesh GLB (cabinet: 5)
+   * becomes that many `InstancedMesh`es.
+   */
+  async refinedShadowCasterWallCount(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute(
+      "data-shadow-caster-wall-count",
+    );
+    return Number(raw);
+  }
+
+  async refinedShadowCasterColumnCount(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute(
+      "data-shadow-caster-column-count",
+    );
+    return Number(raw);
+  }
+
+  async refinedShadowCasterFurnitureCount(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute(
+      "data-shadow-caster-furniture-count",
+    );
+    return Number(raw);
+  }
+
   /** Whether `gl.shadowMap.enabled` (`data-shadows-enabled`). */
   async refinedShadowsEnabled(): Promise<boolean> {
     const raw = await this.refinedScene.getAttribute("data-shadows-enabled");
@@ -678,6 +755,68 @@ export class PlanEditorPage {
   async refinedMaterialDiagnostics(): Promise<MaterialProbeReport> {
     const raw = await this.refinedScene.getAttribute("data-material-diagnostics");
     return JSON.parse(raw ?? "null") as MaterialProbeReport;
+  }
+
+  // --- venue-refined-3d task 5: imported furniture model diagnostics ----
+  //
+  // GLB 載入是非同步的(fetch + Draco worker 解碼),完成時間遠晚於
+  // `data-lighting-ready`。任何會讀到家具的斷言都必須先等
+  // `refinedFurnitureModelsLoaded()`,否則讀到的是「還沒有家具」的場景。
+
+  /** Whether the eager furniture-model `<Suspense>` boundary has committed (`data-furniture-models-loaded`). */
+  async refinedFurnitureModelsLoaded(): Promise<boolean> {
+    const raw = await this.refinedScene.getAttribute(
+      "data-furniture-models-loaded",
+    );
+    return raw === "true";
+  }
+
+  /** Parsed `data-furniture-model-reports` — one entry per kind currently on the plan. */
+  async refinedFurnitureModelReports(): Promise<FurnitureModelReport[]> {
+    const raw = await this.refinedScene.getAttribute(
+      "data-furniture-model-reports",
+    );
+    return JSON.parse(raw ?? "[]") as FurnitureModelReport[];
+  }
+
+  /** The single report for `kind`, or `undefined` if that kind isn't drawn from a model. */
+  async refinedFurnitureModelReport(
+    kind: string,
+  ): Promise<FurnitureModelReport | undefined> {
+    const reports = await this.refinedFurnitureModelReports();
+    return reports.find((report) => report.kind === kind);
+  }
+
+  /** Parsed `data-furniture-procedural-reports` — one entry per procedurally-drawn kind on the plan. */
+  async refinedProceduralFurnitureReports(): Promise<ProceduralFurnitureReport[]> {
+    const raw = await this.refinedScene.getAttribute(
+      "data-furniture-procedural-reports",
+    );
+    return JSON.parse(raw ?? "[]") as ProceduralFurnitureReport[];
+  }
+
+  /**
+   * Live GPU-resource counts for procedural furniture, driven by three's own
+   * `dispose` events (`data-procedural-furniture-stats`).
+   *
+   * `refinedRendererGeometries()` / `refinedRendererTextures()` come from
+   * `gl.info.memory`, which does **not** track materials — a leaked material
+   * is invisible there. Use this for anything asserting procedural furniture
+   * releases its resources.
+   */
+  async refinedProceduralFurnitureStats(): Promise<ProceduralFurnitureStats> {
+    const raw = await this.refinedScene.getAttribute(
+      "data-procedural-furniture-stats",
+    );
+    return JSON.parse(raw ?? "null") as ProceduralFurnitureStats;
+  }
+
+  /** The single procedural report for `kind`, or `undefined`. */
+  async refinedProceduralFurnitureReport(
+    kind: string,
+  ): Promise<ProceduralFurnitureReport | undefined> {
+    const reports = await this.refinedProceduralFurnitureReports();
+    return reports.find((report) => report.kind === kind);
   }
 
   // --- zoom/pan --------------------------------------------------------

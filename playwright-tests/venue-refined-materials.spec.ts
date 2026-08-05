@@ -432,6 +432,11 @@ test.describe("精密 3D 場景 (步驟 03) - Task 3: 程序化 PBR 材質(地�
   test("T14: 人工判讀截圖 — 10m 俯視 / 大場地掠射角 / 貼牆家具接觸線特寫(不斷言)", async ({
     page,
   }) => {
+    // 30 次縮小 + 4 個頂點拖曳 + AI mock 對話,之後才在一片放大到 65m 的地板
+    // 上做三段相機操作與截圖。在軟體渲染(CI / SwiftShader)上跑,光是後半段
+    // 的相機操作就會超過預設 30 秒 —— 這條本來就不斷言任何東西,拉長預算而
+    // 不是砍掉步驟,截圖才留得住原本的判讀價值。
+    test.slow();
     await mockAiConfig(page);
 
     const editor = new PlanEditorPage(page);
