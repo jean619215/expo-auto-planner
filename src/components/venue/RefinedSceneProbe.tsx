@@ -40,6 +40,10 @@ import {
   getProceduralFurnitureStats,
   type ProceduralFurnitureStats,
 } from "./proceduralFurnitureStats";
+import {
+  getFurnitureModelStats,
+  type FurnitureModelStats,
+} from "./furnitureModelStats";
 
 // The floor/wall/column meshes tag themselves with these names
 // (RefinedScene.tsx) so the probe can report *actual* scene-graph state
@@ -133,6 +137,10 @@ export interface RefinedDiagnostics {
   // rendererGeometries:那兩個來自 gl.info.memory,而 gl.info 根本不統計
   // material,漏放 material 在那裡是看不見的。
   proceduralFurniture: ProceduralFurnitureStats;
+  // task 7 — 匯入模型那條路的對應計數。同樣不併進 gl.info.memory 的數字:
+  // 正規化後的 clone 在真正被畫出來之前不會上傳 GPU,gl.info 看不見它,
+  // 而 StrictMode 丟棄的那一份正好就是這種看不見的洩漏。
+  furnitureModels: FurnitureModelStats;
   materials: MaterialProbeReport;
 }
 
@@ -762,6 +770,7 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
       rendererTextures: gl.info.memory.textures,
       rendererGeometries: gl.info.memory.geometries,
       proceduralFurniture: getProceduralFurnitureStats(),
+      furnitureModels: getFurnitureModelStats(),
       materials: materialsCacheRef.current ?? NOT_READY_MATERIALS,
     };
 

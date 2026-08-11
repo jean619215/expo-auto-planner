@@ -97,6 +97,13 @@ export interface ProceduralFurnitureStats {
   totalBuilds: number;
 }
 
+/** Mirrors `src/components/venue/furnitureModelStats.ts`. */
+export interface FurnitureModelStats {
+  liveGeometries: number;
+  totalBuilds: number;
+  cachedKinds: number;
+}
+
 export interface AlbedoReadback {
   mean: number;
   max: number;
@@ -809,6 +816,22 @@ export class PlanEditorPage {
       "data-procedural-furniture-stats",
     );
     return JSON.parse(raw ?? "null") as ProceduralFurnitureStats;
+  }
+
+  /**
+   * Cache/build counts for the imported-GLB path (`data-furniture-model-stats`).
+   *
+   * The counterpart to `refinedProceduralFurnitureStats()`. `totalBuilds` is
+   * what proves the per-kind cache is actually being reused: a flat
+   * `liveGeometries` across round-trips is also consistent with "nothing was
+   * drawn at all", whereas `totalBuilds` staying put while models are visibly
+   * on screen is not.
+   */
+  async refinedFurnitureModelStats(): Promise<FurnitureModelStats> {
+    const raw = await this.refinedScene.getAttribute(
+      "data-furniture-model-stats",
+    );
+    return JSON.parse(raw ?? "null") as FurnitureModelStats;
   }
 
   /** The single procedural report for `kind`, or `undefined`. */

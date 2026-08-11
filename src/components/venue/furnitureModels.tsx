@@ -17,6 +17,7 @@ import {
 import { furnitureModel, uniformFitScale } from "@/lib/venue/models";
 import { refinedFurnitureInstanceName } from "./RefinedSceneProbe";
 import { instanceLimitFor } from "./instanceLimit";
+import { getOrBuildNormalizedModel } from "./furnitureModelStats";
 
 /**
  * Draco 解碼器路徑。**必須顯式傳給 useGLTF** —— drei 的預設值是
@@ -155,20 +156,19 @@ function FurnitureKindGroup({
   // useGLTF 會 suspend,所以這個元件一定被包在 <Suspense> 裡。
   const gltf = useGLTF(url, DRACO_DECODER_PATH);
 
+  // 依 kind 快取,不是每次掛載各自算一份。理由(StrictMode 雙重建置、
+  // 96k 面植栽每趟往返重 clone)寫在 furnitureModelStats.ts 的檔頭。
+  //
+  // 快取本身就是這些 geometry 的擁有者,所以這裡**沒有** dispose ——
+  // 上限是「有 GLB 的 kind 數 x 每個 GLB 的 mesh 數」,不隨使用增長,
+  // 與 GLB 原始資源歸 useGLTF 模組層快取管的規則一致。
   const { parts, report } = useMemo(
-    () => normalizeModel(gltf.scene, kind, rotationY),
+    () =>
+      getOrBuildNormalizedModel(kind, () =>
+        normalizeModel(gltf.scene, kind, rotationY)
+      ),
     [gltf.scene, kind, rotationY]
   );
-
-  // normalizeModel clone 出來的 geometry 是我們自己的,useGLTF 的快取不會
-  // 幫忙釋放 —— 卸載時必須自己 dispose,否則往返步驟 02/03 會累積 GPU 資源
-  // (AGENTS.md)。material 沒有 clone(直接沿用 GLB 的),而 GLB 資源的
-  // 生命週期歸 useGLTF 的快取管,這裡不能碰。
-  useEffect(() => {
-    return () => {
-      for (const part of parts) part.geometry.dispose();
-    };
-  }, [parts]);
 
   const reportedRef = useRef<string>("");
   useEffect(() => {
