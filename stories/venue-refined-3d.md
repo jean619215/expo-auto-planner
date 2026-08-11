@@ -41,7 +41,7 @@
 - [x] [FRONTEND] 家具模型 asset pipeline:下載 6 個 Poly Haven CC0 模型(1k 貼圖),經 `gltf-transform` 打包為單檔 GLB + Draco + KTX2,決定存放路徑與授權來源記錄檔
 - [x] [FRONTEND] 匯入 6 種真實家具模型:等比縮放至 `FURNITURE_DEFAULTS` 的 `w / h / height3d`(不得非等比拉伸變形),`drawer_cabinet` 需轉 90°,重複家具用 drei `<Instances>`,植栽單獨 lazy load
 - [x] [FRONTEND] 3 種展場家具程序化幾何:`counter` 接待櫃檯、`bannerStand` 展示架、`podium` 講台,尺寸由 `FURNITURE_DEFAULTS` 驅動,風格需與匯入模型協調
-- [ ] [FRONTEND] 效能與驗收:步驟 03 資源只在進入時載入、離開可釋放,Playwright 驗收三步驟流程與唯讀行為
+- [x] [FRONTEND] 效能與驗收:步驟 03 資源只在進入時載入、離開可釋放,Playwright 驗收三步驟流程與唯讀行為
 
 <!--
 給 STORY 撰寫者的備註:

@@ -1,6 +1,6 @@
 # 接續執行備忘 — story `stories/venue-refined-3d.md`(精密 3D 場景 步驟 03)
 
-> 最後更新:2026-08-05。這份是「隔一陣子回來要怎麼接下去」的入口,
+> 最後更新:2026-08-11(story 全數完成)。這份是「隔一陣子回來要怎麼接下去」的入口,
 > 逐階段細節仍在 `.claude/pipeline/task-log.md`。
 
 ## 進度總覽(7 個 task)
@@ -13,11 +13,43 @@
 | 4 | 家具模型 asset pipeline | ✅ 完成 `76937e9` + `c54166b` |
 | 5 | 匯入 6 種真實家具模型 | ✅ 完成(review 抓到並修掉 1 個 🔴) |
 | 6 | 3 種展場家具程序化幾何 | ✅ 完成(review 抓到並修掉 1 個 🔴) |
-| 7 | 效能與驗收 | ⬜ **下一個** |
+| 7 | 效能與驗收 | ✅ 完成 |
 
-九種家具至此全部有造型:六種匯入 Poly Haven CC0 模型,三種程序化。
+**七個 task 全部完成,story 收尾。** 九種家具全部有造型:六種匯入 Poly Haven
+CC0 模型,三種程序化。
 
-## Task 7 接手前一定要知道的三件事
+## Task 7 做了什麼
+
+**效能** —— 把下方「接手前一定要知道的第 3 點」點名的現成題目做掉。匯入模型
+那條路原本是「`useMemo` 建立 + `useEffect` 卸載時 dispose」,在 React
+StrictMode 下被丟棄的那一份 clone 永遠沒人 dispose,而它沒上傳過 GPU 所以
+`gl.info.memory` 也看不見。新增 `furnitureModelStats.ts`(依 kind 的模組層
+快取 + 計數,形狀刻意做成 `proceduralFurnitureStats.ts` 的對應物),
+`furnitureModels.tsx` 改走 `getOrBuildNormalizedModel()` 並移除 dispose ——
+快取本身就是擁有者。順帶消掉「每趟往返重新 clone 96k 面植栽 + 三次
+`applyMatrix4`」的主執行緒成本。對外量測是 `data-furniture-model-stats`。
+
+**驗收** —— 新 spec `venue-refined-acceptance.spec.ts`(六案例),守的是**整個
+story 的驗收條件**,不是單一 task:三步驟往返、九種家具都有造型且兩條路互斥、
+唯讀、資源只在進入 03 時載入且往返不累積、等比縮放、01/02 未退化。
+
+兩次蓄意破壞驗證 D 真的擋得住:整支繞過快取 → `cachedKinds` 期望 6 得 0;
+只關掉 cache 命中 → `totalBuilds` 期望 6 得 **18**(正好 3 倍 —— StrictMode
+雙重建置加上每趟往返重建)。
+
+### 寫這支 spec 踩到的兩個坑(已寫進 spec 註解)
+
+1. **03→02 是 `clickBackToPreview()`,02→01 才是 `clickBackToEdit()`** ——
+   兩顆是不同的按鈕,用錯會在 `backToEditButton` 的 click 上逾時。
+2. **往返要用 `backToPreview()` 並等 `canvas` 只剩一張**。02 與 03 互斥掛載,
+   不等這個就切回去會撞上兩個 WebGL context 並存的瞬間,探針時常來不及重新
+   武裝,失敗會呈現為「`refinedLightingReady` 一直是 false」。沿用
+   `venue-refined-lighting` 案例12 的寫法。
+3. 這支比其他 venue spec 重得多(擺九件家具 + 往返四趟),預設 30s 的
+   **test timeout** 不夠,而逾時會偽裝成「某個 poll 失敗」,極度誤導。已用
+   `test.describe.configure({ timeout: 180_000 })`。
+
+## Task 7 接手前一定要知道的三件事(保留供追溯)
 
 ### 1. 兩條繪製路徑是同構的,不要再分岔
 
@@ -48,10 +80,9 @@ dispose」這個看似正確的寫法,**被丟棄的那一份永遠沒人 dispos
 `data-procedural-furniture-stats`(three 自身 dispose 事件驅動),不要只看
 `gl.info.memory`。
 
-**匯入模型那條路仍是「useMemo 建立 + useEffect dispose」**,所以同樣有
-StrictMode 的雙重建置(只是那份 clone 從未上傳 GPU,`gl.info.memory` 也看不
-見)。task 7 若要處理效能,這是一個現成的題目:把 `normalizeModel()` 的結果
-也改成依 kind 快取,順便消掉「每趟往返重新 clone 96k 面植栽」的成本。
+~~**匯入模型那條路仍是「useMemo 建立 + useEffect dispose」**~~ —— **task 7 已
+處理**:改成 `furnitureModelStats.ts` 的依 kind 快取,讀
+`data-furniture-model-stats`。兩條路現在對稱了。
 
 ## Task 6 做了什麼
 
@@ -75,7 +106,7 @@ StrictMode 的雙重建置(只是那份 clone 從未上傳 GPU,`gl.info.memory` 
 
 - `venue-procedural-furniture` 8/8(P1–P8)、`venue-furniture-models` 8/8、
   `venue-refined-lighting` 14/14、`venue-refined-materials` 14/14、
-  `venue-furniture-assets` 6/6。
+  `venue-furniture-assets` 6/6、`venue-refined-acceptance` 6/6。
 - 免登入的 14 支 spec 全套:見 `qa-report.md` 的執行紀錄。
 - 需要帳密的 5 支(`ai-panel` / `membership-task7-task9` / `points-shop` /
   `profile-edit-mode` / `site-header`)在本環境**沒有跑** —— 它們在檔案載入期
@@ -88,7 +119,6 @@ StrictMode 的雙重建置(只是那份 clone 從未上傳 GPU,`gl.info.memory` 
 
 ## 仍未完成的事項
 
-- [ ] **task 7:效能與驗收**(未開始)。
 - [ ] **重跑 `node scripts/build-venue-models.mjs` 的下載階段**。本環境跑不了:
       `api.polyhaven.com` 被 egress policy 擋(CONNECT 403),依代理規範不得
       繞路。**已驗證**:`copyDracoDecoder()` 正常跑完並正確印出
@@ -96,7 +126,7 @@ StrictMode 的雙重建置(只是那份 clone 從未上傳 GPU,`gl.info.memory` 
       上次成功執行後未曾改動,在有對外網路的機器補跑一次即可。
 - [ ] 需帳密的 5 支 spec 補跑。
 
-## Task 7 的既有約束(來自 AGENTS.md,實作前必讀)
+## 這個 story 的長期約束(來自 AGENTS.md,任何後續改動前必讀)
 
 - 家具尺寸**不可**由使用者調整,只能移動與旋轉;尺寸唯一來源是
   `FURNITURE_DEFAULTS` 的 `w` / `h` / `height3d`。匯入模型一律**等比**縮放到
@@ -104,7 +134,8 @@ StrictMode 的雙重建置(只是那份 clone 從未上傳 GPU,`gl.info.memory` 
 - `RefinedScene` 是唯讀場景:不持有幾何 `useState`、不掛 `TransformControls`、
   不回寫 `onSceneChange`;與步驟 02 互斥掛載(一次只有一個 WebGL context)。
 - 不在 render 期間新建 geometry/material/texture,用 `useMemo` 快取並在卸載時
-  `dispose()`。(程序化那條路改用模組層快取,理由見上方第 3 點。)
+  `dispose()`。(**兩條家具路徑都已改用模組層快取**,理由見上方第 3 點 ——
+  快取本身是擁有者,所以那裡沒有 dispose,這是刻意的。)
 - 重複家具用 drei `<Instances>`。
 - `src/lib/venue/` 純領域;瀏覽器限定函式庫透過 `*Loader.tsx`(`ssr:false`)包一層。
 
@@ -113,7 +144,6 @@ StrictMode 的雙重建置(只是那份 clone 從未上傳 GPU,`gl.info.memory` 
 - task 3 review 的 🟡 Issue 6 未修:`venue-refined-materials.spec.ts` 的 T3
   牆面 UV 守衛複製了實作的「面 → 跨距」對照表,若 `BoxGeometry` 的 group
   順序改變,實作與測試會一起壞、測不出來。
-- 匯入模型那條路的 StrictMode 雙重建置(見上方第 3 點),task 7 可順手處理。
 - 同一件程序化家具內相同表面處理會各自持有一個 material(櫃檯的踢腳座與檯面
   都是 accent)。量級是每個 kind 至多 3 個,對 draw call 無影響,不值得為它
   加一層 finish→material 的間接性。

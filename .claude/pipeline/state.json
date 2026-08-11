@@ -1,13 +1,13 @@
 {
   "story_file": "stories/venue-refined-3d.md",
   "story_title": "精密 3D 場景 (步驟 03)",
-  "task_index": 5,
-  "current_task": "[FRONTEND] 3 種展場家具程序化幾何:counter 接待櫃檯、bannerStand 展示架、podium 講台,尺寸由 FURNITURE_DEFAULTS 驅動,風格需與匯入模型協調",
+  "task_index": 6,
+  "current_task": "[FRONTEND] 效能與驗收:步驟 03 資源只在進入時載入、離開可釋放,Playwright 驗收三步驟流程與唯讀行為",
   "task_type": "FRONTEND",
   "stage": "complete",
   "iteration": {
-    "review": 1,
-    "qa": 1
+    "review": 0,
+    "qa": 0
   },
   "checkpoints": {
     "scan": "completed",
@@ -23,5 +23,5 @@
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "last_updated": "2026-08-05T01:10:00+08:00"
+  "last_updated": "2026-08-11T00:00:00+08:00"
 }

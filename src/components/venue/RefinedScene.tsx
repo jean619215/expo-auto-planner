@@ -128,6 +128,7 @@ function diagnosticsAttrs(diagnostics: RefinedDiagnostics | null): Record<string
     "data-environment-set": String(diagnostics.environmentSet),
     "data-renderer-textures": String(diagnostics.rendererTextures),
     "data-renderer-geometries": String(diagnostics.rendererGeometries),
+    "data-furniture-model-stats": JSON.stringify(diagnostics.furnitureModels),
     "data-procedural-furniture-stats": JSON.stringify(
       diagnostics.proceduralFurniture,
     ),
