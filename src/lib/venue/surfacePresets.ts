@@ -7,13 +7,39 @@
 // 鋪貼尺寸:那個值同時被牆面 UV 的驗證表引用(venue-refined-materials 的
 // T3),改它會讓實作與測試一起漂移。
 
+/** 實拍貼圖組。三張都有才算完整 —— 少了法線,寫實度反而不如程序化那組。 */
+export interface SurfaceTexturePack {
+  map: string;
+  normalMap: string;
+  roughnessMap: string;
+  /** 一張貼圖對應幾公尺。實拍貼圖的自然尺度比程序化那組小。 */
+  tileM: number;
+}
+
 export interface SurfacePreset {
   id: string;
   label: string;
-  /** 烘焙時的底色(十六進位)。 */
+  /** 烘焙時的底色(十六進位)。有 textures 時不使用。 */
   color: string;
   /** 材質的粗糙度。地板走 roughnessMap,這個值當作烘焙的基準。 */
   roughness: number;
+  /**
+   * 有值代表這款走**實拍貼圖**,不走程序化烘焙。
+   * 檔案由 scripts/build-venue-textures.mjs 產生,來源與授權見
+   * public/textures/venue/ATTRIBUTION.md。
+   */
+  textures?: SurfaceTexturePack;
+}
+
+export const TEXTURE_BASE_PATH = "/textures/venue";
+
+function pack(id: string, tileM: number): SurfaceTexturePack {
+  return {
+    map: `${TEXTURE_BASE_PATH}/${id}_diff.webp`,
+    normalMap: `${TEXTURE_BASE_PATH}/${id}_nor.webp`,
+    roughnessMap: `${TEXTURE_BASE_PATH}/${id}_rough.webp`,
+    tileM,
+  };
 }
 
 export const FLOOR_PRESETS: SurfacePreset[] = [
@@ -21,6 +47,20 @@ export const FLOOR_PRESETS: SurfacePreset[] = [
   { id: "wood", label: "木地板", color: "#b08050", roughness: 0.45 },
   { id: "carpet", label: "地毯", color: "#6b7280", roughness: 0.95 },
   { id: "stone", label: "石材", color: "#a8a29e", roughness: 0.35 },
+  {
+    id: "laminate",
+    label: "木質地板(實拍)",
+    color: "#b08050",
+    roughness: 0.5,
+    textures: pack("laminate", 2),
+  },
+  {
+    id: "worn-concrete",
+    label: "磨損水泥(實拍)",
+    color: "#cfcac4",
+    roughness: 0.7,
+    textures: pack("worn-concrete", 4),
+  },
 ];
 
 export const WALL_PRESETS: SurfacePreset[] = [
@@ -28,6 +68,20 @@ export const WALL_PRESETS: SurfacePreset[] = [
   { id: "fabric", label: "布幕", color: "#94a3b8", roughness: 0.95 },
   { id: "wood", label: "木紋", color: "#a97c50", roughness: 0.6 },
   { id: "dark", label: "深色板", color: "#44403c", roughness: 0.75 },
+  {
+    id: "beige-plaster",
+    label: "米色批土牆(實拍)",
+    color: "#d9cfc2",
+    roughness: 0.9,
+    textures: pack("beige-plaster", 2),
+  },
+  {
+    id: "dirty-carpet",
+    label: "地毯牆布(實拍)",
+    color: "#8b8378",
+    roughness: 0.95,
+    textures: pack("dirty-carpet", 2),
+  },
 ];
 
 export interface SurfaceSelection {
