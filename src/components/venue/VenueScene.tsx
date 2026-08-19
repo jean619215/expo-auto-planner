@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useRef,
   useState,
   type ComponentRef,
@@ -24,8 +25,11 @@ import {
   PanelLeftOpen,
 } from "lucide-react";
 import {
+  MAX_WALL_HEIGHT_M,
+  MIN_WALL_HEIGHT_M,
   VENUE_SIZE_M,
   WALL_THICKNESS_M,
+  clampWallHeight,
   translateColumn,
   translateWall,
   wallLengthM,
@@ -44,8 +48,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { segmentClassName } from "./PlanToolbar";
 import { useFloorGeometry } from "./floorGeometry";
-
-const WALL_HEIGHT_M = 3;
+import VenueSceneProbe, {
+  VENUE_WALL_NAME,
+  VENUE_COLUMN_NAME,
+  type VenueSceneMeasurements,
+} from "./VenueSceneProbe";
 
 type SelectedId =
   | { type: "wall" | "column" | "furniture"; id: string }
@@ -72,6 +79,10 @@ interface VenueSceneProps {
   // 選填:相機取景/gizmo 尺寸的 fit 基準,與 venueSizeM(ground plane/clamp
   // 用)分離 — 預設回退到 venueSizeM,維持既有呼叫端行為不變。
   viewFitSizeM?: number;
+  /** 全域牆高(公尺)。牆與柱共用,唯一來源是 PlanEditor 的頂層 state。 */
+  wallHeightM: number;
+  /** 使用者在本步驟調整牆高時回寫給 state owner;未給則不顯示調整 UI。 */
+  onWallHeightChange?: (meters: number) => void;
   onSceneChange?: (next: {
     walls: WallSegment[];
     columns: Column[];
@@ -102,6 +113,8 @@ export default function VenueScene({
   furniture,
   venueSizeM = VENUE_SIZE_M,
   viewFitSizeM,
+  wallHeightM,
+  onWallHeightChange,
   onSceneChange,
 }: VenueSceneProps) {
   const fit = viewFitSizeM ?? venueSizeM;
@@ -114,6 +127,14 @@ export default function VenueScene({
   const selectedMeshRef = useRef<THREE.Object3D | null>(null);
   const dragStartRef = useRef<{ x: number; z: number } | null>(null);
   const orbitRef = useRef<ComponentRef<typeof OrbitControls>>(null);
+  const [measurements, setMeasurements] = useState<VenueSceneMeasurements>({
+    wallHeightM: 0,
+    columnHeightM: 0,
+  });
+  const handleProbeReport = useCallback(
+    (next: VenueSceneMeasurements) => setMeasurements(next),
+    [],
+  );
 
   function resetView() {
     orbitRef.current?.reset();
@@ -208,6 +229,9 @@ export default function VenueScene({
       data-column-mesh-count={columns.length}
       data-furniture-mesh-count={furniture.length}
       data-floor-vertex-count={polygon.length}
+      data-wall-height-m={wallHeightM}
+      data-wall-mesh-height-m={measurements.wallHeightM}
+      data-column-mesh-height-m={measurements.columnHeightM}
       className="mt-4 w-full"
     >
       <div className="flex gap-3">
@@ -232,6 +256,36 @@ export default function VenueScene({
           </button>
           {sidebarOpen && (
             <div className="mt-2 flex flex-col gap-3">
+              {onWallHeightChange && (
+                <div className="flex flex-col gap-1.5">
+                  <span className="px-0.5 text-xs font-bold text-muted-foreground">
+                    場地
+                  </span>
+                  <label className="flex items-center gap-1.5 px-0.5 text-xs text-muted-foreground">
+                    牆高
+                    <input
+                      type="number"
+                      data-testid="wall-height-input"
+                      min={MIN_WALL_HEIGHT_M}
+                      max={MAX_WALL_HEIGHT_M}
+                      step={0.5}
+                      defaultValue={wallHeightM}
+                      key={wallHeightM}
+                      onBlur={(e) =>
+                        onWallHeightChange(clampWallHeight(e.target.valueAsNumber))
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter") return;
+                        onWallHeightChange(
+                          clampWallHeight(e.currentTarget.valueAsNumber),
+                        );
+                      }}
+                      className="w-16 rounded border border-stone-300 bg-card px-1 py-0.5 text-right text-foreground"
+                    />
+                    m
+                  </label>
+                </div>
+              )}
               <div className="flex flex-col gap-1.5">
                 <span className="px-0.5 text-xs font-bold text-muted-foreground">
                   家具
@@ -322,6 +376,7 @@ export default function VenueScene({
             maxDistance={150}
             target={[fit / 2, 0, fit / 2]}
           />
+          <VenueSceneProbe onReport={handleProbeReport} />
           <gridHelper
             args={[venueSizeM, venueSizeM]}
             position={[venueSizeM / 2, 0.01, venueSizeM / 2]}
@@ -336,12 +391,13 @@ export default function VenueScene({
             return (
               <mesh
                 key={wall.id}
+                name={VENUE_WALL_NAME}
                 ref={(node) => {
                   if (isSelected) selectedMeshRef.current = node;
                 }}
                 position={[
                   (wall.start.x + wall.end.x) / 2,
-                  WALL_HEIGHT_M / 2,
+                  wallHeightM / 2,
                   (wall.start.y + wall.end.y) / 2,
                 ]}
                 rotation={[0, rotationY, 0]}
@@ -351,7 +407,7 @@ export default function VenueScene({
                 }}
               >
                 <boxGeometry
-                  args={[wallLengthM(wall), WALL_HEIGHT_M, WALL_THICKNESS_M]}
+                  args={[wallLengthM(wall), wallHeightM, WALL_THICKNESS_M]}
                 />
                 <meshStandardMaterial color={isSelected ? "#1F4E79" : "#78350f"} />
               </mesh>
@@ -362,16 +418,17 @@ export default function VenueScene({
             return (
               <mesh
                 key={col.id}
+                name={VENUE_COLUMN_NAME}
                 ref={(node) => {
                   if (isSelected) selectedMeshRef.current = node;
                 }}
-                position={[col.center.x, WALL_HEIGHT_M / 2, col.center.y]}
+                position={[col.center.x, wallHeightM / 2, col.center.y]}
                 onClick={(e) => {
                   e.stopPropagation();
                   selectObject({ type: "column", id: col.id });
                 }}
               >
-                <boxGeometry args={[col.w, WALL_HEIGHT_M, col.h]} />
+                <boxGeometry args={[col.w, wallHeightM, col.h]} />
                 <meshStandardMaterial color={isSelected ? "#1F4E79" : "#78716c"} />
               </mesh>
             );

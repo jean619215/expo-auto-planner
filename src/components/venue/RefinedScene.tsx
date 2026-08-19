@@ -40,8 +40,6 @@ import RefinedSceneProbe, {
   type RefinedDiagnostics,
 } from "./RefinedSceneProbe";
 
-const WALL_HEIGHT_M = 3;
-
 interface RefinedSceneProps {
   polygon: FloorPolygon;
   walls: WallSegment[];
@@ -51,6 +49,11 @@ interface RefinedSceneProps {
   // 選填:相機取景/gridHelper 尺寸的 fit 基準,與 venueSizeM(ground plane
   // 用)分離 — 預設回退到 venueSizeM,比照 VenueScene 的既有行為。
   viewFitSizeM?: number;
+  /**
+   * 全域牆高(公尺)。與步驟 02 讀同一份頂層 state —— 這一步是唯讀場景,
+   * 不自己持有也不回寫,02↔03 的一致性靠這點保證。
+   */
+  wallHeightM: number;
 }
 
 function FloorMesh({
@@ -103,6 +106,16 @@ function diagnosticsAttrs(diagnostics: RefinedDiagnostics | null): Record<string
     "data-shadow-caster-furniture-count": String(
       diagnostics.shadowCasterFurnitureCount,
     ),
+    // 牆/柱的**實際**幾何高度(公尺)。與 data-wall-height-m(設定值的回音)
+    // 分開讀 —— 只有這兩個能證明幾何真的跟著設定值走。
+    "data-wall-mesh-height-m":
+      diagnostics.wallMeshHeightM === null
+        ? undefined
+        : String(diagnostics.wallMeshHeightM),
+    "data-column-mesh-height-m":
+      diagnostics.columnMeshHeightM === null
+        ? undefined
+        : String(diagnostics.columnMeshHeightM),
     // Read off the actual floor mesh by name, not a literal — D5 requires the
     // floor to receive but never cast (it is DoubleSide, so casting would make
     // it the scene's only real shadow-acne source).
@@ -146,6 +159,7 @@ interface RefinedSceneContentProps {
   columns: Column[];
   furniture: FurnitureItem[];
   venueSizeM: number;
+  wallHeightM: number;
   fit: number;
   bounds: PlanBounds;
   revision: number;
@@ -167,6 +181,7 @@ function RefinedSceneContent({
   columns,
   furniture,
   venueSizeM,
+  wallHeightM,
   fit,
   bounds,
   revision,
@@ -187,17 +202,17 @@ function RefinedSceneContent({
       walls.map((wall) => ({
         id: wall.id,
         w: wallLengthM(wall),
-        h: WALL_HEIGHT_M,
+        h: wallHeightM,
         d: WALL_THICKNESS_M,
         // D3: deterministic per-wall texture-phase offset so adjacent
         // walls sharing one material don't all start at the same phase.
         uOffset: hashStringToUnit(wall.id) * WALL_TILE_M,
       })),
-    [walls],
+    [walls, wallHeightM],
   );
   const columnSpecs = useMemo(
-    () => columns.map((col) => ({ id: col.id, w: col.w, h: WALL_HEIGHT_M, d: col.h })),
-    [columns],
+    () => columns.map((col) => ({ id: col.id, w: col.w, h: wallHeightM, d: col.h })),
+    [columns, wallHeightM],
   );
   const wallGeometries = useMeterUvBoxGeometries(wallSpecs);
   const columnGeometries = useMeterUvBoxGeometries(columnSpecs);
@@ -236,7 +251,7 @@ function RefinedSceneContent({
             geometry={geometry}
             position={[
               (wall.start.x + wall.end.x) / 2,
-              WALL_HEIGHT_M / 2,
+              wallHeightM / 2,
               (wall.start.y + wall.end.y) / 2,
             ]}
             rotation={[0, rotationY, 0]}
@@ -263,7 +278,7 @@ function RefinedSceneContent({
             key={col.id}
             name={REFINED_COLUMN_NAME}
             geometry={geometry}
-            position={[col.center.x, WALL_HEIGHT_M / 2, col.center.y]}
+            position={[col.center.x, wallHeightM / 2, col.center.y]}
             castShadow
             receiveShadow
           >
@@ -363,6 +378,7 @@ export default function RefinedScene({
   furniture,
   venueSizeM = VENUE_SIZE_M,
   viewFitSizeM,
+  wallHeightM,
 }: RefinedSceneProps) {
   const fit = viewFitSizeM ?? venueSizeM;
 
@@ -477,6 +493,7 @@ export default function RefinedScene({
       data-column-mesh-count={columns.length}
       data-furniture-mesh-count={furniture.length}
       data-floor-vertex-count={polygon.length}
+      data-wall-height-m={wallHeightM}
       data-materials-ready={String(materialsReady)}
       data-furniture-models-loaded={String(eagerLoaded)}
       data-furniture-model-reports={JSON.stringify(activeModelReports)}
@@ -500,6 +517,7 @@ export default function RefinedScene({
               columns={columns}
               furniture={furniture}
               venueSizeM={venueSizeM}
+              wallHeightM={wallHeightM}
               fit={fit}
               bounds={bounds}
               revision={revision}

@@ -20,6 +20,7 @@ interface RefinedSceneLoaderProps {
   furniture: FurnitureItem[];
   venueSizeM?: number;
   viewFitSizeM?: number;
+  wallHeightM: number;
 }
 
 export default function RefinedSceneLoader({
@@ -29,6 +30,7 @@ export default function RefinedSceneLoader({
   furniture,
   venueSizeM,
   viewFitSizeM,
+  wallHeightM,
 }: RefinedSceneLoaderProps) {
   return (
     <RefinedScene
@@ -38,6 +40,7 @@ export default function RefinedSceneLoader({
       furniture={furniture}
       venueSizeM={venueSizeM}
       viewFitSizeM={viewFitSizeM}
+      wallHeightM={wallHeightM}
     />
   );
 }

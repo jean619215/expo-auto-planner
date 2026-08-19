@@ -179,6 +179,22 @@ export function pxToMeters(
 // --- Wall / column object system (Task 2) ---------------------------------
 
 export const WALL_THICKNESS_M = 0.2;
+
+// --- 牆高(全域一個值,非 per-wall)----------------------------------------
+//
+// 牆與柱共用同一個高度 —— 展場實務上整場牆體是統一高度,所以 `WallSegment`
+// 刻意不加 height 欄位(那會連帶動到存檔格式與 AI 的 add_wall schema)。
+// 使用者回饋:「牆壁通常 4-6 米高」;4-6 是常態不是上限,硬夾在 4-6 會讓
+// 挑高場地做不了,所以範圍開到 2-10、預設落在常態的下緣 4。
+export const DEFAULT_WALL_HEIGHT_M = 4;
+export const MIN_WALL_HEIGHT_M = 2;
+export const MAX_WALL_HEIGHT_M = 10;
+
+/** 把任意輸入(含 NaN / 非數字)夾成合法牆高。非有限數一律回預設值。 */
+export function clampWallHeight(raw: number): number {
+  if (!Number.isFinite(raw)) return DEFAULT_WALL_HEIGHT_M;
+  return Math.min(MAX_WALL_HEIGHT_M, Math.max(MIN_WALL_HEIGHT_M, raw));
+}
 // Default size at creation time only — per-instance `w`/`h` may differ after resize.
 export const COLUMN_SIZE_M = 0.5;
 
@@ -404,6 +420,7 @@ export interface PlanSnapshot {
   columns: Column[];
   furniture: FurnitureItem[];
   venueSizeM: number;
+  wallHeightM: number;
 }
 
 // 固定欄位順序 stringify — 快照物件永遠以下面的字面量順序組裝,不會出現
@@ -415,6 +432,7 @@ export function serializePlanSnapshot(snapshot: PlanSnapshot): string {
     columns: snapshot.columns,
     furniture: snapshot.furniture,
     venueSizeM: snapshot.venueSizeM,
+    wallHeightM: snapshot.wallHeightM,
   });
 }
 
@@ -425,4 +443,5 @@ export const EMPTY_PLAN_BASELINE = serializePlanSnapshot({
   columns: [],
   furniture: [],
   venueSizeM: PLAN_AREA_SIZE_M,
+  wallHeightM: DEFAULT_WALL_HEIGHT_M,
 });

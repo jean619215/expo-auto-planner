@@ -587,6 +587,57 @@ export class PlanEditorPage {
     return Number(raw);
   }
 
+  // --- R3 牆高(feedback round 2, T1)-----------------------------------
+  //
+  // `wallHeightM()` 是設定值,`sceneWallMeshHeightM()` / `sceneColumnMeshHeightM()`
+  // 是場景探針量到的實際 mesh 高度。兩者要分開讀 —— 只驗設定值的話,把
+  // boxGeometry 的高度寫死也會通過。
+
+  /** 目前的牆高設定值(公尺),讀自步驟 02 的 venue-scene。 */
+  async wallHeightM(): Promise<number> {
+    const raw = await this.scene.getAttribute("data-wall-height-m");
+    return Number(raw);
+  }
+
+  /** 步驟 03 的牆高設定值(公尺)。 */
+  async refinedWallHeightM(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute("data-wall-height-m");
+    return Number(raw);
+  }
+
+  /** 探針量到的第一面牆 mesh 的實際世界高度(公尺);無牆時為 0。 */
+  async sceneWallMeshHeightM(): Promise<number> {
+    const raw = await this.scene.getAttribute("data-wall-mesh-height-m");
+    return Number(raw);
+  }
+
+  /** 探針量到的第一根柱子 mesh 的實際世界高度(公尺);無柱時為 0。 */
+  async sceneColumnMeshHeightM(): Promise<number> {
+    const raw = await this.scene.getAttribute("data-column-mesh-height-m");
+    return Number(raw);
+  }
+
+  /** 步驟 03 探針量到的第一面牆 mesh 的實際世界高度(公尺)。 */
+  async refinedWallMeshHeightM(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute("data-wall-mesh-height-m");
+    return Number(raw);
+  }
+
+  /** 步驟 03 探針量到的第一根柱子 mesh 的實際世界高度(公尺)。 */
+  async refinedColumnMeshHeightM(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute(
+      "data-column-mesh-height-m",
+    );
+    return Number(raw);
+  }
+
+  /** 在步驟 02 設定牆高。輸入後送出,值會被夾到合法範圍。 */
+  async setWallHeight(meters: number) {
+    const input = this.page.locator('[data-testid="wall-height-input"]');
+    await input.fill(String(meters));
+    await input.press("Enter");
+  }
+
   // --- venue-refined-3d task 2: lighting/shadow diagnostics ------------
   //
   // All values below are read from `[data-testid="refined-scene"]`'s

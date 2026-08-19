@@ -6,6 +6,7 @@ import type Konva from "konva";
 import { ZoomIn, ZoomOut, Maximize } from "lucide-react";
 import {
   DEFAULT_FLOOR,
+  DEFAULT_WALL_HEIGHT_M,
   EMPTY_PLAN_BASELINE,
   GRID_MAJOR_M,
   GRID_MINOR_M,
@@ -14,6 +15,7 @@ import {
   VENUE_SIZE_M,
   WALL_THICKNESS_M,
   clampColumnCenter,
+  clampWallHeight,
   computePxPerMeter,
   createColumn,
   createObjectId,
@@ -175,6 +177,9 @@ export default function PlanEditor() {
   const [walls, setWalls] = useState<WallSegment[]>([]);
   const [columns, setColumns] = useState<Column[]>([]);
   const [furniture, setFurniture] = useState<FurnitureItem[]>([]);
+  // 全域牆高(公尺)。牆與柱共用,步驟 02 可調、步驟 03 唯讀跟隨 —— 兩個
+  // 場景讀的是這一份,不各自持有,否則 02↔03 會出現不一致的高度。
+  const [wallHeightM, setWallHeightM] = useState(DEFAULT_WALL_HEIGHT_M);
   const [selectedObject, setSelectedObject] = useState<SelectedObject>(null);
   const [draftWall, setDraftWall] = useState<{
     start: PlanPoint;
@@ -293,7 +298,14 @@ export default function PlanEditor() {
   // --- 存檔 UI(Task 3):快照 / dirty 判定 / 讀檔套用 -----------------------
 
   function getSnapshot(): PlanSnapshot {
-    return { polygon, walls, columns, furniture, venueSizeM: PLAN_AREA_SIZE_M };
+    return {
+      polygon,
+      walls,
+      columns,
+      furniture,
+      venueSizeM: PLAN_AREA_SIZE_M,
+      wallHeightM,
+    };
   }
 
   // 序列化比對,不做逐操作 dirty flag(取捨見 architect-plan.md D5)。僅在
@@ -314,16 +326,21 @@ export default function PlanEditor() {
       walls?: WallSegment[];
       columns?: Column[];
       furniture?: FurnitureItem[];
+      wallHeightM?: number;
     };
     const loadedPolygon = rawPlan.polygon ?? DEFAULT_FLOOR;
     const loadedWalls = rawPlan.walls ?? [];
     const loadedColumns = rawPlan.columns ?? [];
     const loadedFurniture = rawPlan.furniture ?? [];
+    // 缺欄位的舊存檔一律回預設牆高 —— 決議是舊檔作廢、不寫遷移,但讀到
+    // 舊檔也不該炸,clampWallHeight 對 undefined 會回 DEFAULT_WALL_HEIGHT_M。
+    const loadedWallHeightM = clampWallHeight(rawPlan.wallHeightM as number);
 
     setPolygon(loadedPolygon);
     setWalls(loadedWalls);
     setColumns(loadedColumns);
     setFurniture(loadedFurniture);
+    setWallHeightM(loadedWallHeightM);
     setSelectedObject(null);
     setSelectedVertex(null);
 
@@ -340,6 +357,7 @@ export default function PlanEditor() {
         columns: loadedColumns,
         furniture: loadedFurniture,
         venueSizeM: PLAN_AREA_SIZE_M,
+        wallHeightM: loadedWallHeightM,
       }),
     );
   }
@@ -1574,6 +1592,8 @@ export default function PlanEditor() {
                 furniture={furniture}
                 venueSizeM={PLAN_AREA_SIZE_M}
                 viewFitSizeM={VENUE_SIZE_M}
+                wallHeightM={wallHeightM}
+                onWallHeightChange={setWallHeightM}
                 onSceneChange={handleSceneChange}
               />
             </div>
@@ -1596,6 +1616,7 @@ export default function PlanEditor() {
                 furniture={furniture}
                 venueSizeM={PLAN_AREA_SIZE_M}
                 viewFitSizeM={VENUE_SIZE_M}
+                wallHeightM={wallHeightM}
               />
             </div>
           )}

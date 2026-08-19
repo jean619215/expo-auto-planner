@@ -95,6 +95,17 @@ function furnitureInstanceKindFromName(name: string): string | null {
 // furniture items.
 const PROBE_ACTIVE_FRAMES = 120;
 
+// 量測用的 Box3 重複使用 —— 每幀新建是白白製造垃圾。
+const MEASURE_BOX = new THREE.Box3();
+
+/** mesh 的實際世界高度(公尺),四捨五入到 mm;無 mesh 或包圍盒無效時 null。 */
+function measureHeightM(mesh: THREE.Object3D | null): number | null {
+  if (!mesh) return null;
+  const box = MEASURE_BOX.setFromObject(mesh);
+  const height = box.max.y - box.min.y;
+  return Number.isFinite(height) ? Math.round(height * 1000) / 1000 : null;
+}
+
 export interface RefinedDiagnostics {
   lightCount: number;
   shadowCastingLightCount: number;
@@ -109,6 +120,17 @@ export interface RefinedDiagnostics {
   // AC2 真正要斷言的東西。
   shadowCasterWallCount: number;
   shadowCasterColumnCount: number;
+  /**
+   * 第一面牆 / 第一根柱子的**實際**世界高度(公尺),無則為 null。
+   *
+   * 為什麼不用 `data-wall-height-m` 就好:那個屬性是把 prop 印回 DOM,
+   * 幾何就算被寫死成別的值也照樣正確。牆高改成可調之後(feedback round 2
+   * T1),唯一能區分「幾何真的跟著變」與「只是設定值換了個數字」的讀數
+   * 就是這裡量到的包圍盒 —— 破壞驗證時把 h 寫死成 3,靠的就是這兩個數字
+   * 才抓得到。
+   */
+  wallMeshHeightM: number | null;
+  columnMeshHeightM: number | null;
   shadowCasterFurnitureCount: number;
   floorReceivesShadow: boolean;
   floorCastsShadow: boolean;
@@ -745,6 +767,8 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
       shadowCasterMeshCount,
       shadowCasterWallCount,
       shadowCasterColumnCount,
+      wallMeshHeightM: measureHeightM(found.wall),
+      columnMeshHeightM: measureHeightM(found.column),
       shadowCasterFurnitureCount:
         shadowCasterFurnitureBoxCount +
         [...furnitureInstances.values()].reduce((sum, n) => sum + n, 0),
