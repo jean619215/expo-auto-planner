@@ -54,6 +54,8 @@ interface RefinedSceneProps {
   viewCenterM?: { x: number; y: number };
   /** 使用者選的地板/牆面材質(feedback round 2, R6)。 */
   surfaces: SurfaceSelection;
+  /** 使用者上傳的材質圖(blob URL);沒有就是 null。 */
+  surfaceUploads: { floor: string | null; wall: string | null };
   /**
    * 全域牆高(公尺)。與步驟 02 讀同一份頂層 state —— 這一步是唯讀場景,
    * 不自己持有也不回寫,02↔03 的一致性靠這點保證。
@@ -170,6 +172,7 @@ interface RefinedSceneContentProps {
   revision: number;
   probeResetKey: string;
   surfaces: SurfaceSelection;
+  uploadsKey: string;
   eagerLoaded: boolean;
   onEagerLoaded: () => void;
   onModelReport: (report: FurnitureModelReport) => void;
@@ -193,6 +196,7 @@ function RefinedSceneContent({
   revision,
   probeResetKey,
   surfaces,
+  uploadsKey,
   eagerLoaded,
   onEagerLoaded,
   onModelReport,
@@ -230,7 +234,7 @@ function RefinedSceneContent({
       <HallEnvironment />
       <RefinedSceneProbe
         resetKey={probeResetKey}
-        materialsKey={`${surfaces.floor}:${surfaces.wall}`}
+        materialsKey={`${surfaces.floor}:${surfaces.wall}|${uploadsKey}`}
         onReport={onReport}
       />
       <OrbitControls
@@ -391,6 +395,7 @@ export default function RefinedScene({
   viewFitSizeM,
   viewCenterM,
   surfaces,
+  surfaceUploads,
   wallHeightM,
 }: RefinedSceneProps) {
   const fit = viewFitSizeM ?? venueSizeM;
@@ -499,8 +504,15 @@ export default function RefinedScene({
       .map((report) => `${report.kind}:${report.partCount}`)
       .sort()
       .join(",");
-    return `${revision}|${signature}|${surfaces.floor}:${surfaces.wall}`;
-  }, [revision, activeModelReports, surfaces.floor, surfaces.wall]);
+    return `${revision}|${signature}|${surfaces.floor}:${surfaces.wall}|${surfaceUploads.floor ?? ""}:${surfaceUploads.wall ?? ""}`;
+  }, [
+    revision,
+    activeModelReports,
+    surfaces.floor,
+    surfaces.wall,
+    surfaceUploads.floor,
+    surfaceUploads.wall,
+  ]);
 
   return (
     <div
@@ -514,6 +526,8 @@ export default function RefinedScene({
       data-wall-height-m={wallHeightM}
       data-surface-floor={surfaces.floor}
       data-surface-wall={surfaces.wall}
+      data-surface-floor-source={surfaceUploads.floor ? "upload" : "preset"}
+      data-surface-wall-source={surfaceUploads.wall ? "upload" : "preset"}
       data-materials-ready={String(materialsReady)}
       data-furniture-models-loaded={String(eagerLoaded)}
       data-furniture-model-reports={JSON.stringify(activeModelReports)}
@@ -534,7 +548,11 @@ export default function RefinedScene({
             fov: 50,
           }}
         >
-          <SurfaceMaterials selection={surfaces} onReady={setMaterialsReady}>
+          <SurfaceMaterials
+            selection={surfaces}
+            uploads={surfaceUploads}
+            onReady={setMaterialsReady}
+          >
             <RefinedSceneContent
               polygon={polygon}
               walls={walls}
@@ -547,6 +565,7 @@ export default function RefinedScene({
               revision={revision}
               probeResetKey={probeResetKey}
               surfaces={surfaces}
+              uploadsKey={`${surfaceUploads.floor ?? ""}:${surfaceUploads.wall ?? ""}`}
               eagerLoaded={eagerLoaded}
               onEagerLoaded={handleEagerLoaded}
               onModelReport={handleModelReport}

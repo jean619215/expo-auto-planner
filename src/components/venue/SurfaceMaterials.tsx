@@ -20,6 +20,9 @@ import { useThree } from "@react-three/fiber";
 import { REFINED_SURFACE } from "./refinedLighting";
 import {
   AO_MAP_INTENSITY,
+  FLOOR_TILE_M,
+  MAX_ANISOTROPY,
+  WALL_TILE_M,
   bakeSurfaceTextures,
   disposeSurfaceTextureSet,
   NORMAL_SCALE,
@@ -63,6 +66,14 @@ interface SurfaceMaterialsProps {
   children: ReactNode;
   /** 使用者選的地板/牆面材質(feedback round 2, R6)。 */
   selection: SurfaceSelection;
+  /**
+   * 使用者自行上傳的材質圖(blob URL),沒有就是 null。
+   *
+   * 上傳的只有一張彩色圖 —— 沒有 normal / roughness,所以這條路徑刻意
+   * **關掉凹凸感**:寧可比內建材質平,也不要用亮度硬推出一組與圖案對不上
+   * 的假陰影。
+   */
+  uploads: { floor: string | null; wall: string | null };
   /** Reported whenever readiness flips — RefinedScene.tsx uses this to
    * drive the `data-materials-ready` DOM attribute / loading overlay. */
   onReady?: (ready: boolean) => void;
@@ -71,6 +82,7 @@ interface SurfaceMaterialsProps {
 export default function SurfaceMaterials({
   children,
   selection,
+  uploads,
   onReady,
 }: SurfaceMaterialsProps) {
   const gl = useThree((state) => state.gl);
@@ -119,6 +131,45 @@ export default function SurfaceMaterials({
     };
   }, []);
 
+  // 上傳的圖:單張 baseColor,非同步載入。載完才換上去,所以切換的瞬間
+  // 看到的仍是原本的材質,不會閃一下空白。
+  const [uploadedTextures, setUploadedTextures] = useState<{
+    floor: THREE.Texture | null;
+    wall: THREE.Texture | null;
+  }>({ floor: null, wall: null });
+
+  useEffect(() => {
+    const loader = new THREE.TextureLoader();
+    let cancelled = false;
+    const created: THREE.Texture[] = [];
+
+    function load(url: string | null, tileM: number): Promise<THREE.Texture | null> {
+      if (!url) return Promise.resolve(null);
+      return loader.loadAsync(url).then((texture) => {
+        texture.wrapS = THREE.RepeatWrapping;
+        texture.wrapT = THREE.RepeatWrapping;
+        texture.repeat.set(1 / tileM, 1 / tileM);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.anisotropy = MAX_ANISOTROPY;
+        created.push(texture);
+        return texture;
+      });
+    }
+
+    void Promise.all([
+      load(uploads.floor, FLOOR_TILE_M),
+      load(uploads.wall, WALL_TILE_M),
+    ]).then(([floor, wall]) => {
+      if (cancelled) return;
+      setUploadedTextures({ floor, wall });
+    });
+
+    return () => {
+      cancelled = true;
+      for (const texture of created) texture.dispose();
+    };
+  }, [uploads.floor, uploads.wall]);
+
   const materials = useMemo(() => {
     if (!textureSet) return null;
 
@@ -128,26 +179,44 @@ export default function SurfaceMaterials({
     // the texture's mean, see surfaceTextures.ts baseColorFor()). Floor
     // additionally omits an explicit `roughness` (defaults to 1), so its
     // roughnessMap is the sole source there too (D6).
-    const floor = new THREE.MeshStandardMaterial({
-      map: textureSet.floor.map,
-      normalMap: textureSet.floor.normalMap,
-      roughnessMap: textureSet.floor.roughnessMap,
-      aoMap: textureSet.floor.aoMap,
-      aoMapIntensity: AO_MAP_INTENSITY,
-      color: 0xffffff,
-      metalness: REFINED_SURFACE.floor.metalness,
-      side: THREE.DoubleSide,
-      normalScale: new THREE.Vector2(NORMAL_SCALE.floor, NORMAL_SCALE.floor),
-    });
+    // 上傳的圖走「只有 baseColor」的路徑:normal / roughness / ao 全部不掛,
+    // 也不從亮度推 normal。上傳的材質因此比內建的平,但不會出現與圖案對不上
+    // 的假陰影。
+    const floor = uploadedTextures.floor
+      ? new THREE.MeshStandardMaterial({
+          map: uploadedTextures.floor,
+          color: 0xffffff,
+          roughness: REFINED_SURFACE.floor.roughness,
+          metalness: REFINED_SURFACE.floor.metalness,
+          side: THREE.DoubleSide,
+        })
+      : new THREE.MeshStandardMaterial({
+          map: textureSet.floor.map,
+          normalMap: textureSet.floor.normalMap,
+          roughnessMap: textureSet.floor.roughnessMap,
+          aoMap: textureSet.floor.aoMap,
+          aoMapIntensity: AO_MAP_INTENSITY,
+          color: 0xffffff,
+          metalness: REFINED_SURFACE.floor.metalness,
+          side: THREE.DoubleSide,
+          normalScale: new THREE.Vector2(NORMAL_SCALE.floor, NORMAL_SCALE.floor),
+        });
 
-    const wall = new THREE.MeshStandardMaterial({
-      map: textureSet.wall.map,
-      normalMap: textureSet.wall.normalMap,
-      color: 0xffffff,
-      roughness: REFINED_SURFACE.wall.roughness,
-      metalness: REFINED_SURFACE.wall.metalness,
-      normalScale: new THREE.Vector2(NORMAL_SCALE.wall, NORMAL_SCALE.wall),
-    });
+    const wall = uploadedTextures.wall
+      ? new THREE.MeshStandardMaterial({
+          map: uploadedTextures.wall,
+          color: 0xffffff,
+          roughness: REFINED_SURFACE.wall.roughness,
+          metalness: REFINED_SURFACE.wall.metalness,
+        })
+      : new THREE.MeshStandardMaterial({
+          map: textureSet.wall.map,
+          normalMap: textureSet.wall.normalMap,
+          color: 0xffffff,
+          roughness: REFINED_SURFACE.wall.roughness,
+          metalness: REFINED_SURFACE.wall.metalness,
+          normalScale: new THREE.Vector2(NORMAL_SCALE.wall, NORMAL_SCALE.wall),
+        });
 
     const column = new THREE.MeshStandardMaterial({
       map: textureSet.column.map,
@@ -159,7 +228,7 @@ export default function SurfaceMaterials({
     });
 
     return { floor, wall, column };
-  }, [textureSet]);
+  }, [textureSet, uploadedTextures]);
 
   useEffect(() => {
     if (!materials) return;

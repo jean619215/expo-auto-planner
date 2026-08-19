@@ -640,6 +640,25 @@ export class PlanEditorPage {
     return (await this.refinedScene.getAttribute("data-surface-wall")) ?? "";
   }
 
+  /** 上傳一張材質圖到指定表面。 */
+  async uploadSurfaceImage(
+    surface: "floor" | "wall",
+    name: string,
+    buffer: Buffer,
+    mimeType = "image/png",
+  ) {
+    await this.page
+      .getByTestId(`surface-${surface}-upload`)
+      .setInputFiles({ name, mimeType, buffer });
+  }
+
+  /** 步驟 03 地板材質的來源:"preset" 或 "upload"。 */
+  async refinedSurfaceFloorSource(): Promise<string> {
+    return (
+      (await this.refinedScene.getAttribute("data-surface-floor-source")) ?? ""
+    );
+  }
+
   /** 存檔快照裡記的材質選擇。 */
   async planSnapshotSurfaces(): Promise<{ floor: string; wall: string }> {
     const raw = await this.editor.getAttribute("data-plan-surfaces");

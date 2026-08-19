@@ -23,6 +23,7 @@ interface RefinedSceneLoaderProps {
   viewFitSizeM?: number;
   viewCenterM?: { x: number; y: number };
   surfaces: SurfaceSelection;
+  surfaceUploads: { floor: string | null; wall: string | null };
   wallHeightM: number;
 }
 
@@ -35,6 +36,7 @@ export default function RefinedSceneLoader({
   viewFitSizeM,
   viewCenterM,
   surfaces,
+  surfaceUploads,
   wallHeightM,
 }: RefinedSceneLoaderProps) {
   return (
@@ -47,6 +49,7 @@ export default function RefinedSceneLoader({
       viewFitSizeM={viewFitSizeM}
       viewCenterM={viewCenterM}
       surfaces={surfaces}
+      surfaceUploads={surfaceUploads}
       wallHeightM={wallHeightM}
     />
   );

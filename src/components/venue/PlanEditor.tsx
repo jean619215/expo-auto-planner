@@ -97,6 +97,9 @@ const MAX_STAGE_PX = 800;
 // 尺寸標註的顏色 —— 與圖面本身的藍圖色調刻意區隔,標註不是圖的一部分。
 const DIMENSION_COLOR = "#dc2626";
 
+// 上傳材質圖的大小上限。純前端預覽,沒有後端可以擋,所以這裡就是唯一的關卡。
+const MAX_SURFACE_UPLOAD_BYTES = 8 * 1024 * 1024;
+
 // 預設視圖 fit 尺寸(= VENUE_SIZE_M,與現行預設視覺逐像素一致的關鍵)。
 const DEFAULT_VIEW_SIZE_M = VENUE_SIZE_M;
 // zoom out 到底恰好完整容納 PLAN_AREA_SIZE_M(200)。
@@ -222,6 +225,14 @@ export default function PlanEditor() {
   const [surfaces, setSurfaces] = useState<SurfaceSelection>(
     DEFAULT_SURFACE_SELECTION,
   );
+  // 使用者上傳的材質圖。刻意只活在瀏覽器裡:blob URL,不進存檔、不上傳
+  // 後端、重整就沒了 —— 這一輪的需求是「上傳材質來預覽」,持久化另立
+  // story(需要新的上傳 API、檔案驗證、RLS 與配額)。
+  const [surfaceUploads, setSurfaceUploads] = useState<{
+    floor: string | null;
+    wall: string | null;
+  }>({ floor: null, wall: null });
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [customBooth, setCustomBooth] = useState({
     w: String(DEFAULT_BOOTH.w),
     h: String(DEFAULT_BOOTH.h),
@@ -1074,6 +1085,33 @@ export default function PlanEditor() {
       return;
     }
     applyBoothSize(widthM, heightM);
+  }
+
+  // R6:上傳材質圖。只接受圖片、只接受 8MB 以內 —— 兩者都在前端擋下,
+  // 因為這條路徑根本不碰後端,沒有第二道關卡可以依賴。
+  function handleSurfaceUpload(surface: "floor" | "wall", file: File | null) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setUploadError("只接受圖片檔");
+      return;
+    }
+    if (file.size > MAX_SURFACE_UPLOAD_BYTES) {
+      setUploadError("圖片超過 8MB");
+      return;
+    }
+    setUploadError(null);
+    setSurfaceUploads((prev) => {
+      // 換掉舊的就把舊的 blob URL 釋放,否則整個 session 會一直累積。
+      if (prev[surface]) URL.revokeObjectURL(prev[surface]!);
+      return { ...prev, [surface]: URL.createObjectURL(file) };
+    });
+  }
+
+  function clearSurfaceUpload(surface: "floor" | "wall") {
+    setSurfaceUploads((prev) => {
+      if (prev[surface]) URL.revokeObjectURL(prev[surface]!);
+      return { ...prev, [surface]: null };
+    });
   }
 
   // R2:用輸入的公分值精確定位柱子。負值與非數字直接拒絕(柱子不動),
@@ -2067,8 +2105,44 @@ export default function PlanEditor() {
                     ))}
                   </select>
                 </label>
+                {(["floor", "wall"] as const).map((surface) => (
+                  <label
+                    key={surface}
+                    className="flex items-center gap-1 text-muted-foreground"
+                  >
+                    {surface === "floor" ? "自訂地板圖" : "自訂牆面圖"}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      data-testid={`surface-${surface}-upload`}
+                      onChange={(e) =>
+                        handleSurfaceUpload(surface, e.target.files?.[0] ?? null)
+                      }
+                      className="w-40 text-[11px]"
+                    />
+                    {surfaceUploads[surface] && (
+                      <button
+                        type="button"
+                        data-testid={`surface-${surface}-upload-clear`}
+                        onClick={() => clearSurfaceUpload(surface)}
+                        className="rounded border border-stone-300 px-1"
+                      >
+                        清除
+                      </button>
+                    )}
+                  </label>
+                ))}
+                {uploadError && (
+                  <span
+                    role="alert"
+                    data-testid="surface-upload-error"
+                    className="text-destructive"
+                  >
+                    {uploadError}
+                  </span>
+                )}
                 <span className="text-muted-foreground">
-                  柱子跟隨牆面材質
+                  柱子跟隨牆面材質;上傳的圖只當顏色用,不產生凹凸
                 </span>
               </div>
               <RefinedSceneLoader
@@ -2080,6 +2154,7 @@ export default function PlanEditor() {
                 viewFitSizeM={sceneFit.sizeM}
                 viewCenterM={sceneFit.center}
                 surfaces={surfaces}
+                surfaceUploads={surfaceUploads}
                 wallHeightM={wallHeightM}
               />
             </div>

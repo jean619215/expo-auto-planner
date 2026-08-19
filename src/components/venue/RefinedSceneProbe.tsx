@@ -656,6 +656,8 @@ export default function RefinedSceneProbe({
   // work and does not need to repeat every frame (architect-plan.md Test
   // Plan: "只在首次報告時做一次,不進每幀路徑").
   const materialsCacheRef = useRef<MaterialProbeReport | null>(null);
+  // 上一次量到的地板材質 uuid —— 材質物件換了才代表快取過期。
+  const lastFloorMaterialUuidRef = useRef<string | null>(null);
 
   // `resetKey` changes whenever RefinedScene's geometry props change
   // identity (a new revision) or a furniture model finishes loading — re-arm
@@ -667,9 +669,14 @@ export default function RefinedSceneProbe({
     frameRef.current = 0;
   }, [resetKey]);
 
-  // 材質換了:清掉 readback 快取並重新武裝,下一輪會量新的那一份。
+  // 材質選擇換了:重新武裝幀數,讓探針有機會再量一次。
+  //
+  // 這裡**不**清 readback 快取 —— 清快取的時機必須是「材質物件真的換了」,
+  // 而不是「使用者選了別的」。兩者不同步:上傳的圖是非同步載入的,選擇一變
+  // 就清快取的話,探針會在材質還沒換上去的那一幀立刻重算,把**舊**材質再
+  // 快取一次,之後材質真的換了也不會再有人去量它。清快取的判斷在下面的
+  // useFrame 裡,依材質物件的 uuid。
   useLayoutEffect(() => {
-    materialsCacheRef.current = null;
     frameRef.current = 0;
   }, [materialsKey]);
 
@@ -755,6 +762,14 @@ export default function RefinedSceneProbe({
     const key = found.key;
     const floor = found.floor;
     const shadowCamera = key ? key.shadow.camera : null;
+
+    const floorMaterialUuid = floor
+      ? (floor.material as THREE.Material).uuid
+      : null;
+    if (lastFloorMaterialUuidRef.current !== floorMaterialUuid) {
+      lastFloorMaterialUuidRef.current = floorMaterialUuid;
+      materialsCacheRef.current = null;
+    }
 
     if (
       !materialsCacheRef.current &&
