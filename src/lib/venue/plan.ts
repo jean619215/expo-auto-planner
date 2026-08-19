@@ -461,6 +461,51 @@ export function columnBoundaryOffsetsM(
   };
 }
 
+export type BoundarySide = "left" | "right" | "top" | "bottom";
+
+/**
+ * 把「柱子某一邊離場地邊界 offsetM 公尺」換算成柱子新的中心點。
+ *
+ * **刻意不吸附**(不經過 snapToGrid):拖曳有 SNAP_M 吸附是為了快,輸入
+ * 框存在的理由正好相反 —— 使用者打 137cm 就是要停在 137cm。兩種行為並存
+ * 是決策,不是疏漏;UI 需要明講「再拖曳一次會回到吸附格線」。
+ *
+ * 值會夾在 [0, 場地邊長 − 柱子邊長],所以柱子不會被輸入推出場地。
+ */
+export function columnCenterForOffsetM(
+  column: Column,
+  bounds: FloorBounds,
+  side: BoundarySide,
+  offsetM: number,
+): PlanPoint {
+  const spanX = Math.max(0, bounds.widthM - column.w);
+  const spanY = Math.max(0, bounds.heightM - column.h);
+  const clamp = (v: number, span: number) => Math.min(span, Math.max(0, v));
+
+  switch (side) {
+    case "left":
+      return {
+        x: bounds.minX + clamp(offsetM, spanX) + column.w / 2,
+        y: column.center.y,
+      };
+    case "right":
+      return {
+        x: bounds.maxX - clamp(offsetM, spanX) - column.w / 2,
+        y: column.center.y,
+      };
+    case "top":
+      return {
+        x: column.center.x,
+        y: bounds.minY + clamp(offsetM, spanY) + column.h / 2,
+      };
+    case "bottom":
+      return {
+        x: column.center.x,
+        y: bounds.maxY - clamp(offsetM, spanY) - column.h / 2,
+      };
+  }
+}
+
 export function wallLengthM(wall: WallSegment): number {
   return Math.hypot(wall.end.x - wall.start.x, wall.end.y - wall.start.y);
 }

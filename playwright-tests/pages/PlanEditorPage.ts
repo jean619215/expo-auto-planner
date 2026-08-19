@@ -609,6 +609,16 @@ export class PlanEditorPage {
     return JSON.parse(raw ?? "null");
   }
 
+  /** 在柱子定位輸入框填入公分值並送出。 */
+  async setColumnOffset(
+    side: "left" | "right" | "top" | "bottom",
+    cm: number,
+  ) {
+    const input = this.page.getByTestId(`column-offset-${side}-input`);
+    await input.fill(String(cm));
+    await input.press("Enter");
+  }
+
   // --- R4 步驟 02 刪除(feedback round 2, T2)---------------------------
   //
   // 步驟 02 的選取狀態住在 VenueScene 自己身上(3D 內的點選),與步驟 01 的

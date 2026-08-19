@@ -17,6 +17,7 @@ import {
   clampColumnCenter,
   clampWallHeight,
   columnBoundaryOffsetsM,
+  columnCenterForOffsetM,
   computePxPerMeter,
   createColumn,
   createObjectId,
@@ -36,6 +37,7 @@ import {
   translateColumn,
   translateWall,
   wallLengthM,
+  type BoundarySide,
   type Column,
   type FloorPolygon,
   type PlanPoint,
@@ -969,6 +971,24 @@ export default function PlanEditor() {
       }
     : null;
 
+  // R2:用輸入的公分值精確定位柱子。負值與非數字直接拒絕(柱子不動),
+  // 其餘由 columnCenterForOffsetM 夾在場地內。
+  function setColumnOffsetCm(side: BoundarySide, cm: number) {
+    if (!selectedColumn) return;
+    if (!Number.isFinite(cm) || cm < 0) return;
+    const nextCenter = columnCenterForOffsetM(
+      selectedColumn,
+      floorBounds,
+      side,
+      cm / 100,
+    );
+    setColumns((prev) =>
+      prev.map((c) =>
+        c.id === selectedColumn.id ? { ...c, center: nextCenter } : c,
+      ),
+    );
+  }
+
   const edgeLabelTexts = polygon.map((vertex, i) => {
     const next = polygon[(i + 1) % polygon.length];
     return formatCentimeters(Math.hypot(next.x - vertex.x, next.y - vertex.y));
@@ -1096,6 +1116,56 @@ export default function PlanEditor() {
                     下一步
                   </Button>
                 </div>
+                {selectedColumn && columnOffsetsCm && (
+                  <div
+                    data-testid="column-offset-panel"
+                    className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-stone-300 bg-card px-2 py-1.5 text-xs"
+                  >
+                    <span className="font-bold text-muted-foreground">
+                      柱子定位
+                    </span>
+                    {(
+                      [
+                        ["left", "左"],
+                        ["right", "右"],
+                        ["top", "上"],
+                        ["bottom", "下"],
+                      ] as [BoundarySide, string][]
+                    ).map(([side, label]) => (
+                      <label
+                        key={side}
+                        className="flex items-center gap-1 text-muted-foreground"
+                      >
+                        {label}
+                        <input
+                          type="number"
+                          data-testid={`column-offset-${side}-input`}
+                          min={0}
+                          step={1}
+                          // key 綁目前值:拖曳或改另一邊之後,輸入框要跟著
+                          // 更新成新的實際距離,而不是留著使用者上次打的字。
+                          key={`${selectedColumn.id}-${side}-${columnOffsetsCm[side]}`}
+                          defaultValue={columnOffsetsCm[side]}
+                          onBlur={(e) =>
+                            setColumnOffsetCm(side, e.target.valueAsNumber)
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key !== "Enter") return;
+                            setColumnOffsetCm(side, e.currentTarget.valueAsNumber);
+                          }}
+                          className="w-20 rounded border border-stone-300 bg-card px-1 py-0.5 text-right text-foreground"
+                        />
+                        cm
+                      </label>
+                    ))}
+                    <span
+                      data-testid="column-offset-hint"
+                      className="text-muted-foreground"
+                    >
+                      輸入值不受 50cm 吸附限制;之後拖曳以 50cm 為單位移動,會保留這個尾數
+                    </span>
+                  </div>
+                )}
                 <Stage
                   width={stagePx}
                   height={stagePx}
