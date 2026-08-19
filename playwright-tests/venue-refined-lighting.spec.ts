@@ -355,6 +355,11 @@ test.describe("精密 3D 場景 (步驟 03) - Task 2: 打光與陰影", () => {
   });
 
   test("案例12 edge case 往返多次不累積資源", async ({ page }) => {
+    // 三趟 02<->03 往返,每趟都要卸掉一個 WebGL context、再建一個、再等探針
+    // 重新武裝。在沒有 GPU 的環境(SwiftShader 軟體算圖)實測約 33s,預設的
+    // 30s 一定不夠 —— 這支跟 `venue-procedural-furniture` 的 P6 是同一種測試,
+    // 那邊早就掛了 `test.slow()`,這裡是漏掉。
+    test.slow();
     const editor = new PlanEditorPage(page);
     await toStep2WithWall(editor);
 
@@ -410,6 +415,10 @@ test.describe("精密 3D 場景 (步驟 03) - Task 2: 打光與陰影", () => {
   });
 
   test("案例14 視覺證據產出(不斷言,供人工判讀)", async ({ page }) => {
+    // 截圖類測試要建場景、等打光穩定、再操相機,實測約 33s,壓在預設 30s 上
+    // 緣。同性質的 `venue-refined-materials` T14 與 `venue-procedural-furniture`
+    // 的 P8 都有放寬預算,這裡同樣是漏掉。
+    test.slow();
     const editor = new PlanEditorPage(page);
     await editor.navigate();
 
