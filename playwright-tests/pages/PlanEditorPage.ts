@@ -587,6 +587,32 @@ export class PlanEditorPage {
     return Number(raw);
   }
 
+  // --- R4 步驟 02 刪除(feedback round 2, T2)---------------------------
+  //
+  // 步驟 02 的選取狀態住在 VenueScene 自己身上(3D 內的點選),與步驟 01 的
+  // `selectedType()`(PlanEditor 的 selectedObject)是兩回事 —— 兩者都要能
+  // 讀,才驗得出「進 02 時 01 的選取被清空」。
+
+  /** 步驟 02 場景內目前選取的物件類型(""=未選取)。 */
+  async sceneSelectedType(): Promise<string> {
+    return (await this.scene.getAttribute("data-selected-type")) ?? "";
+  }
+
+  /** 步驟 02 場景內目前選取的物件 id(""=未選取)。 */
+  async sceneSelectedId(): Promise<string> {
+    return (await this.scene.getAttribute("data-selected-id")) ?? "";
+  }
+
+  /** 步驟 02 的刪除鈕。 */
+  get sceneDeleteButton(): Locator {
+    return this.page.locator('[data-testid="scene-delete-button"]');
+  }
+
+  /** 按下步驟 02 的刪除鈕。 */
+  async clickSceneDelete() {
+    await this.sceneDeleteButton.click();
+  }
+
   // --- R3 牆高(feedback round 2, T1)-----------------------------------
   //
   // `wallHeightM()` 是設定值,`sceneWallMeshHeightM()` / `sceneColumnMeshHeightM()`

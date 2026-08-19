@@ -2,6 +2,7 @@
 
 import {
   useCallback,
+  useEffect,
   useRef,
   useState,
   type ComponentRef,
@@ -23,6 +24,7 @@ import {
   RotateCcw,
   PanelLeftClose,
   PanelLeftOpen,
+  Trash2,
 } from "lucide-react";
 import {
   MAX_WALL_HEIGHT_M,
@@ -145,6 +147,53 @@ export default function VenueScene({
     setTransformMode("translate");
   }
 
+  // 步驟 02 的刪除(feedback round 2, T2)。範圍比照步驟 01 的
+  // deleteSelectedObject():選到什麼刪什麼 —— 選取機制三種物件都支援,
+  // 只讓家具可刪會變成「選得到卻刪不掉」。
+  const deleteSelected = useCallback(() => {
+    if (!selectedId) return;
+    setSelectedId(null);
+    selectedMeshRef.current = null;
+    onSceneChange?.({
+      walls:
+        selectedId.type === "wall"
+          ? walls.filter((w) => w.id !== selectedId.id)
+          : walls,
+      columns:
+        selectedId.type === "column"
+          ? columns.filter((c) => c.id !== selectedId.id)
+          : columns,
+      furniture:
+        selectedId.type === "furniture"
+          ? furniture.filter((f) => f.id !== selectedId.id)
+          : furniture,
+    });
+  }, [selectedId, walls, columns, furniture, onSceneChange]);
+
+  // Delete/Backspace 綁在 document 而不是某個容器:3D 的點選發生在 canvas
+  // 上,焦點不一定落在任何可接收鍵盤事件的元素,綁容器會有「選好了卻按不
+  // 動」的空窗。代價是要自己排除輸入中的欄位 —— 否則在牆高輸入框裡按
+  // Backspace 會把場上的家具刪掉。
+  useEffect(() => {
+    if (!selectedId) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      e.preventDefault();
+      deleteSelected();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [selectedId, deleteSelected]);
+
   function handleDragMouseDown() {
     const obj = selectedMeshRef.current;
     if (obj) {
@@ -229,6 +278,8 @@ export default function VenueScene({
       data-column-mesh-count={columns.length}
       data-furniture-mesh-count={furniture.length}
       data-floor-vertex-count={polygon.length}
+      data-selected-type={selectedId?.type ?? ""}
+      data-selected-id={selectedId?.id ?? ""}
       data-wall-height-m={wallHeightM}
       data-wall-mesh-height-m={measurements.wallHeightM}
       data-column-mesh-height-m={measurements.columnHeightM}
@@ -312,11 +363,11 @@ export default function VenueScene({
                   },
                 )}
               </div>
-              {selectedFurniture && (
-                <div className="flex flex-col gap-1.5">
-                  <span className="px-0.5 text-xs font-bold text-muted-foreground">
-                    調整
-                  </span>
+              <div className="flex flex-col gap-1.5">
+                <span className="px-0.5 text-xs font-bold text-muted-foreground">
+                  調整
+                </span>
+                {selectedFurniture && (
                   <div className="inline-flex overflow-hidden rounded-md border-[1.5px] border-blueprint bg-card">
                     <button
                       type="button"
@@ -337,8 +388,20 @@ export default function VenueScene({
                       旋轉
                     </button>
                   </div>
-                </div>
-              )}
+                )}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  data-testid="scene-delete-button"
+                  disabled={!selectionExists}
+                  onClick={deleteSelected}
+                  className="w-full justify-start"
+                >
+                  <Trash2 />
+                  刪除
+                </Button>
+              </div>
             </div>
           )}
         </aside>

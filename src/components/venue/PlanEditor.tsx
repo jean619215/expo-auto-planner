@@ -461,9 +461,15 @@ export default function PlanEditor() {
     setSceneGenerated(true);
     setGeneration((g) => g + 1);
     setStep("preview");
-    // 進入 Step 2 前清除既有選取,避免殘留的 selectedObject/selectedVertex
-    // 在返回 Step 1 前於 Step 2 內被鍵盤 Delete/Backspace 誤刪(即使
-    // onKeyDown 已改綁定到 step-edit,這裡仍同步清除以求雙重保險)。
+    // 進入 Step 2 前清除既有選取。
+    //
+    // 原本的理由是「防止殘留選取在 Step 2 被鍵盤誤刪」—— 那個前提在
+    // feedback round 2 T2 之後不成立了:Step 2 現在本來就能刪東西,而且
+    // 用的是 VenueScene 自己的選取狀態,不是這裡的 selectedObject。
+    //
+    // 行為保留的是新的理由:跨畫面帶著選取,會讓進到 Step 2 之後第一次
+    // 按 Delete 的目標變得不明確 —— 使用者看到的是 3D 場景,腦中記得的
+    // 卻是 2D 裡選的那個東西。要刪就在 Step 2 重新點一次。
     setSelectedObject(null);
     setSelectedVertex(null);
   }
