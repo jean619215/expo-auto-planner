@@ -11,6 +11,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -24,6 +25,10 @@ import {
   NORMAL_SCALE,
   type SurfaceTextureSet,
 } from "./surfaceTextures";
+import {
+  surfaceSelectionKey,
+  type SurfaceSelection,
+} from "@/lib/venue/surfacePresets";
 
 export interface SurfaceMaterialsValue {
   floor: THREE.MeshStandardMaterial | null;
@@ -56,12 +61,18 @@ export function useSurfaceMaterials(): SurfaceMaterialsValue {
 
 interface SurfaceMaterialsProps {
   children: ReactNode;
+  /** 使用者選的地板/牆面材質(feedback round 2, R6)。 */
+  selection: SurfaceSelection;
   /** Reported whenever readiness flips — RefinedScene.tsx uses this to
    * drive the `data-materials-ready` DOM attribute / loading overlay. */
   onReady?: (ready: boolean) => void;
 }
 
-export default function SurfaceMaterials({ children, onReady }: SurfaceMaterialsProps) {
+export default function SurfaceMaterials({
+  children,
+  selection,
+  onReady,
+}: SurfaceMaterialsProps) {
   const gl = useThree((state) => state.gl);
   const [textureSet, setTextureSet] = useState<SurfaceTextureSet | null>(null);
 
@@ -70,8 +81,20 @@ export default function SurfaceMaterials({ children, onReady }: SurfaceMaterials
   // texture content is fully decoupled from polygon/walls/columns/
   // furniture; `revision` must NOT participate here, or every AI scene
   // edit while sitting on step 03 would re-pay the bake cost for nothing.
+  // 本次造訪期間烘焙過的材質快取,鍵是選擇組合。使用者切到別的材質再切
+  // 回來時不重烘 —— 一次烘焙是 8 張 render target,來回比較材質是很自然
+  // 的操作,每次都重烘會讓比較變得卡頓。
+  //
+  // 快取的擁有者是這個 mount:離開步驟 03 時整批釋放(下面的 cleanup),
+  // 所以「往返不累積 GPU 資源」仍然成立;上限也只有 preset 組合數。
+  const cacheRef = useRef(new Map<string, SurfaceTextureSet>());
+  const selectionKey = surfaceSelectionKey(selection);
+
   useLayoutEffect(() => {
-    const set = bakeSurfaceTextures(gl);
+    const cache = cacheRef.current;
+    const cached = cache.get(selectionKey);
+    const set = cached ?? bakeSurfaceTextures(gl, selection);
+    if (!cached) cache.set(selectionKey, set);
     // Deferred to a microtask (same convention as src/app/login/page.tsx)
     // to avoid the project's react-hooks/set-state-in-effect rule against
     // calling setState synchronously in an effect body. A microtask still
@@ -82,10 +105,19 @@ export default function SurfaceMaterials({ children, onReady }: SurfaceMaterials
     queueMicrotask(() => {
       setTextureSet(set);
     });
+    // 這裡刻意不釋放 —— 釋放的責任在下面「卸載時整批清空」的 effect。
+    // 切換材質時釋放的話,快取就沒有意義了。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gl, selectionKey]);
+
+  // 卸載(離開步驟 03)時把本次造訪烘焙過的全部釋放。
+  useEffect(() => {
+    const cache = cacheRef.current;
     return () => {
-      disposeSurfaceTextureSet(set);
+      for (const set of cache.values()) disposeSurfaceTextureSet(set);
+      cache.clear();
     };
-  }, [gl]);
+  }, []);
 
   const materials = useMemo(() => {
     if (!textureSet) return null;

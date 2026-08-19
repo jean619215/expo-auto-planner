@@ -126,6 +126,7 @@ export interface MaterialProbeReport {
   floorAlbedo: AlbedoReadback | null;
   floorNormal: NormalReadback | null;
   wallAlbedo: AlbedoReadback | null;
+  columnAlbedo: AlbedoReadback | null;
   floorUvMeterError: number | null;
   wallUvMeterError: number | null;
   liveSurfaceTargets: number | null;
@@ -617,6 +618,32 @@ export class PlanEditorPage {
     const input = this.page.getByTestId(`column-offset-${side}-input`);
     await input.fill(String(cm));
     await input.press("Enter");
+  }
+
+  // --- R6 步驟 03 材質選擇(feedback round 2, T8)------------------------
+
+  async selectFloorSurface(id: string) {
+    await this.page.getByTestId("surface-floor-select").selectOption(id);
+  }
+
+  async selectWallSurface(id: string) {
+    await this.page.getByTestId("surface-wall-select").selectOption(id);
+  }
+
+  /** 步驟 03 場景實際套用中的地板材質 id。 */
+  async refinedSurfaceFloor(): Promise<string> {
+    return (await this.refinedScene.getAttribute("data-surface-floor")) ?? "";
+  }
+
+  /** 步驟 03 場景實際套用中的牆面材質 id。 */
+  async refinedSurfaceWall(): Promise<string> {
+    return (await this.refinedScene.getAttribute("data-surface-wall")) ?? "";
+  }
+
+  /** 存檔快照裡記的材質選擇。 */
+  async planSnapshotSurfaces(): Promise<{ floor: string; wall: string }> {
+    const raw = await this.editor.getAttribute("data-plan-surfaces");
+    return JSON.parse(raw ?? "null");
   }
 
   // --- R5 步驟 02 家具外型(feedback round 2, T7)------------------------

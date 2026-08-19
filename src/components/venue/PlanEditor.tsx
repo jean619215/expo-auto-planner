@@ -72,6 +72,14 @@ import PlanSlotsDialog, {
 import PlanToolbar, { segmentClassName, type EditorMode } from "./PlanToolbar";
 import VenueSceneLoader from "./VenueSceneLoader";
 import RefinedSceneLoader from "./RefinedSceneLoader";
+import {
+  DEFAULT_SURFACE_SELECTION,
+  FLOOR_PRESETS,
+  WALL_PRESETS,
+  floorPreset,
+  wallPreset,
+  type SurfaceSelection,
+} from "@/lib/venue/surfacePresets";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -210,6 +218,10 @@ export default function PlanEditor() {
     w: number;
     h: number;
   } | null>(null);
+  // 步驟 03 的地板/牆面材質選擇。與牆高同理:state owner 在這裡,場景唯讀。
+  const [surfaces, setSurfaces] = useState<SurfaceSelection>(
+    DEFAULT_SURFACE_SELECTION,
+  );
   const [customBooth, setCustomBooth] = useState({
     w: String(DEFAULT_BOOTH.w),
     h: String(DEFAULT_BOOTH.h),
@@ -339,6 +351,7 @@ export default function PlanEditor() {
       furniture,
       venueSizeM: PLAN_AREA_SIZE_M,
       wallHeightM,
+      surfaces,
     };
   }
 
@@ -361,6 +374,7 @@ export default function PlanEditor() {
       columns?: Column[];
       furniture?: FurnitureItem[];
       wallHeightM?: number;
+      surfaces?: SurfaceSelection;
     };
     const loadedPolygon = rawPlan.polygon ?? DEFAULT_FLOOR;
     const loadedWalls = rawPlan.walls ?? [];
@@ -369,12 +383,19 @@ export default function PlanEditor() {
     // 缺欄位的舊存檔一律回預設牆高 —— 決議是舊檔作廢、不寫遷移,但讀到
     // 舊檔也不該炸,clampWallHeight 對 undefined 會回 DEFAULT_WALL_HEIGHT_M。
     const loadedWallHeightM = clampWallHeight(rawPlan.wallHeightM as number);
+    // 缺欄位或存了不存在的 preset id 時,floorPreset/wallPreset 會回第一個
+    // 選項,所以這裡不需要額外的驗證分支。
+    const loadedSurfaces: SurfaceSelection = {
+      floor: floorPreset(rawPlan.surfaces?.floor ?? "").id,
+      wall: wallPreset(rawPlan.surfaces?.wall ?? "").id,
+    };
 
     setPolygon(loadedPolygon);
     setWalls(loadedWalls);
     setColumns(loadedColumns);
     setFurniture(loadedFurniture);
     setWallHeightM(loadedWallHeightM);
+    setSurfaces(loadedSurfaces);
     setSelectedObject(null);
     setSelectedVertex(null);
 
@@ -392,6 +413,7 @@ export default function PlanEditor() {
         furniture: loadedFurniture,
         venueSizeM: PLAN_AREA_SIZE_M,
         wallHeightM: loadedWallHeightM,
+        surfaces: loadedSurfaces,
       }),
     );
   }
@@ -1115,6 +1137,7 @@ export default function PlanEditor() {
       data-wall-label={wallLabelText}
       data-edge-labels={JSON.stringify(edgeLabelTexts)}
       data-venue-size-cm={JSON.stringify(venueSizeCm)}
+      data-plan-surfaces={JSON.stringify(surfaces)}
       data-column-offsets-cm={
         columnOffsetsCm ? JSON.stringify(columnOffsetsCm) : undefined
       }
@@ -2006,6 +2029,48 @@ export default function PlanEditor() {
               >
                 上一步
               </Button>
+              <div
+                data-testid="surface-picker"
+                className="mb-2 flex flex-wrap items-center gap-3 rounded-md border border-stone-300 bg-card px-2 py-1.5 text-xs"
+              >
+                <label className="flex items-center gap-1 text-muted-foreground">
+                  地板
+                  <select
+                    data-testid="surface-floor-select"
+                    value={surfaces.floor}
+                    onChange={(e) =>
+                      setSurfaces((prev) => ({ ...prev, floor: e.target.value }))
+                    }
+                    className="rounded border border-stone-300 bg-card px-1 py-0.5 text-foreground"
+                  >
+                    {FLOOR_PRESETS.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex items-center gap-1 text-muted-foreground">
+                  牆面
+                  <select
+                    data-testid="surface-wall-select"
+                    value={surfaces.wall}
+                    onChange={(e) =>
+                      setSurfaces((prev) => ({ ...prev, wall: e.target.value }))
+                    }
+                    className="rounded border border-stone-300 bg-card px-1 py-0.5 text-foreground"
+                  >
+                    {WALL_PRESETS.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <span className="text-muted-foreground">
+                  柱子跟隨牆面材質
+                </span>
+              </div>
               <RefinedSceneLoader
                 polygon={polygon}
                 walls={walls}
@@ -2014,6 +2079,7 @@ export default function PlanEditor() {
                 venueSizeM={PLAN_AREA_SIZE_M}
                 viewFitSizeM={sceneFit.sizeM}
                 viewCenterM={sceneFit.center}
+                surfaces={surfaces}
                 wallHeightM={wallHeightM}
               />
             </div>

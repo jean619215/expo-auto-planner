@@ -18,6 +18,7 @@ import {
   type FurnitureKind,
 } from "@/lib/venue/furniture";
 import { hasFurnitureModel } from "@/lib/venue/models";
+import type { SurfaceSelection } from "@/lib/venue/surfacePresets";
 import { hasProceduralFurniture } from "@/lib/venue/proceduralFurniture";
 import { planBoundsM } from "@/lib/venue/bounds";
 import type { PlanBounds } from "@/lib/venue/bounds";
@@ -51,6 +52,8 @@ interface RefinedSceneProps {
   viewFitSizeM?: number;
   /** 相機取景中心(公尺)。同 VenueScene —— 展位不再從原點展開。 */
   viewCenterM?: { x: number; y: number };
+  /** 使用者選的地板/牆面材質(feedback round 2, R6)。 */
+  surfaces: SurfaceSelection;
   /**
    * 全域牆高(公尺)。與步驟 02 讀同一份頂層 state —— 這一步是唯讀場景,
    * 不自己持有也不回寫,02↔03 的一致性靠這點保證。
@@ -166,6 +169,7 @@ interface RefinedSceneContentProps {
   bounds: PlanBounds;
   revision: number;
   probeResetKey: string;
+  surfaces: SurfaceSelection;
   eagerLoaded: boolean;
   onEagerLoaded: () => void;
   onModelReport: (report: FurnitureModelReport) => void;
@@ -188,6 +192,7 @@ function RefinedSceneContent({
   bounds,
   revision,
   probeResetKey,
+  surfaces,
   eagerLoaded,
   onEagerLoaded,
   onModelReport,
@@ -223,7 +228,11 @@ function RefinedSceneContent({
     <>
       <HallLighting bounds={bounds} revision={revision} />
       <HallEnvironment />
-      <RefinedSceneProbe resetKey={probeResetKey} onReport={onReport} />
+      <RefinedSceneProbe
+        resetKey={probeResetKey}
+        materialsKey={`${surfaces.floor}:${surfaces.wall}`}
+        onReport={onReport}
+      />
       <OrbitControls
         makeDefault
         enableRotate
@@ -381,6 +390,7 @@ export default function RefinedScene({
   venueSizeM = VENUE_SIZE_M,
   viewFitSizeM,
   viewCenterM,
+  surfaces,
   wallHeightM,
 }: RefinedSceneProps) {
   const fit = viewFitSizeM ?? venueSizeM;
@@ -480,13 +490,17 @@ export default function RefinedScene({
   // 還沒有家具的過期快照(RefinedSceneProbe.tsx 的 resetKey 註解)。
   // 用 kind + partCount 而非 instanceCount:後者每動一次家具都變,但那種
   // 變動本來就已經 bump 了 revision。
+  //
+  // 材質選擇也要進來:探針的材質診斷是一次性計算後就快取住的,換材質後
+  // 若不重新武裝,回報的會是換之前那一份 —— 換了材質但數字不動,看起來
+  // 像是「換材質沒有生效」。
   const probeResetKey = useMemo(() => {
     const signature = activeModelReports
       .map((report) => `${report.kind}:${report.partCount}`)
       .sort()
       .join(",");
-    return `${revision}|${signature}`;
-  }, [revision, activeModelReports]);
+    return `${revision}|${signature}|${surfaces.floor}:${surfaces.wall}`;
+  }, [revision, activeModelReports, surfaces.floor, surfaces.wall]);
 
   return (
     <div
@@ -498,6 +512,8 @@ export default function RefinedScene({
       data-furniture-mesh-count={furniture.length}
       data-floor-vertex-count={polygon.length}
       data-wall-height-m={wallHeightM}
+      data-surface-floor={surfaces.floor}
+      data-surface-wall={surfaces.wall}
       data-materials-ready={String(materialsReady)}
       data-furniture-models-loaded={String(eagerLoaded)}
       data-furniture-model-reports={JSON.stringify(activeModelReports)}
@@ -518,7 +534,7 @@ export default function RefinedScene({
             fov: 50,
           }}
         >
-          <SurfaceMaterials onReady={setMaterialsReady}>
+          <SurfaceMaterials selection={surfaces} onReady={setMaterialsReady}>
             <RefinedSceneContent
               polygon={polygon}
               walls={walls}
@@ -530,6 +546,7 @@ export default function RefinedScene({
               bounds={bounds}
               revision={revision}
               probeResetKey={probeResetKey}
+              surfaces={surfaces}
               eagerLoaded={eagerLoaded}
               onEagerLoaded={handleEagerLoaded}
               onModelReport={handleModelReport}

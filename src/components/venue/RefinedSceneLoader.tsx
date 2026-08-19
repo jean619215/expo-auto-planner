@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import type { Column, FloorPolygon, WallSegment } from "@/lib/venue/plan";
 import type { FurnitureItem } from "@/lib/venue/furniture";
+import type { SurfaceSelection } from "@/lib/venue/surfacePresets";
 
 const RefinedScene = dynamic(() => import("./RefinedScene"), {
   ssr: false,
@@ -21,6 +22,7 @@ interface RefinedSceneLoaderProps {
   venueSizeM?: number;
   viewFitSizeM?: number;
   viewCenterM?: { x: number; y: number };
+  surfaces: SurfaceSelection;
   wallHeightM: number;
 }
 
@@ -32,6 +34,7 @@ export default function RefinedSceneLoader({
   venueSizeM,
   viewFitSizeM,
   viewCenterM,
+  surfaces,
   wallHeightM,
 }: RefinedSceneLoaderProps) {
   return (
@@ -43,6 +46,7 @@ export default function RefinedSceneLoader({
       venueSizeM={venueSizeM}
       viewFitSizeM={viewFitSizeM}
       viewCenterM={viewCenterM}
+      surfaces={surfaces}
       wallHeightM={wallHeightM}
     />
   );

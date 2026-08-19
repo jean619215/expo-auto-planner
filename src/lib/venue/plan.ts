@@ -9,6 +9,10 @@
 // or relocating PlanSnapshot to a components-level file) per
 // architect-plan.md D3: single source of truth for FurnitureItem.
 import type { FurnitureItem } from "./furniture";
+import {
+  DEFAULT_SURFACE_SELECTION,
+  type SurfaceSelection,
+} from "./surfacePresets";
 
 export interface PlanPoint {
   x: number;
@@ -624,6 +628,7 @@ export interface PlanSnapshot {
   furniture: FurnitureItem[];
   venueSizeM: number;
   wallHeightM: number;
+  surfaces: SurfaceSelection;
 }
 
 // 固定欄位順序 stringify — 快照物件永遠以下面的字面量順序組裝,不會出現
@@ -636,6 +641,7 @@ export function serializePlanSnapshot(snapshot: PlanSnapshot): string {
     furniture: snapshot.furniture,
     venueSizeM: snapshot.venueSizeM,
     wallHeightM: snapshot.wallHeightM,
+    surfaces: snapshot.surfaces,
   });
 }
 
@@ -649,4 +655,5 @@ export const EMPTY_PLAN_BASELINE = serializePlanSnapshot({
   furniture: [],
   venueSizeM: PLAN_AREA_SIZE_M,
   wallHeightM: DEFAULT_WALL_HEIGHT_M,
+  surfaces: DEFAULT_SURFACE_SELECTION,
 });

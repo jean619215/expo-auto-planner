@@ -226,6 +226,9 @@ export interface MaterialProbeReport {
   // (`#78350f` -> `#d6d3d1`, ~3.5x the linear brightness) previously had no
   // GPU-readback brightness check at all; T5 covered only the floor.
   wallAlbedo: AlbedoReadback | null;
+  /** 柱子 albedo 的全域統計。柱子沒有獨立材質選項,跟隨牆面 —— 這個讀數
+   *  是「跟隨」這件事唯一能被看見的地方(貼圖參數描述不會因為底色而變)。 */
+  columnAlbedo: AlbedoReadback | null;
   floorUvMeterError: number | null;
   wallUvMeterError: number | null;
   liveSurfaceTargets: number | null;
@@ -241,6 +244,7 @@ const NOT_READY_MATERIALS: MaterialProbeReport = {
   floorAlbedo: null,
   floorNormal: null,
   wallAlbedo: null,
+  columnAlbedo: null,
   floorUvMeterError: null,
   wallUvMeterError: null,
   liveSurfaceTargets: null,
@@ -626,10 +630,23 @@ interface RefinedSceneProbeProps {
    * 對外的診斷會停在一份「還沒有家具」的過期快照。
    */
   resetKey: number | string;
+  /**
+   * 材質本身換了才會變的鍵(feedback round 2, T8 的材質選擇)。
+   *
+   * 與 `resetKey` 分開的理由:材質診斷是一次 GPU readback,刻意每次掛載
+   * 只做一次、不進每幀路徑,所以場景編輯(resetKey 變動)不會重算它 ——
+   * 烘焙與場景內容本來就是解耦的。但使用者換材質時,那份快取就過期了,
+   * 不清掉的話回報的會是換之前那一份,看起來像「換材質沒生效」。
+   */
+  materialsKey: string;
   onReport: (diagnostics: RefinedDiagnostics) => void;
 }
 
-export default function RefinedSceneProbe({ resetKey, onReport }: RefinedSceneProbeProps) {
+export default function RefinedSceneProbe({
+  resetKey,
+  materialsKey,
+  onReport,
+}: RefinedSceneProbeProps) {
   const gl = useThree((state) => state.gl);
   const scene = useThree((state) => state.scene);
   const { ready: materialsReady, textureSet } = useSurfaceMaterials();
@@ -649,6 +666,12 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
   useLayoutEffect(() => {
     frameRef.current = 0;
   }, [resetKey]);
+
+  // 材質換了:清掉 readback 快取並重新武裝,下一輪會量新的那一份。
+  useLayoutEffect(() => {
+    materialsCacheRef.current = null;
+    frameRef.current = 0;
+  }, [materialsKey]);
 
   useFrame(() => {
     frameRef.current += 1;
@@ -754,6 +777,7 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
         floorAlbedo: readFullAlbedoStats(gl, textureSet.floorAlbedoTarget),
         floorNormal: readFullNormalStats(gl, textureSet.floorNormalTarget),
         wallAlbedo: readFullAlbedoStats(gl, textureSet.wallAlbedoTarget),
+        columnAlbedo: readFullAlbedoStats(gl, textureSet.columnAlbedoTarget),
         floorUvMeterError: computeFloorUvMeterError(floor),
         wallUvMeterError: found.wall ? computeWallUvMeterError(found.wall) : null,
         liveSurfaceTargets: stats.liveTargets,

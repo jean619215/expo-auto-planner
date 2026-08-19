@@ -5,7 +5,12 @@
 // VenueScene.tsx(步驟 02)import。
 
 import * as THREE from "three";
-import { REFINED_SURFACE } from "./refinedLighting";
+import {
+  columnPreset,
+  floorPreset,
+  wallPreset,
+  type SurfaceSelection,
+} from "@/lib/venue/surfacePresets";
 import {
   BAKE_VERTEX_SHADER,
   buildBakeFragmentShader,
@@ -139,17 +144,24 @@ const FINE_TINT_WEIGHT: Record<BakeSurface, number> = {
 // to 1 for the floor) — mirrors the albedo trick (D5): the texture is the
 // sole source of the final value, `material.color`/`material.roughness`
 // stay neutral (white / 1).
-const ROUGH_BASE = REFINED_SURFACE.floor.roughness;
+// 地板 roughnessMap 的基準值。改成跟著 preset 走 —— 地毯與石材的差別
+// 主要就在這裡,只換底色的話兩者在畫面上幾乎一樣。
+function roughBaseFor(selection: SurfaceSelection): number {
+  return floorPreset(selection.floor).roughness;
+}
 const ROUGH_AMP = 0.12;
 
-function baseColorFor(surface: BakeSurface): THREE.Color {
+function baseColorFor(
+  surface: BakeSurface,
+  selection: SurfaceSelection,
+): THREE.Color {
   switch (surface) {
     case "floor":
-      return new THREE.Color(REFINED_SURFACE.floor.color);
+      return new THREE.Color(floorPreset(selection.floor).color);
     case "wall":
-      return new THREE.Color(REFINED_SURFACE.wall.color);
+      return new THREE.Color(wallPreset(selection.wall).color);
     case "column":
-      return new THREE.Color(REFINED_SURFACE.column.color);
+      return new THREE.Color(columnPreset(selection.wall).color);
   }
 }
 
@@ -171,6 +183,9 @@ export interface SurfaceTextureSet {
   // check of any kind; T5 previously covered the floor albedo target
   // only).
   wallAlbedoTarget: THREE.WebGLRenderTarget;
+  // 柱子 albedo:柱子材質跟隨牆面(feedback round 2, R6),而「跟隨」
+  // 只有在烘焙出來的像素上看得見,貼圖參數描述不會因為底色而變。
+  columnAlbedoTarget: THREE.WebGLRenderTarget;
   // All 8 targets, for disposeSurfaceTextureSet().
   targets: THREE.WebGLRenderTarget[];
 }
@@ -193,7 +208,10 @@ export function getSurfaceTextureStats(): { liveTargets: number; totalBakes: num
  * renderer's own GPU context. Must run inside a `useLayoutEffect` (see
  * SurfaceMaterials.tsx) so it completes before the browser paints.
  */
-export function bakeSurfaceTextures(gl: THREE.WebGLRenderer): SurfaceTextureSet {
+export function bakeSurfaceTextures(
+  gl: THREE.WebGLRenderer,
+  selection: SurfaceSelection,
+): SurfaceTextureSet {
   totalBakes += 1;
 
   const prevTarget = gl.getRenderTarget();
@@ -236,10 +254,10 @@ export function bakeSurfaceTextures(gl: THREE.WebGLRenderer): SurfaceTextureSet 
       vertexShader: BAKE_VERTEX_SHADER,
       fragmentShader: buildBakeFragmentShader(surface, mode),
       uniforms: {
-        uBaseColor: { value: baseColorFor(surface) },
+        uBaseColor: { value: baseColorFor(surface, selection) },
         uResolution: { value: resolution },
         uNormalStrength: { value: NORMAL_BAKE_STRENGTH[surface] },
-        uRoughBase: { value: ROUGH_BASE },
+        uRoughBase: { value: roughBaseFor(selection) },
         uRoughAmp: { value: ROUGH_AMP },
         uTintAmp: { value: TINT_AMP[surface] },
         uFineTintWeight: { value: FINE_TINT_WEIGHT[surface] },
@@ -324,6 +342,7 @@ export function bakeSurfaceTextures(gl: THREE.WebGLRenderer): SurfaceTextureSet 
     floorAlbedoTarget,
     floorNormalTarget,
     wallAlbedoTarget,
+    columnAlbedoTarget,
     targets: [
       floorAlbedoTarget,
       floorNormalTarget,
