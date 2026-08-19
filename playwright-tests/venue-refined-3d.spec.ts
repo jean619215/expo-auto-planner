@@ -97,7 +97,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 1: wizard skeleton + read-onl
     await editor.navigate();
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 30, y: 30 }, { x: 35, y: 30 });
     await editor.clickNextStep();
     await editor.goToRefined();
 
@@ -120,7 +120,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 1: wizard skeleton + read-onl
     await editor.navigate();
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 30, y: 30 }, { x: 35, y: 30 });
     await editor.clickNextStep();
     const wallCountBefore = await editor.sceneWallMeshCount();
 
@@ -136,9 +136,13 @@ test.describe("精密 3D 場景 (步驟 03) - Task 1: wizard skeleton + read-onl
   }) => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
+  // 見 venue-furniture-models.spec.ts 的同名說明:預設攤位改成 3x3m 之後,
+  // 3D 相機會 fit 到實際地板,下面的像素偏移是按 fit=50 的遠距取景調的。
+  // 開一塊 50x50 的場地把取景距離調回原樣。
+  await editor.applyCustomBoothSize(50, 50);
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 30, y: 30 }, { x: 35, y: 30 });
     await editor.clickNextStep();
 
     await placeFurnitureOnStep2(page);
@@ -162,9 +166,13 @@ test.describe("精密 3D 場景 (步驟 03) - Task 1: wizard skeleton + read-onl
   }) => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
+  // 見 venue-furniture-models.spec.ts 的同名說明:預設攤位改成 3x3m 之後,
+  // 3D 相機會 fit 到實際地板,下面的像素偏移是按 fit=50 的遠距取景調的。
+  // 開一塊 50x50 的場地把取景距離調回原樣。
+  await editor.applyCustomBoothSize(50, 50);
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 30, y: 30 }, { x: 35, y: 30 });
     await editor.clickNextStep();
 
     await placeFurnitureOnStep2(page);
@@ -174,9 +182,8 @@ test.describe("精密 3D 場景 (步驟 03) - Task 1: wizard skeleton + read-onl
     await editor.backToPreview();
     // Offset so this click doesn't land on the furniture item already
     // placed at the canvas center (see placeFurnitureOnStep2 doc comment).
-    // Kept small (30px) because the default 10x10m floor only spans part
-    // of the canvas at this camera angle — a larger offset overshoots the
-    // floor polygon entirely and the click ray hits nothing.
+    // Kept small (30px) — see the booth-size note at the top of this test
+    // for why the camera framing has to be pinned for this to be stable.
     await placeFurnitureOnStep2(page, { x: 30, y: 0 });
     await editor.goToRefined();
     expect(await editor.refinedFurnitureMeshCount()).toBe(2);
@@ -193,7 +200,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 1: wizard skeleton + read-onl
     await editor.navigate();
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 30, y: 30 }, { x: 35, y: 30 });
     await editor.clickNextStep();
     await placeFurnitureOnStep2(page);
     const furnitureBefore = await editor.editor.getAttribute("data-furniture");
@@ -232,7 +239,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 1: wizard skeleton + read-onl
     await editor.navigate();
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 30, y: 30 }, { x: 35, y: 30 });
     await editor.clickNextStep();
     await editor.goToRefined();
 
@@ -276,7 +283,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 1: wizard skeleton + read-onl
     await editor.navigate();
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 30, y: 30 }, { x: 35, y: 30 });
     await editor.clickNextStep();
 
     await ai.open();
@@ -301,7 +308,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 1: wizard skeleton + read-onl
     await editor.navigate();
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 30, y: 30 }, { x: 35, y: 30 });
     await editor.clickNextStep();
     await editor.goToRefined();
 
@@ -358,7 +365,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 1: wizard skeleton + read-onl
     expect(await editor.vertexCount()).toBe(4);
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 30, y: 30 }, { x: 35, y: 30 });
     await editor.clickNextStep();
     const previewVertexCount = await editor.sceneFloorVertexCount();
 
@@ -374,7 +381,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 1: wizard skeleton + read-onl
     await editor.navigate();
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 30, y: 30 }, { x: 35, y: 30 });
     await editor.clickNextStep();
     // The R3F <Canvas> starts at the HTML-default 300x150 intrinsic size
     // and only stretches to fill its `w-full` container once its internal

@@ -1,4 +1,4 @@
-import type { Page, Locator } from "@playwright/test";
+import { expect, type Page, type Locator } from "@playwright/test";
 
 export interface PlanPoint {
   x: number;
@@ -617,6 +617,49 @@ export class PlanEditorPage {
     const input = this.page.getByTestId(`column-offset-${side}-input`);
     await input.fill(String(cm));
     await input.press("Enter");
+  }
+
+  // --- R1 展位 preset(feedback round 2, T6)-----------------------------
+
+  get boothSizeConfirmDialog(): Locator {
+    return this.page.locator('[data-testid="booth-size-confirm-dialog"]');
+  }
+
+  /** 點 preset 按鈕(可能跳確認,不等待套用)。 */
+  async clickBoothPreset(w: number, h: number) {
+    await this.page.getByTestId(`booth-preset-${w}x${h}`).click();
+  }
+
+  /** 點 preset 並確認已套用(用於場上沒有東西會超出的情境)。 */
+  async applyBoothPreset(w: number, h: number) {
+    await this.clickBoothPreset(w, h);
+    await expect(this.editor).toHaveAttribute(
+      "data-venue-size-cm",
+      JSON.stringify({ width: w * 100, height: h * 100 }),
+    );
+  }
+
+  /** 填自訂長寬並套用。 */
+  async applyCustomBoothSize(w: number, h: number) {
+    await this.page.getByTestId("booth-custom-width-input").fill(String(w));
+    await this.page.getByTestId("booth-custom-height-input").fill(String(h));
+    await this.page.getByTestId("booth-custom-apply").click();
+  }
+
+  /** 確認對話框上顯示的「會超出場地的件數」。 */
+  async boothOutsideCount(): Promise<number> {
+    const raw = await this.boothSizeConfirmDialog.getAttribute(
+      "data-outside-count",
+    );
+    return Number(raw);
+  }
+
+  async acceptBoothSize() {
+    await this.page.getByTestId("booth-size-confirm-accept").click();
+  }
+
+  async cancelBoothSize() {
+    await this.page.getByTestId("booth-size-confirm-cancel").click();
   }
 
   // --- R4 步驟 02 刪除(feedback round 2, T2)---------------------------

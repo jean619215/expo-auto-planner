@@ -81,6 +81,12 @@ interface VenueSceneProps {
   // 選填:相機取景/gizmo 尺寸的 fit 基準,與 venueSizeM(ground plane/clamp
   // 用)分離 — 預設回退到 venueSizeM,維持既有呼叫端行為不變。
   viewFitSizeM?: number;
+  /**
+   * 相機取景中心(公尺,平面 XY)。預設 fit/2 —— 場地固定從原點展開時的
+   * 舊行為。展位 preset 之後場地不再從原點起算,相機必須對著攤位中心,
+   * 否則畫面中心會落在地板外(3D 內點地板放家具會全部失效)。
+   */
+  viewCenterM?: { x: number; y: number };
   /** 全域牆高(公尺)。牆與柱共用,唯一來源是 PlanEditor 的頂層 state。 */
   wallHeightM: number;
   /** 使用者在本步驟調整牆高時回寫給 state owner;未給則不顯示調整 UI。 */
@@ -115,11 +121,13 @@ export default function VenueScene({
   furniture,
   venueSizeM = VENUE_SIZE_M,
   viewFitSizeM,
+  viewCenterM,
   wallHeightM,
   onWallHeightChange,
   onSceneChange,
 }: VenueSceneProps) {
   const fit = viewFitSizeM ?? venueSizeM;
+  const center = viewCenterM ?? { x: fit / 2, y: fit / 2 };
   const [selectedId, setSelectedId] = useState<SelectedId>(null);
   const [transformMode, setTransformMode] = useState<"translate" | "rotate">(
     "translate",
@@ -422,7 +430,11 @@ export default function VenueScene({
           <div className="h-[480px] w-full overflow-hidden rounded border border-stone-300 bg-stone-100">
         <Canvas
           camera={{
-            position: [fit * 0.7, fit * 0.9, fit * 0.7],
+            position: [
+              center.x + fit * 0.7,
+              fit * 0.9,
+              center.y + fit * 0.7,
+            ],
             fov: 50,
           }}
         >
@@ -437,7 +449,7 @@ export default function VenueScene({
             maxPolarAngle={Math.PI / 2 - 0.05}
             minDistance={5}
             maxDistance={150}
-            target={[fit / 2, 0, fit / 2]}
+            target={[center.x, 0, center.y]}
           />
           <VenueSceneProbe onReport={handleProbeReport} />
           <gridHelper

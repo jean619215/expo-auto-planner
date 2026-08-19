@@ -246,7 +246,7 @@ test.describe("Venue Plan Editor - Task 3 dimensions", () => {
     expect(await editor.wallLabel()).toBe(`${Math.round(expectedLength * 100)}cm`);
   });
 
-  test("floor edge labels are always-on with one entry per edge, matching DEFAULT_FLOOR's 10m sides (labelled 1000cm)", async ({
+  test("floor edge labels are always-on with one entry per edge, matching DEFAULT_FLOOR's 3m sides (labelled 300cm)", async ({
     page,
   }) => {
     const editor = new PlanEditorPage(page);
@@ -255,7 +255,7 @@ test.describe("Venue Plan Editor - Task 3 dimensions", () => {
     const labels = await editor.edgeLabels();
     expect(labels.length).toBe(4);
     for (const label of labels) {
-      expect(label).toBe("1000cm");
+      expect(label).toBe("300cm");
     }
   });
 
@@ -289,7 +289,7 @@ test.describe("Venue Plan Editor - Task 3 dimensions", () => {
     expect((await editor.edgeLabels()).length).toBe(4);
 
     // Insert a vertex on the right edge midpoint.
-    await editor.doubleClickAt({ x: 29.7, y: 25 });
+    await editor.doubleClickAt({ x: 22.8, y: 21.5 });
     expect(await editor.vertexCount()).toBe(5);
     expect((await editor.edgeLabels()).length).toBe(5);
 

@@ -77,6 +77,11 @@ async function placeFurnitureOnStep2(
 
 async function toStep2(editor: PlanEditorPage) {
   await editor.navigate();
+  // 預設攤位在 feedback round 2 之後是 3x3m,而 3D 相機現在會 fit 到實際
+  // 地板 —— 下面那些像素偏移是按「fit=50 的遠距取景」調出來的,場地一小,
+  // 同樣的像素對應的世界距離就變小,家具會互相擋住彼此的點擊。開一塊
+  // 50x50 的場地把取景距離調回原樣,這些偏移才維持原本的語意。
+  await editor.applyCustomBoothSize(50, 50);
   await editor.clickNextStep();
 }
 

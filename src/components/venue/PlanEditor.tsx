@@ -5,6 +5,8 @@ import { Arrow, Circle, Layer, Line, Rect, Stage, Text } from "react-konva";
 import type Konva from "konva";
 import { ZoomIn, ZoomOut, Maximize } from "lucide-react";
 import {
+  BOOTH_PRESETS,
+  DEFAULT_BOOTH,
   DEFAULT_FLOOR,
   DEFAULT_WALL_HEIGHT_M,
   EMPTY_PLAN_BASELINE,
@@ -15,10 +17,14 @@ import {
   VENUE_SIZE_M,
   WALL_THICKNESS_M,
   clampColumnCenter,
+  clampRectCenterToBounds,
   clampWallHeight,
+  clampWallToBounds,
   columnBoundaryOffsetsM,
   columnCenterForOffsetM,
   computePxPerMeter,
+  BOOTH_ORIGIN,
+  createBoothFloor,
   createColumn,
   createObjectId,
   createWall,
@@ -26,6 +32,8 @@ import {
   floorBoundsM,
   formatCentimeters,
   insertVertexOnEdge,
+  isRectOutsideBounds,
+  isWallOutsideBounds,
   metersToPx,
   moveVertex,
   moveWallEndpoint,
@@ -65,6 +73,16 @@ import PlanToolbar, { segmentClassName, type EditorMode } from "./PlanToolbar";
 import VenueSceneLoader from "./VenueSceneLoader";
 import RefinedSceneLoader from "./RefinedSceneLoader";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const MIN_STAGE_PX = 320;
 const MAX_STAGE_PX = 800;
@@ -187,6 +205,15 @@ export default function PlanEditor() {
   // 全域牆高(公尺)。牆與柱共用,步驟 02 可調、步驟 03 唯讀跟隨 —— 兩個
   // 場景讀的是這一份,不各自持有,否則 02↔03 會出現不一致的高度。
   const [wallHeightM, setWallHeightM] = useState(DEFAULT_WALL_HEIGHT_M);
+  // 換展位尺寸的待確認狀態:非 null 表示對話框開著,值就是使用者選的尺寸。
+  const [pendingBoothSize, setPendingBoothSize] = useState<{
+    w: number;
+    h: number;
+  } | null>(null);
+  const [customBooth, setCustomBooth] = useState({
+    w: String(DEFAULT_BOOTH.w),
+    h: String(DEFAULT_BOOTH.h),
+  });
   const [selectedObject, setSelectedObject] = useState<SelectedObject>(null);
   const [draftWall, setDraftWall] = useState<{
     start: PlanPoint;
@@ -971,6 +998,62 @@ export default function PlanEditor() {
       }
     : null;
 
+  // --- R1 展位尺寸 -------------------------------------------------------
+  //
+  // 換尺寸會把地板換成以 BOOTH_ORIGIN 為左上角的矩形。原本擺在外圍的柱子/
+  // 家具/牆會落到新場地外,所以先數出件數;有東西會被搬動就先問過使用者,
+  // 沒有就直接套用(不為了「一致」而多一個沒有資訊量的對話框)。
+  function outsideCountFor(widthM: number, heightM: number): number {
+    const nextBounds = floorBoundsM(createBoothFloor(widthM, heightM));
+    return (
+      columns.filter((c) => isRectOutsideBounds(c, nextBounds)).length +
+      furniture.filter((f) => isRectOutsideBounds(f, nextBounds)).length +
+      walls.filter((w) => isWallOutsideBounds(w, nextBounds)).length
+    );
+  }
+
+  function applyBoothSize(widthM: number, heightM: number) {
+    const nextPolygon = createBoothFloor(widthM, heightM);
+    const nextBounds = floorBoundsM(nextPolygon);
+
+    setPolygon(nextPolygon);
+    setColumns((prev) =>
+      prev.map((c) => ({ ...c, center: clampRectCenterToBounds(c, nextBounds) })),
+    );
+    setFurniture((prev) =>
+      prev.map((f) => ({ ...f, center: clampRectCenterToBounds(f, nextBounds) })),
+    );
+    setWalls((prev) => prev.map((w) => clampWallToBounds(w, nextBounds)));
+    setSelectedVertex(null);
+    fitViewTo(widthM, heightM);
+  }
+
+  /** 把視圖縮放/平移到剛好框住新場地(留一成邊距)。 */
+  function fitViewTo(widthM: number, heightM: number) {
+    const longest = Math.max(widthM, heightM);
+    if (!(longest > 0)) return;
+    const rawScale = (stagePx * 0.9) / (longest * pxPerMeter);
+    const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, rawScale));
+    const centerPx = metersToPx(
+      { x: BOOTH_ORIGIN.x + widthM / 2, y: BOOTH_ORIGIN.y + heightM / 2 },
+      pxPerMeter,
+    );
+    setView({
+      scale,
+      x: stagePx / 2 - centerPx.x * scale,
+      y: stagePx / 2 - centerPx.y * scale,
+    });
+  }
+
+  function requestBoothSize(widthM: number, heightM: number) {
+    if (!(widthM > 0) || !(heightM > 0)) return;
+    if (outsideCountFor(widthM, heightM) > 0) {
+      setPendingBoothSize({ w: widthM, h: heightM });
+      return;
+    }
+    applyBoothSize(widthM, heightM);
+  }
+
   // R2:用輸入的公分值精確定位柱子。負值與非數字直接拒絕(柱子不動),
   // 其餘由 columnCenterForOffsetM 夾在場地內。
   function setColumnOffsetCm(side: BoundarySide, cm: number) {
@@ -988,6 +1071,17 @@ export default function PlanEditor() {
       ),
     );
   }
+
+  // 3D 場景的取景基準:對著實際地板,而不是固定的 50m 原點視角。展位
+  // preset 之後地板不再從原點展開,沿用舊的 fit/2 會讓畫面中心落在地板外
+  // ——「在 3D 內點地板放家具」會整個失效。
+  const sceneFit = {
+    sizeM: Math.max(4, floorBounds.widthM, floorBounds.heightM),
+    center: {
+      x: (floorBounds.minX + floorBounds.maxX) / 2,
+      y: (floorBounds.minY + floorBounds.maxY) / 2,
+    },
+  };
 
   const edgeLabelTexts = polygon.map((vertex, i) => {
     const next = polygon[(i + 1) % polygon.length];
@@ -1114,6 +1208,69 @@ export default function PlanEditor() {
                     className="ml-auto h-[34px]"
                   >
                     下一步
+                  </Button>
+                </div>
+                <div
+                  data-testid="booth-size-bar"
+                  className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-stone-300 bg-card px-2 py-1.5 text-xs"
+                >
+                  <span className="font-bold text-muted-foreground">
+                    展位尺寸
+                  </span>
+                  {BOOTH_PRESETS.map((preset) => (
+                    <Button
+                      key={`${preset.w}x${preset.h}`}
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      data-testid={`booth-preset-${preset.w}x${preset.h}`}
+                      onClick={() => requestBoothSize(preset.w, preset.h)}
+                      className="h-7 px-2"
+                    >
+                      {preset.w}×{preset.h}m
+                    </Button>
+                  ))}
+                  <label className="flex items-center gap-1 text-muted-foreground">
+                    自訂
+                    <input
+                      type="number"
+                      data-testid="booth-custom-width-input"
+                      min={1}
+                      step={0.5}
+                      value={customBooth.w}
+                      onChange={(e) =>
+                        setCustomBooth((prev) => ({ ...prev, w: e.target.value }))
+                      }
+                      className="w-14 rounded border border-stone-300 bg-card px-1 py-0.5 text-right text-foreground"
+                    />
+                    ×
+                    <input
+                      type="number"
+                      data-testid="booth-custom-height-input"
+                      min={1}
+                      step={0.5}
+                      value={customBooth.h}
+                      onChange={(e) =>
+                        setCustomBooth((prev) => ({ ...prev, h: e.target.value }))
+                      }
+                      className="w-14 rounded border border-stone-300 bg-card px-1 py-0.5 text-right text-foreground"
+                    />
+                    m
+                  </label>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    data-testid="booth-custom-apply"
+                    onClick={() =>
+                      requestBoothSize(
+                        Number(customBooth.w),
+                        Number(customBooth.h),
+                      )
+                    }
+                    className="h-7 px-2"
+                  >
+                    套用
                   </Button>
                 </div>
                 {selectedColumn && columnOffsetsCm && (
@@ -1830,7 +1987,8 @@ export default function PlanEditor() {
                 columns={columns}
                 furniture={furniture}
                 venueSizeM={PLAN_AREA_SIZE_M}
-                viewFitSizeM={VENUE_SIZE_M}
+                viewFitSizeM={sceneFit.sizeM}
+                viewCenterM={sceneFit.center}
                 wallHeightM={wallHeightM}
                 onWallHeightChange={setWallHeightM}
                 onSceneChange={handleSceneChange}
@@ -1854,7 +2012,8 @@ export default function PlanEditor() {
                 columns={columns}
                 furniture={furniture}
                 venueSizeM={PLAN_AREA_SIZE_M}
-                viewFitSizeM={VENUE_SIZE_M}
+                viewFitSizeM={sceneFit.sizeM}
+                viewCenterM={sceneFit.center}
                 wallHeightM={wallHeightM}
               />
             </div>
@@ -1885,6 +2044,50 @@ export default function PlanEditor() {
         onSaved={handleSlotSaved}
         onDeleted={handleSlotDeleted}
       />
+
+      {/* R1:換展位尺寸前的確認。只在真的有東西會被搬動時才出現 —— 沒有
+          越界物件就直接套用,不為了「一致」而多一個沒有資訊量的對話框。 */}
+      <AlertDialog
+        open={pendingBoothSize !== null}
+        onOpenChange={(next) => {
+          if (!next) setPendingBoothSize(null);
+        }}
+      >
+        <AlertDialogContent
+          data-testid="booth-size-confirm-dialog"
+          data-outside-count={
+            pendingBoothSize
+              ? outsideCountFor(pendingBoothSize.w, pendingBoothSize.h)
+              : 0
+          }
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle>更換展位尺寸?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingBoothSize &&
+                `場地將改為 ${pendingBoothSize.w} × ${pendingBoothSize.h} 公尺。目前有 ${outsideCountFor(
+                  pendingBoothSize.w,
+                  pendingBoothSize.h,
+                )} 件物件會落在新場地外,將被移到場地邊界內。`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="booth-size-confirm-cancel">
+              取消
+            </AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="booth-size-confirm-accept"
+              onClick={() => {
+                if (!pendingBoothSize) return;
+                applyBoothSize(pendingBoothSize.w, pendingBoothSize.h);
+                setPendingBoothSize(null);
+              }}
+            >
+              更換
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

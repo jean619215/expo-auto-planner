@@ -49,6 +49,8 @@ interface RefinedSceneProps {
   // 選填:相機取景/gridHelper 尺寸的 fit 基準,與 venueSizeM(ground plane
   // 用)分離 — 預設回退到 venueSizeM,比照 VenueScene 的既有行為。
   viewFitSizeM?: number;
+  /** 相機取景中心(公尺)。同 VenueScene —— 展位不再從原點展開。 */
+  viewCenterM?: { x: number; y: number };
   /**
    * 全域牆高(公尺)。與步驟 02 讀同一份頂層 state —— 這一步是唯讀場景,
    * 不自己持有也不回寫,02↔03 的一致性靠這點保證。
@@ -160,7 +162,7 @@ interface RefinedSceneContentProps {
   furniture: FurnitureItem[];
   venueSizeM: number;
   wallHeightM: number;
-  fit: number;
+  viewCenter: { x: number; y: number };
   bounds: PlanBounds;
   revision: number;
   probeResetKey: string;
@@ -182,7 +184,7 @@ function RefinedSceneContent({
   furniture,
   venueSizeM,
   wallHeightM,
-  fit,
+  viewCenter,
   bounds,
   revision,
   probeResetKey,
@@ -230,7 +232,7 @@ function RefinedSceneContent({
         maxPolarAngle={Math.PI / 2 - 0.05}
         minDistance={5}
         maxDistance={150}
-        target={[fit / 2, 0, fit / 2]}
+        target={[viewCenter.x, 0, viewCenter.y]}
       />
       <gridHelper
         args={[venueSizeM, venueSizeM]}
@@ -378,9 +380,11 @@ export default function RefinedScene({
   furniture,
   venueSizeM = VENUE_SIZE_M,
   viewFitSizeM,
+  viewCenterM,
   wallHeightM,
 }: RefinedSceneProps) {
   const fit = viewFitSizeM ?? venueSizeM;
+  const viewCenter = viewCenterM ?? { x: fit / 2, y: fit / 2 };
 
   const bounds = useMemo(
     () => planBoundsM(polygon, walls, columns, furniture),
@@ -506,7 +510,11 @@ export default function RefinedScene({
           shadows="variance"
           gl={REFINED_GL}
           camera={{
-            position: [fit * 0.7, fit * 0.9, fit * 0.7],
+            position: [
+              viewCenter.x + fit * 0.7,
+              fit * 0.9,
+              viewCenter.y + fit * 0.7,
+            ],
             fov: 50,
           }}
         >
@@ -518,7 +526,7 @@ export default function RefinedScene({
               furniture={furniture}
               venueSizeM={venueSizeM}
               wallHeightM={wallHeightM}
-              fit={fit}
+              viewCenter={viewCenter}
               bounds={bounds}
               revision={revision}
               probeResetKey={probeResetKey}

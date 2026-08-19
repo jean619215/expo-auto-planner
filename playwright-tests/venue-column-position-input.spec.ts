@@ -12,14 +12,14 @@ import { PlanEditorPage } from "./pages/PlanEditorPage";
 // 順手一拖毀掉),所以保留行為、改掉假設 —— 下面的檢查與畫面提示都照
 // 實際語意寫。
 //
-// 預設地板是 (20,20)-(30,30),也就是 1000 × 1000cm。
+// 預設地板是 (20,20)-(23,23),也就是 300 × 300cm。
 
 test.describe("Column precise positioning (T5)", () => {
   test("輸入 137cm 就停在 137cm,不被吸附成 150", async ({ page }) => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.columnTool();
-    await editor.placeColumn({ x: 22, y: 24 });
+    await editor.placeColumn({ x: 21, y: 21.5 });
 
     await editor.setColumnOffset("left", 137);
 
@@ -31,7 +31,7 @@ test.describe("Column precise positioning (T5)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.columnTool();
-    await editor.placeColumn({ x: 22, y: 24 });
+    await editor.placeColumn({ x: 21, y: 21.5 });
 
     await editor.setColumnOffset("left", 137);
 
@@ -45,7 +45,7 @@ test.describe("Column precise positioning (T5)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.columnTool();
-    await editor.placeColumn({ x: 22, y: 24 });
+    await editor.placeColumn({ x: 21, y: 21.5 });
 
     await editor.setColumnOffset("left", 137);
 
@@ -62,7 +62,7 @@ test.describe("Column precise positioning (T5)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.columnTool();
-    await editor.placeColumn({ x: 22, y: 24 });
+    await editor.placeColumn({ x: 21, y: 21.5 });
 
     await editor.setColumnOffset("top", 213);
 
@@ -73,7 +73,7 @@ test.describe("Column precise positioning (T5)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.columnTool();
-    await editor.placeColumn({ x: 22, y: 24 });
+    await editor.placeColumn({ x: 21, y: 21.5 });
 
     await editor.setColumnOffset("right", 88);
 
@@ -85,7 +85,7 @@ test.describe("Column precise positioning (T5)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.columnTool();
-    await editor.placeColumn({ x: 22, y: 24 });
+    await editor.placeColumn({ x: 21, y: 21.5 });
 
     await editor.setColumnOffset("left", 99999);
 
@@ -102,7 +102,7 @@ test.describe("Column precise positioning (T5)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.columnTool();
-    await editor.placeColumn({ x: 22, y: 24 });
+    await editor.placeColumn({ x: 21, y: 21.5 });
 
     const before = await editor.columnOffsetsCm();
     await editor.setColumnOffset("left", -50);
@@ -116,13 +116,13 @@ test.describe("Column precise positioning (T5)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.columnTool();
-    await editor.placeColumn({ x: 22, y: 24 });
+    await editor.placeColumn({ x: 21, y: 21.5 });
 
     await editor.setColumnOffset("left", 137);
     const before = (await editor.objects()).columns[0].center.x;
 
     await editor.selectTool();
-    await editor.dragObjectBody({ x: before, y: 24 }, { x: 25, y: 24 });
+    await editor.dragObjectBody({ x: before, y: 21.5 }, { x: 22.5, y: 21.5 });
 
     const after = (await editor.objects()).columns[0].center.x;
     expect(after).not.toBeCloseTo(before, 3);
@@ -139,7 +139,7 @@ test.describe("Column precise positioning (T5)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.columnTool();
-    await editor.placeColumn({ x: 22, y: 24 });
+    await editor.placeColumn({ x: 21, y: 21.5 });
 
     await expect(page.getByTestId("column-offset-hint")).toBeVisible();
   });

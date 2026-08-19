@@ -21,7 +21,7 @@ test.describe("Column boundary offsets (T4)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.columnTool();
-    await editor.placeColumn({ x: 22, y: 24 });
+    await editor.placeColumn({ x: 21, y: 21.5 });
 
     const offsets = await editor.columnOffsetsCm();
     expect(offsets).not.toBeNull();
@@ -38,19 +38,19 @@ test.describe("Column boundary offsets (T4)", () => {
     );
   });
 
-  test("四邊距離的數值正確(預設 10m 見方地板,柱子放在 22,24)", async ({
+  test("四邊距離的數值正確(預設 3×3m 攤位,柱子放在 21,21.5)", async ({
     page,
   }) => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.columnTool();
-    await editor.placeColumn({ x: 22, y: 24 });
+    await editor.placeColumn({ x: 21, y: 21.5 });
 
     const { columns } = await editor.objects();
     const column = columns[0];
     const offsets = await editor.columnOffsetsCm();
 
-    // 預設地板是 (20,20)-(30,30)。左距 = 柱左緣 - 20。
+    // 預設地板是 (20,20)-(23,23)。左距 = 柱左緣 - 20。
     const expectedLeft = Math.round((column.center.x - column.w / 2 - 20) * 100);
     const expectedTop = Math.round((column.center.y - column.h / 2 - 20) * 100);
 
@@ -63,19 +63,19 @@ test.describe("Column boundary offsets (T4)", () => {
     await editor.navigate();
 
     const size = await editor.venueSizeCm();
-    expect(size.width).toBe(1000);
-    expect(size.height).toBe(1000);
+    expect(size.width).toBe(300);
+    expect(size.height).toBe(300);
   });
 
   test("取消選取後,四邊距離消失", async ({ page }) => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.columnTool();
-    await editor.placeColumn({ x: 22, y: 24 });
+    await editor.placeColumn({ x: 21, y: 21.5 });
     expect(await editor.columnOffsetsCm()).not.toBeNull();
 
     await editor.selectTool();
-    await editor.clickAt({ x: 28, y: 28 });
+    await editor.clickAt({ x: 22.8, y: 22.8 });
 
     expect(await editor.selectedId()).toBe("");
     expect(await editor.columnOffsetsCm()).toBeNull();
@@ -85,12 +85,12 @@ test.describe("Column boundary offsets (T4)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.columnTool();
-    await editor.placeColumn({ x: 22, y: 24 });
+    await editor.placeColumn({ x: 21, y: 21.5 });
 
     const before = await editor.columnOffsetsCm();
 
     await editor.selectTool();
-    await editor.dragObjectBody({ x: 22, y: 24 }, { x: 26, y: 24 });
+    await editor.dragObjectBody({ x: 21, y: 21.5 }, { x: 22, y: 21.5 });
 
     const after = await editor.columnOffsetsCm();
     expect(after!.left).toBeGreaterThan(before!.left);
@@ -107,9 +107,9 @@ test.describe("Column boundary offsets (T4)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.wallTool();
-    await editor.drawWall({ x: 22, y: 22 }, { x: 26, y: 22 });
+    await editor.drawWall({ x: 20.5, y: 21 }, { x: 22.5, y: 21 });
     await editor.selectTool();
-    await editor.clickAt({ x: 24, y: 22 });
+    await editor.clickAt({ x: 21.5, y: 21 });
 
     expect(await editor.selectedType()).toBe("wall");
     expect(await editor.columnOffsetsCm()).toBeNull();
@@ -120,11 +120,11 @@ test.describe("Column boundary offsets (T4)", () => {
     await editor.navigate();
 
     // 把頂點 0 (20,20) 拉到 (20,26) 之外會改變外接矩形高度;先確認基準。
-    expect((await editor.venueSizeCm()).width).toBe(1000);
+    expect((await editor.venueSizeCm()).width).toBe(300);
 
     await editor.dragVertexTo(0, { x: 14, y: 20 });
 
     const size = await editor.venueSizeCm();
-    expect(size.width).toBe(1600);
+    expect(size.width).toBe(900);
   });
 });

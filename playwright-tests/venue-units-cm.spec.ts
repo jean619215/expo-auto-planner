@@ -12,14 +12,14 @@ import { PlanEditorPage } from "./pages/PlanEditorPage";
 // 尺度會全部錯掉,而那種錯誤不會反映在標註字串上。
 
 test.describe("Dimension labels in centimetres (T3)", () => {
-  test("地板邊長標註為 1000cm(預設 10m 見方)", async ({ page }) => {
+  test("地板邊長標註為 300cm(預設 3×3m 攤位)", async ({ page }) => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
 
     const labels = await editor.edgeLabels();
     expect(labels.length).toBe(4);
     for (const label of labels) {
-      expect(label).toBe("1000cm");
+      expect(label).toBe("300cm");
     }
   });
 

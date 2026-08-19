@@ -20,6 +20,7 @@ interface VenueSceneLoaderProps {
   furniture: FurnitureItem[];
   venueSizeM?: number;
   viewFitSizeM?: number;
+  viewCenterM?: { x: number; y: number };
   wallHeightM: number;
   onWallHeightChange?: (meters: number) => void;
   onSceneChange?: (next: {
@@ -36,6 +37,7 @@ export default function VenueSceneLoader({
   furniture,
   venueSizeM,
   viewFitSizeM,
+  viewCenterM,
   wallHeightM,
   onWallHeightChange,
   onSceneChange,
@@ -48,6 +50,7 @@ export default function VenueSceneLoader({
       furniture={furniture}
       venueSizeM={venueSizeM}
       viewFitSizeM={viewFitSizeM}
+      viewCenterM={viewCenterM}
       wallHeightM={wallHeightM}
       onWallHeightChange={onWallHeightChange}
       onSceneChange={onSceneChange}
