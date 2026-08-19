@@ -21,7 +21,7 @@ import {
   createObjectId,
   createWall,
   findClosestEdge,
-  formatMeters,
+  formatCentimeters,
   insertVertexOnEdge,
   metersToPx,
   moveVertex,
@@ -938,16 +938,16 @@ export default function PlanEditor() {
       : null;
 
   const columnLabelText = selectedColumn
-    ? `${selectedColumn.w.toFixed(1)} x ${selectedColumn.h.toFixed(1)} m`
+    ? `${Math.round(selectedColumn.w * 100)} × ${Math.round(selectedColumn.h * 100)}cm`
     : "";
 
   const wallLabelText = selectedWall
-    ? formatMeters(wallLengthM(selectedWall))
+    ? formatCentimeters(wallLengthM(selectedWall))
     : "";
 
   const edgeLabelTexts = polygon.map((vertex, i) => {
     const next = polygon[(i + 1) % polygon.length];
-    return formatMeters(Math.hypot(next.x - vertex.x, next.y - vertex.y));
+    return formatCentimeters(Math.hypot(next.x - vertex.x, next.y - vertex.y));
   });
 
   const floorCentroidPx = metersToPx(

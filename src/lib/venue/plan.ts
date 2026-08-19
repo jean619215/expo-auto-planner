@@ -389,8 +389,14 @@ export function resizeColumnCorner(
   return { id: column.id, center: newCenter, w: newWidth, h: newHeight };
 }
 
-export function formatMeters(v: number): string {
-  return `${v.toFixed(1)} m`;
+/**
+ * 尺寸標註字串。依台灣建築圖慣例以**公分**標註,取整數公分。
+ *
+ * 運算單位仍然是公尺 —— 這裡只做顯示層換算。取整是刻意的:平面圖上不需要
+ * 公釐級精度,而 `7.071 m` 這種對角線長度顯示成 `707cm` 比 `707.1cm` 乾淨。
+ */
+export function formatCentimeters(meters: number): string {
+  return `${Math.round(meters * 100)}cm`;
 }
 
 export function wallLengthM(wall: WallSegment): number {

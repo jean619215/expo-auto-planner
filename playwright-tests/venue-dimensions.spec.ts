@@ -193,7 +193,7 @@ test.describe("Venue Plan Editor - Task 3 dimensions", () => {
     const column = columns[0];
 
     expect(await editor.columnLabel()).toBe(
-      `${column.w.toFixed(1)} x ${column.h.toFixed(1)} m`,
+      `${Math.round(column.w * 100)} × ${Math.round(column.h * 100)}cm`,
     );
 
     await editor.clickAt({ x: 40, y: 40 });
@@ -217,7 +217,7 @@ test.describe("Venue Plan Editor - Task 3 dimensions", () => {
       wall.end.y - wall.start.y,
     );
 
-    expect(await editor.wallLabel()).toBe(`${expectedLength.toFixed(1)} m`);
+    expect(await editor.wallLabel()).toBe(`${Math.round(expectedLength * 100)}cm`);
 
     await editor.clickAt({ x: 40, y: 40 });
     expect(await editor.selectedId()).toBe("");
@@ -243,10 +243,10 @@ test.describe("Venue Plan Editor - Task 3 dimensions", () => {
       updated.end.x - updated.start.x,
       updated.end.y - updated.start.y,
     );
-    expect(await editor.wallLabel()).toBe(`${expectedLength.toFixed(1)} m`);
+    expect(await editor.wallLabel()).toBe(`${Math.round(expectedLength * 100)}cm`);
   });
 
-  test("floor edge labels are always-on with one entry per edge, matching DEFAULT_FLOOR's 10.0 m sides", async ({
+  test("floor edge labels are always-on with one entry per edge, matching DEFAULT_FLOOR's 10m sides (labelled 1000cm)", async ({
     page,
   }) => {
     const editor = new PlanEditorPage(page);
@@ -255,7 +255,7 @@ test.describe("Venue Plan Editor - Task 3 dimensions", () => {
     const labels = await editor.edgeLabels();
     expect(labels.length).toBe(4);
     for (const label of labels) {
-      expect(label).toBe("10.0 m");
+      expect(label).toBe("1000cm");
     }
   });
 
@@ -276,7 +276,7 @@ test.describe("Venue Plan Editor - Task 3 dimensions", () => {
       const a = verts[i];
       const b = verts[(i + 1) % verts.length];
       const expected = Math.hypot(b.x - a.x, b.y - a.y);
-      expect(labels[i]).toBe(`${expected.toFixed(1)} m`);
+      expect(labels[i]).toBe(`${Math.round(expected * 100)}cm`);
     }
   });
 
@@ -376,7 +376,7 @@ test.describe("Venue Plan Editor - Task 3 dimensions", () => {
     expect(updated.center.y + updated.h / 2).not.toBeCloseTo(24.5, 1);
   });
 
-  test("very short wall (exactly one 0.5m snap step) renders a 0.5 m label with no NaN", async ({
+  test("very short wall (exactly one 0.5m snap step) renders a 50cm label with no NaN", async ({
     page,
   }) => {
     const editor = new PlanEditorPage(page);
@@ -387,7 +387,7 @@ test.describe("Venue Plan Editor - Task 3 dimensions", () => {
 
     const { walls } = await editor.objects();
     expect(walls.length).toBe(1);
-    expect(await editor.wallLabel()).toBe("0.5 m");
+    expect(await editor.wallLabel()).toBe("50cm");
     expect(await editor.wallLabel()).not.toContain("NaN");
   });
 });
