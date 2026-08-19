@@ -274,3 +274,61 @@
   註解就記了這件事),不是本輪造成的。
 - 上傳的材質不進存檔(刻意)。要持久化需要新的上傳 API、檔案驗證、RLS 與配額,
   另立 story。
+
+---
+
+## 九、暫停點交接(2026-08-19)
+
+### 現況
+
+- 分支 `docs/venue-feedback-round2`,**12 個 commit,全部未 push**,工作樹乾淨。
+- 10 個 task 皆已實作、驗收、破壞驗證,各自獨立 commit(commit hash 見第三節表格)。
+- `npm run lint` 通過;`npx tsc --noEmit` 通過。
+
+### 全套測試最後一次結果
+
+25 支 spec 連跑(排除 5 支需帳密的):**232 通過、1 失敗**。
+
+失敗的是 `venue-step2-shapes.spec.ts` 的「往返步驟 03 後,模型快取沒有重複建置」。
+
+**尚未查清**。已知的事實:
+- 單獨跑該案例:通過(3/3)。
+- 單獨跑整支 spec:通過(2/2)。
+- 與 `venue-refined-acceptance` 一起跑:通過。
+- 只有在 25 支連跑時失敗,耗時 7.4 秒(正常約 12 秒),代表是**前段就失敗**
+  而不是最後的快取斷言不成立 —— 很可能是 `place()` 那一步沒放上家具,
+  也就是同一個既有的 3D 地板點擊時序問題(該檔與 `ai-panel-persistent`
+  都遇過)。**但這是推測,還沒拿到當次的錯誤訊息。**
+
+下次接手的第一件事:重跑 25 支並保留完整輸出(不要接 `| grep`,那會讓
+輸出被緩衝到結束才寫出、也丟掉錯誤細節),拿到該次的實際錯誤再判斷。
+若確認是點擊時序,`venue-step2-shapes.spec.ts` 的 `place()` 已經有重試
+迴圈的同類做法可以照抄(見 `venue-step2-delete.spec.ts` 的
+`placeTableInPreview`)。
+
+### 未做的事(刻意)
+
+- **未 push、未開 PR** —— 使用者自行 push。
+- 需帳密的 5 支 spec 未跑(`ai-panel` / `membership-task7-task9` /
+  `points-shop` / `profile-edit-mode` / `site-header`),需要 `.env.playwright.local`。
+- 上傳材質的持久化未做(決議如此,另立 story)。
+- `AGENTS.md` 未更新。本輪新增了幾條值得寫進去的約束,若要補:
+  - 尺寸標註單位一律公分(顯示層),內部運算維持公尺。
+  - 牆高常數住在 `plan.ts`,元件不得自行宣告。
+  - 步驟 02 與 03 共用家具幾何(`useNormalizedFurnitureModel`),差別只在材質。
+  - 探針回報的必須是場景/GPU 的實際狀態,不能是 prop 的回音。
+
+### 本輪新增的檔案(供快速定位)
+
+實作:
+- `src/lib/venue/surfacePresets.ts` — 材質選項(純資料)
+- `src/components/venue/VenueSceneProbe.tsx` — 步驟 02 場景探針
+- `src/components/venue/whiteboxFurniture.tsx` — 步驟 02 家具輪廓
+- `scripts/build-venue-textures.mjs` — 貼圖打包(手動跑,非 build 一部分)
+- `public/textures/venue/` — 4 款實拍貼圖 ×3 張 + ATTRIBUTION.md(1.7MB)
+
+測試:
+- `venue-wall-height` / `venue-step2-delete` / `venue-units-cm` /
+  `venue-column-offsets` / `venue-column-position-input` / `venue-booth-preset` /
+  `venue-step2-shapes` / `venue-surface-picker` / `venue-surface-upload` /
+  `venue-texture-pack`
