@@ -399,6 +399,68 @@ export function formatCentimeters(meters: number): string {
   return `${Math.round(meters * 100)}cm`;
 }
 
+// --- 場地邊界與柱子到邊界的距離(feedback round 2, R2)--------------------
+//
+// 「場地四邊」定義為地板多邊形的**外接矩形**。地板可以是任意多邊形,而
+// 回饋參考圖那種「距左/距右/距上/距下」的標註方式只在矩形上有意義 ——
+// 對凹多邊形去問「距離左邊多遠」沒有單一答案。
+
+export interface FloorBounds {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  widthM: number;
+  heightM: number;
+}
+
+/** 地板多邊形的外接矩形。空多邊形回全 0(呼叫端不必再防 Infinity)。 */
+export function floorBoundsM(polygon: FloorPolygon): FloorBounds {
+  if (polygon.length === 0) {
+    return { minX: 0, maxX: 0, minY: 0, maxY: 0, widthM: 0, heightM: 0 };
+  }
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const vertex of polygon) {
+    minX = Math.min(minX, vertex.x);
+    maxX = Math.max(maxX, vertex.x);
+    minY = Math.min(minY, vertex.y);
+    maxY = Math.max(maxY, vertex.y);
+  }
+  return { minX, maxX, minY, maxY, widthM: maxX - minX, heightM: maxY - minY };
+}
+
+export interface BoundaryOffsets {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+/**
+ * 柱子四邊到場地邊界的距離(公尺)。
+ *
+ * 量的是**邊到邊**:柱子左緣到左邊界,不是中心到左邊界。這個定義的驗證
+ * 方式很直接 —— `left + w + right` 必然等於場地總寬(參考圖上的
+ * 1525 + 150 + 525 = 2200)。中心距的話會多算一個柱寬。
+ *
+ * 柱子可能被擺到地板外(柱子夾制的是 venueSizeM 而非地板多邊形),此時
+ * 對應方向會是負值 —— 不特別處理,負號本身就是「跑出去了」的正確資訊。
+ */
+export function columnBoundaryOffsetsM(
+  column: Column,
+  bounds: FloorBounds,
+): BoundaryOffsets {
+  return {
+    left: column.center.x - column.w / 2 - bounds.minX,
+    right: bounds.maxX - (column.center.x + column.w / 2),
+    top: column.center.y - column.h / 2 - bounds.minY,
+    bottom: bounds.maxY - (column.center.y + column.h / 2),
+  };
+}
+
 export function wallLengthM(wall: WallSegment): number {
   return Math.hypot(wall.end.x - wall.start.x, wall.end.y - wall.start.y);
 }

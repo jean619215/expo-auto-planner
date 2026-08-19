@@ -587,6 +587,28 @@ export class PlanEditorPage {
     return Number(raw);
   }
 
+  // --- R2 柱子邊界距離(feedback round 2, T4)---------------------------
+
+  /**
+   * 選取中柱子到場地四邊的距離(公分,整數);未選柱子時為 null。
+   * 量的是柱子邊緣到外接矩形邊界,不是中心到邊界。
+   */
+  async columnOffsetsCm(): Promise<{
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
+  } | null> {
+    const raw = await this.editor.getAttribute("data-column-offsets-cm");
+    return raw ? JSON.parse(raw) : null;
+  }
+
+  /** 場地(地板外接矩形)的總寬高,公分整數。 */
+  async venueSizeCm(): Promise<{ width: number; height: number }> {
+    const raw = await this.editor.getAttribute("data-venue-size-cm");
+    return JSON.parse(raw ?? "null");
+  }
+
   // --- R4 步驟 02 刪除(feedback round 2, T2)---------------------------
   //
   // 步驟 02 的選取狀態住在 VenueScene 自己身上(3D 內的點選),與步驟 01 的

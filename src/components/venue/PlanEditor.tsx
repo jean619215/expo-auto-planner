@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState } from "react";
-import { Circle, Layer, Line, Rect, Stage, Text } from "react-konva";
+import { Arrow, Circle, Layer, Line, Rect, Stage, Text } from "react-konva";
 import type Konva from "konva";
 import { ZoomIn, ZoomOut, Maximize } from "lucide-react";
 import {
@@ -16,11 +16,13 @@ import {
   WALL_THICKNESS_M,
   clampColumnCenter,
   clampWallHeight,
+  columnBoundaryOffsetsM,
   computePxPerMeter,
   createColumn,
   createObjectId,
   createWall,
   findClosestEdge,
+  floorBoundsM,
   formatCentimeters,
   insertVertexOnEdge,
   metersToPx,
@@ -64,6 +66,9 @@ import { Button } from "@/components/ui/button";
 
 const MIN_STAGE_PX = 320;
 const MAX_STAGE_PX = 800;
+// 尺寸標註的顏色 —— 與圖面本身的藍圖色調刻意區隔,標註不是圖的一部分。
+const DIMENSION_COLOR = "#dc2626";
+
 // 預設視圖 fit 尺寸(= VENUE_SIZE_M,與現行預設視覺逐像素一致的關鍵)。
 const DEFAULT_VIEW_SIZE_M = VENUE_SIZE_M;
 // zoom out 到底恰好完整容納 PLAN_AREA_SIZE_M(200)。
@@ -945,6 +950,25 @@ export default function PlanEditor() {
     ? formatCentimeters(wallLengthM(selectedWall))
     : "";
 
+  // 場地邊界(地板外接矩形)與選取柱子到四邊的距離。顯示層一律公分整數,
+  // 運算仍是公尺。
+  const floorBounds = floorBoundsM(polygon);
+  const venueSizeCm = {
+    width: Math.round(floorBounds.widthM * 100),
+    height: Math.round(floorBounds.heightM * 100),
+  };
+  const columnOffsetsM = selectedColumn
+    ? columnBoundaryOffsetsM(selectedColumn, floorBounds)
+    : null;
+  const columnOffsetsCm = columnOffsetsM
+    ? {
+        left: Math.round(columnOffsetsM.left * 100),
+        right: Math.round(columnOffsetsM.right * 100),
+        top: Math.round(columnOffsetsM.top * 100),
+        bottom: Math.round(columnOffsetsM.bottom * 100),
+      }
+    : null;
+
   const edgeLabelTexts = polygon.map((vertex, i) => {
     const next = polygon[(i + 1) % polygon.length];
     return formatCentimeters(Math.hypot(next.x - vertex.x, next.y - vertex.y));
@@ -976,6 +1000,10 @@ export default function PlanEditor() {
       data-column-label={columnLabelText}
       data-wall-label={wallLabelText}
       data-edge-labels={JSON.stringify(edgeLabelTexts)}
+      data-venue-size-cm={JSON.stringify(venueSizeCm)}
+      data-column-offsets-cm={
+        columnOffsetsCm ? JSON.stringify(columnOffsetsCm) : undefined
+      }
       data-scene-generated={sceneGenerated}
       data-generation={generation}
       data-step={step}
@@ -1485,6 +1513,141 @@ export default function PlanEditor() {
                           />
                         );
                       })()}
+                    {/* R2:選取柱子時,標出柱子四邊到場地邊界的距離,
+                        外加場地總寬高。紅色雙箭頭 + 公分數字,比照回饋
+                        附的參考圖。全部 listening={false} —— 這是唯讀
+                        標註,不能攔截點擊。 */}
+                    {selectedColumn &&
+                      columnOffsetsCm &&
+                      (() => {
+                        const min = metersToPx(
+                          { x: floorBounds.minX, y: floorBounds.minY },
+                          pxPerMeter,
+                        );
+                        const max = metersToPx(
+                          { x: floorBounds.maxX, y: floorBounds.maxY },
+                          pxPerMeter,
+                        );
+                        const center = metersToPx(
+                          selectedColumn.center,
+                          pxPerMeter,
+                        );
+                        const halfW = (selectedColumn.w * pxPerMeter) / 2;
+                        const halfH = (selectedColumn.h * pxPerMeter) / 2;
+                        const dims: {
+                          key: string;
+                          points: number[];
+                          text: string;
+                          labelX: number;
+                          labelY: number;
+                        }[] = [
+                          {
+                            key: "left",
+                            points: [min.x, center.y, center.x - halfW, center.y],
+                            text: `${columnOffsetsCm.left}cm`,
+                            labelX: (min.x + center.x - halfW) / 2,
+                            labelY: center.y - 14,
+                          },
+                          {
+                            key: "right",
+                            points: [center.x + halfW, center.y, max.x, center.y],
+                            text: `${columnOffsetsCm.right}cm`,
+                            labelX: (center.x + halfW + max.x) / 2,
+                            labelY: center.y - 14,
+                          },
+                          {
+                            key: "top",
+                            points: [center.x, min.y, center.x, center.y - halfH],
+                            text: `${columnOffsetsCm.top}cm`,
+                            labelX: center.x + 4,
+                            labelY: (min.y + center.y - halfH) / 2,
+                          },
+                          {
+                            key: "bottom",
+                            points: [center.x, center.y + halfH, center.x, max.y],
+                            text: `${columnOffsetsCm.bottom}cm`,
+                            labelX: center.x + 4,
+                            labelY: (center.y + halfH + max.y) / 2,
+                          },
+                        ];
+                        return (
+                          <Fragment>
+                            {dims.map((dim) => (
+                              <Fragment key={dim.key}>
+                                <Arrow
+                                  listening={false}
+                                  points={dim.points}
+                                  pointerAtBeginning
+                                  pointerLength={5}
+                                  pointerWidth={5}
+                                  stroke={DIMENSION_COLOR}
+                                  fill={DIMENSION_COLOR}
+                                  strokeWidth={1}
+                                />
+                                <Text
+                                  listening={false}
+                                  x={dim.labelX}
+                                  y={dim.labelY}
+                                  text={dim.text}
+                                  fontSize={11}
+                                  fill={DIMENSION_COLOR}
+                                />
+                              </Fragment>
+                            ))}
+                          </Fragment>
+                        );
+                      })()}
+                    {/* 場地總寬高:恆顯示,畫在地板外接矩形之外一段距離。 */}
+                    {(() => {
+                      const min = metersToPx(
+                        { x: floorBounds.minX, y: floorBounds.minY },
+                        pxPerMeter,
+                      );
+                      const max = metersToPx(
+                        { x: floorBounds.maxX, y: floorBounds.maxY },
+                        pxPerMeter,
+                      );
+                      return (
+                        <Fragment>
+                          <Arrow
+                            listening={false}
+                            points={[min.x, min.y - 18, max.x, min.y - 18]}
+                            pointerAtBeginning
+                            pointerLength={5}
+                            pointerWidth={5}
+                            stroke={DIMENSION_COLOR}
+                            fill={DIMENSION_COLOR}
+                            strokeWidth={1}
+                          />
+                          <Text
+                            listening={false}
+                            x={(min.x + max.x) / 2}
+                            y={min.y - 32}
+                            text={`${venueSizeCm.width}cm`}
+                            fontSize={11}
+                            fill={DIMENSION_COLOR}
+                          />
+                          <Arrow
+                            listening={false}
+                            points={[max.x + 18, min.y, max.x + 18, max.y]}
+                            pointerAtBeginning
+                            pointerLength={5}
+                            pointerWidth={5}
+                            stroke={DIMENSION_COLOR}
+                            fill={DIMENSION_COLOR}
+                            strokeWidth={1}
+                          />
+                          <Text
+                            listening={false}
+                            x={max.x + 22}
+                            y={(min.y + max.y) / 2}
+                            text={`${venueSizeCm.height}cm`}
+                            fontSize={11}
+                            fill={DIMENSION_COLOR}
+                          />
+                        </Fragment>
+                      );
+                    })()}
                     {wallLabelText &&
                       selectedWall &&
                       (() => {
