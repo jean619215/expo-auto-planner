@@ -619,6 +619,27 @@ export class PlanEditorPage {
     await input.press("Enter");
   }
 
+  // --- R5 步驟 02 家具外型(feedback round 2, T7)------------------------
+
+  /** 步驟 02 場上各種家具的幾何/材質摘要(探針量的,不是原始碼字面值)。 */
+  async sceneFurnitureShapes(): Promise<
+    {
+      kind: string;
+      partCount: number;
+      triangles: number;
+      hasMap: boolean;
+      hasNormalMap: boolean;
+    }[]
+  > {
+    const raw = await this.scene.getAttribute("data-furniture-shapes");
+    return JSON.parse(raw ?? "[]");
+  }
+
+  /** 步驟 03 專屬程序化材質的累計烘焙次數(步驟 02 應維持 0)。 */
+  async sceneSurfaceBakes(): Promise<number> {
+    return Number(await this.scene.getAttribute("data-surface-bakes"));
+  }
+
   // --- R1 展位 preset(feedback round 2, T6)-----------------------------
 
   get boothSizeConfirmDialog(): Locator {

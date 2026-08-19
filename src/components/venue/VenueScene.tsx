@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Suspense,
   useCallback,
   useEffect,
   useRef,
@@ -50,6 +51,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { segmentClassName } from "./PlanToolbar";
 import { useFloorGeometry } from "./floorGeometry";
+import WhiteboxFurnitureItem from "./whiteboxFurniture";
 import VenueSceneProbe, {
   VENUE_WALL_NAME,
   VENUE_COLUMN_NAME,
@@ -140,6 +142,8 @@ export default function VenueScene({
   const [measurements, setMeasurements] = useState<VenueSceneMeasurements>({
     wallHeightM: 0,
     columnHeightM: 0,
+    furnitureShapes: [],
+    surfaceBakes: 0,
   });
   const handleProbeReport = useCallback(
     (next: VenueSceneMeasurements) => setMeasurements(next),
@@ -291,6 +295,8 @@ export default function VenueScene({
       data-wall-height-m={wallHeightM}
       data-wall-mesh-height-m={measurements.wallHeightM}
       data-column-mesh-height-m={measurements.columnHeightM}
+      data-furniture-shapes={JSON.stringify(measurements.furnitureShapes)}
+      data-surface-bakes={measurements.surfaceBakes}
       className="mt-4 w-full"
     >
       <div className="flex gap-3">
@@ -508,32 +514,25 @@ export default function VenueScene({
               </mesh>
             );
           })}
+          {/* 家具外型:與步驟 03 共用同一份幾何,材質換成單色。模型是
+              非同步解碼的,所以逐件包 Suspense —— 一件還在解碼不該讓整個
+              場景空白。 */}
           {furniture.map((item) => {
             const isSelected =
               selectedId?.type === "furniture" && selectedId.id === item.id;
-            const defaults = FURNITURE_DEFAULTS[item.kind];
             return (
-              <mesh
-                key={item.id}
-                ref={(node) => {
-                  if (isSelected) selectedMeshRef.current = node;
-                }}
-                position={[
-                  item.center.x,
-                  defaults.height3d / 2,
-                  item.center.y,
-                ]}
-                rotation={[0, (-item.rotationDeg * Math.PI) / 180, 0]}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  selectObject({ type: "furniture", id: item.id });
-                }}
-              >
-                <boxGeometry args={[item.w, defaults.height3d, item.h]} />
-                <meshStandardMaterial
-                  color={isSelected ? "#1F4E79" : defaults.color}
+              <Suspense key={item.id} fallback={null}>
+                <WhiteboxFurnitureItem
+                  item={item}
+                  selected={isSelected}
+                  meshRef={(node) => {
+                    if (isSelected) selectedMeshRef.current = node;
+                  }}
+                  onSelect={() =>
+                    selectObject({ type: "furniture", id: item.id })
+                  }
                 />
-              </mesh>
+              </Suspense>
             );
           })}
           {selectionExists && (

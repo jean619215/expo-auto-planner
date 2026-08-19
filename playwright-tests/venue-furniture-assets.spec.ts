@@ -158,9 +158,20 @@ test.describe("精密 3D 場景 (步驟 03) - Task 4: 家具模型 asset pipelin
     expect(glbRequests, "步驟 01 不得載入任何 3D 模型").toEqual([]);
   });
 
-  test("C2: 步驟 02(白模 3D 預覽)全程零 GLB 請求", async ({ page }) => {
-    const glbRequests = collectGlbRequests(page);
+  // C2/C3 原本守的是「步驟 02 全程零 GLB 請求」。那條規定在 feedback
+  // round 2 的 R5 被推翻了 —— 步驟 02 要顯示家具的真實輪廓,幾何就在 GLB
+  // 裡,不下載就畫不出來。
+  //
+  // 換掉的守衛不是放寬,而是換到真正的分界上:貼圖是**嵌在 GLB 內**的,
+  // 從來就不會有獨立的圖檔請求,所以用網路請求驗「有沒有載貼圖」本來就
+  // 驗不到東西。實質的規定有兩條,分別由下面兩個案例接手:
+  //
+  //   * 步驟 02 家具材質上不得掛貼圖(venue-step2-shapes.spec.ts 驗材質)。
+  //   * 步驟 03 專屬的地板/牆程序化材質在步驟 02 不得被烘焙(下面 C2)。
+  //
+  // 步驟 01 仍然是零 GLB(C1 不變)—— 那一步根本沒有 3D 場景。
 
+  test("C2: 步驟 02 不觸發步驟 03 專屬的地板/牆材質烘焙", async ({ page }) => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.wallTool();
@@ -169,18 +180,17 @@ test.describe("精密 3D 場景 (步驟 03) - Task 4: 家具模型 asset pipelin
 
     expect(await editor.currentStep()).toBe("preview");
     await expect.poll(() => editor.sceneGenerated(), { timeout: 15_000 }).toBe(true);
-
-    // 白模預覽是刻意的 —— 步驟 02 用 FURNITURE_DEFAULTS 的顏色畫 box,
-    // 真實模型是步驟 03 才有的東西。
     await settleForStrayRequests(page);
-    expect(glbRequests, "步驟 02 不得載入任何 3D 模型").toEqual([]);
+
+    expect(
+      await editor.sceneSurfaceBakes(),
+      "步驟 02 烘焙了步驟 03 專屬的表面材質",
+    ).toBe(0);
   });
 
-  test("C3: 01 -> 02 -> 01 往返後仍零 GLB 請求(返回不得觸發預載)", async ({
+  test("C3: 01 -> 02 -> 01 往返後,步驟 01 仍然沒有任何 3D 資源請求", async ({
     page,
   }) => {
-    const glbRequests = collectGlbRequests(page);
-
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.wallTool();
@@ -188,9 +198,12 @@ test.describe("精密 3D 場景 (步驟 03) - Task 4: 家具模型 asset pipelin
     await editor.clickNextStep();
     await expect.poll(() => editor.sceneGenerated(), { timeout: 15_000 }).toBe(true);
     await editor.clickBackToEdit();
-
     expect(await editor.currentStep()).toBe("edit");
+
+    // 回到步驟 01 之後才開始收集 —— 步驟 02 期間載 GLB 是預期行為,這裡
+    // 要守的是「退回 2D 之後不再有新的 3D 資源請求」。
+    const glbRequests = collectGlbRequests(page);
     await settleForStrayRequests(page);
-    expect(glbRequests, "01 <-> 02 往返不得載入任何 3D 模型").toEqual([]);
+    expect(glbRequests, "回到步驟 01 後仍在請求 3D 資源").toEqual([]);
   });
 });
