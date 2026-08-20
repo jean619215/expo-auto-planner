@@ -306,7 +306,13 @@ test.describe("精密 3D 場景 (步驟 03) - Task 6: 展場家具程序化幾�
     // story 驗收條件是「櫃檯/展示架/講台為**可辨識的**程序化造型」。這件事
     // 沒辦法自動斷言,所以比照 venue-refined-lighting 案例14 / materials T14
     // 留一張截圖:三件家具並排,相機拉到接近視平線的近距離,輪廓才看得出來。
-    test.slow();
+    //
+    // 這支要的是明確的長 timeout,不是 `test.slow()` 的 3 倍(90s)。成本幾乎
+    // 全在下面那 60 個滾輪事件:每一個都會讓 OrbitControls 重繪整個場景,而
+    // 沒有 GPU 的環境(SwiftShader 軟體算圖)一個事件實測要 ~1.4s,光滾輪就
+    // 是 ~83s,整支約 108s —— 90s 一定爆。這不是 flake,是預算本來就不夠,
+    // 只是原本開發機夠快才沒踩到。事件數無法再壓(見下方滾輪迴圈的註解)。
+    test.setTimeout(240_000);
 
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
@@ -338,6 +344,14 @@ test.describe("精密 3D 場景 (步驟 03) - Task 6: 展場家具程序化幾�
 
     // OrbitControls 的滾輪每格只縮一小段,而預設相機距離 target 約 47m、
     // 家具高度只有 1~2m —— 要拉到看得清輪廓需要相當多格。
+    //
+    // 「格數」才是變數,加大 deltaY 沒有用:drei 的 OrbitControls 來自
+    // `three-stdlib`(不是 `three/examples`),它的 `getZoomScale()` 是
+    // `0.95 ^ zoomSpeed`,**完全不看 event.deltaY**。所以 10 格 x -2400 只會
+    // 縮 0.95^10,不等於 60 格 x -400 的 0.95^60。實測換成前者,相機停在約
+    // 28m,家具在畫面上只剩幾個像素 —— 截圖就白拍了。
+    // 47m 縮到 `minDistance={5}` 需要 0.95^n <= 5/47,也就是 n >= 44;60 格
+    // 是留了餘裕,不要為了省時間砍到 44 以下。
     await page.mouse.move(cx, cy);
     for (let i = 0; i < 60; i++) {
       await page.mouse.wheel(0, -400);

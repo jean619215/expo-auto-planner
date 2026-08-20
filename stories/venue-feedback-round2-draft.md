@@ -277,48 +277,81 @@
 
 ---
 
-## 九、暫停點交接(2026-08-19)
+## 九、收尾(2026-08-19,第二次接手後更新)
 
 ### 現況
 
-- 分支 `docs/venue-feedback-round2`,**12 個 commit,全部未 push**,工作樹乾淨。
+- 分支 `claude/work-status-review-wg0mmu`,已 push。round-2 的 12 個 commit
+  之外,再加 2 個測試預算修正(見下)。
 - 10 個 task 皆已實作、驗收、破壞驗證,各自獨立 commit(commit hash 見第三節表格)。
 - `npm run lint` 通過;`npx tsc --noEmit` 通過。
+- **免登入的 25 支 spec 全綠:233/233。**
 
-### 全套測試最後一次結果
+### 上一份交接留下的問題:查清了,但真正的病灶不是那一支
 
-25 支 spec 連跑(排除 5 支需帳密的):**232 通過、1 失敗**。
+上一份寫著「`venue-step2-shapes.spec.ts` 的往返快取檢查在 25 支連跑時失敗,
+推測是 `place()` 沒放上家具」。**推測是錯的,而且那支根本沒問題** —— 重跑
+25 支拿到完整輸出後,它連續兩輪都通過。
 
-失敗的是 `venue-step2-shapes.spec.ts` 的「往返步驟 03 後,模型快取沒有重複建置」。
+真正失敗的是另一批測試,病因是同一個:**重量級 3D 測試的 timeout 預算不夠,
+而這個環境沒有 GPU(SwiftShader 軟體算圖),比原本的開發機慢得多。**
+這類失敗會偽裝成隨機 flake,因為它們的耗時剛好壓在預算邊緣,換一台機器就翻面。
 
-**尚未查清**。已知的事實:
-- 單獨跑該案例:通過(3/3)。
-- 單獨跑整支 spec:通過(2/2)。
-- 與 `venue-refined-acceptance` 一起跑:通過。
-- 只有在 25 支連跑時失敗,耗時 7.4 秒(正常約 12 秒),代表是**前段就失敗**
-  而不是最後的快取斷言不成立 —— 很可能是 `place()` 那一步沒放上家具,
-  也就是同一個既有的 3D 地板點擊時序問題(該檔與 `ai-panel-persistent`
-  都遇過)。**但這是推測,還沒拿到當次的錯誤訊息。**
+| 測試 | 實測耗時 | 原預算 | 處置 |
+|---|---|---|---|
+| `venue-procedural-furniture` P8(截圖) | ~108s(連跑時 126s) | 90s(`test.slow()`) | `test.setTimeout(240_000)` |
+| `venue-refined-lighting` 案例12(三趟往返) | ~33s | 30s(預設) | `test.slow()` → 90s |
+| `venue-refined-lighting` 案例14(截圖) | ~33s | 30s(預設) | `test.slow()` → 90s |
 
-下次接手的第一件事:重跑 25 支並保留完整輸出(不要接 `| grep`,那會讓
-輸出被緩衝到結束才寫出、也丟掉錯誤細節),拿到該次的實際錯誤再判斷。
-若確認是點擊時序,`venue-step2-shapes.spec.ts` 的 `place()` 已經有重試
-迴圈的同類做法可以照抄(見 `venue-step2-delete.spec.ts` 的
-`placeTableInPreview`)。
+後兩支是**漏掛**:結構完全相同的 P6 / P8 / materials T14 早就有 `test.slow()`,
+只有這兩支沒有。四支現在一致了。
 
-### 未做的事(刻意)
+### P8 的兩個查證結果(寫進程式碼註解,避免再被「最佳化」掉)
 
-- **未 push、未開 PR** —— 使用者自行 push。
-- 需帳密的 5 支 spec 未跑(`ai-panel` / `membership-task7-task9` /
-  `points-shop` / `profile-edit-mode` / `site-header`),需要 `.env.playwright.local`。
+1. **成本幾乎全在那 60 個滾輪事件**:每個 wheel 事件都會讓 OrbitControls 重繪
+   整個場景,軟體算圖下一個事件 ~1.4s,光滾輪就 ~83s。
+2. **加大 `deltaY` 換不到事件數的減少**。drei 的 OrbitControls 來自
+   `three-stdlib` 而不是 `three/examples`,它的 `getZoomScale()` 是
+   `0.95 ^ zoomSpeed`,**完全不看 `event.deltaY`**。實測把 60 x -400 換成
+   10 x -2400,相機停在約 28m 而不是 `minDistance` 的 5m,家具在畫面上只剩
+   幾個像素 —— 截圖就白拍了。47m 縮到 5m 需要 n >= 44 格,60 是留餘裕。
+
+   (`three/examples` 那一份**確實**是 `0.95 ^ (zoomSpeed * |delta * 0.01|)`,
+   對 deltaY 成指數 —— 照著它推會得到完全相反的結論。認錯函式庫是這裡唯一的陷阱。)
+
+### 仍未完成的事項(兩項都是環境限制,不是程式問題)
+
+- **需帳密的 5 支 spec 未跑**(`ai-panel` / `membership-task7-task9` /
+  `points-shop` / `profile-edit-mode` / `site-header`)。它們在檔案載入期就會因為
+  缺 `.env.playwright.local` 的 `PW_VERIFIED_EMAIL` / `PW_VERIFIED_PASSWORD`
+  而 throw。有憑證的機器要補跑。
+- **`node scripts/build-venue-models.mjs` 的下載階段未重跑**。`api.polyhaven.com`
+  仍被 egress policy 擋(CONNECT 403,已再次確認),依代理規範不得繞路。
+  下載/轉檔那段自上次成功執行後未曾改動,在有對外網路的機器補跑一次即可。
 - 上傳材質的持久化未做(決議如此,另立 story)。
-- `AGENTS.md` 未更新。本輪新增了幾條值得寫進去的約束,若要補:
+- `AGENTS.md` 未更新 —— 該檔標明「Do not edit manually,需由 scanner 偵測 +
+  人工確認」,所以這裡只列出待補內容,沒有自行改檔:
   - 尺寸標註單位一律公分(顯示層),內部運算維持公尺。
   - 牆高常數住在 `plan.ts`,元件不得自行宣告。
   - 步驟 02 與 03 共用家具幾何(`useNormalizedFurnitureModel`),差別只在材質。
   - 探針回報的必須是場景/GPU 的實際狀態,不能是 prop 的回音。
+  - (本輪新增)重量級 3D 測試要明確編列 timeout 預算;沒有 GPU 的環境慢 3-4 倍,
+    壓在預設 30s 邊緣的測試會偽裝成 flake。
+
+### 這個環境怎麼把測試跑起來(實測可用)
+
+- `npm install`;`cp .env.example .env.local`(`/venue` 不是受保護頁面,
+  不需要真的 Supabase);`npm run dev`。
+- Playwright 要 chromium-1228,容器裡只有 1194。用 `PLAYWRIGHT_BROWSERS_PATH`
+  指到一個自建目錄即可,**但 1228 的 headless shell 換了路徑與檔名**:要建出
+  `chromium_headless_shell-1228/chrome-headless-shell-linux64/chrome-headless-shell`
+  (指向 1194 的 `chrome-linux/headless_shell`)。整個目錄直接做符號連結會失敗。
+- 跑測試要帶 `NO_PROXY=localhost,127.0.0.1`,否則連不到 dev server。
+- 全套約 29 分鐘,**超過單一指令的 10 分鐘上限** —— 分兩批跑或丟到背景,
+  不要接 `| grep`(會讓輸出緩衝到結束才寫出,也丟掉錯誤細節)。
 
 ### 本輪新增的檔案(供快速定位)
+
 
 實作:
 - `src/lib/venue/surfacePresets.ts` — 材質選項(純資料)
