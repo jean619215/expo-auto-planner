@@ -42,7 +42,7 @@ test.describe("Venue Plan Editor - Task 1 acceptance", () => {
     expect(stageSize / ppm).toBeCloseTo(50, 5); // full 50x50m bounds fit exactly
   });
 
-  test("AC2: default 10x10m square floor polygon, roughly centered, with 4 vertex handles", async ({
+  test("AC2: default 3x3m booth floor polygon anchored at (20,20), with 4 vertex handles", async ({
     page,
   }) => {
     const editor = new PlanEditorPage(page);
@@ -55,15 +55,15 @@ test.describe("Venue Plan Editor - Task 1 acceptance", () => {
     const xs = verts.map((v) => v.x).sort((a, b) => a - b);
     const ys = verts.map((v) => v.y).sort((a, b) => a - b);
 
-    // 10m x 10m square.
-    expect(xs[2] - xs[0]).toBeCloseTo(10, 5);
-    expect(ys[2] - ys[0]).toBeCloseTo(10, 5);
+    // 3m x 3m — the most common exhibition booth unit (feedback round 2, R1).
+    expect(xs[2] - xs[0]).toBeCloseTo(3, 5);
+    expect(ys[2] - ys[0]).toBeCloseTo(3, 5);
 
-    // Roughly centered in the 50x50m canvas (centroid near (25,25)).
+    // Anchored at BOOTH_ORIGIN (20,20), so the centroid sits at (21.5,21.5).
     const centroidX = verts.reduce((s, v) => s + v.x, 0) / verts.length;
     const centroidY = verts.reduce((s, v) => s + v.y, 0) / verts.length;
-    expect(centroidX).toBeCloseTo(25, 0);
-    expect(centroidY).toBeCloseTo(25, 0);
+    expect(centroidX).toBeCloseTo(21.5, 5);
+    expect(centroidY).toBeCloseTo(21.5, 5);
   });
 
   test("AC3: dragging a vertex updates its position live, snapped to 0.5m", async ({
@@ -111,16 +111,16 @@ test.describe("Venue Plan Editor - Task 1 acceptance", () => {
 
     expect(await editor.vertexCount()).toBe(4);
 
-    // Right edge runs from (30,20) to (30,30); midpoint (30,25). Click
-    // slightly inside (29.7,25) so the hit lands within the filled polygon
+    // Right edge runs from (23,20) to (23,23); midpoint (23,21.5). Click
+    // slightly inside (22.8,21.5) so the hit lands within the filled polygon
     // (Konva hit-tests the shape's fill), while still within the 0.5m
     // edge-proximity threshold used by findClosestEdge.
-    await editor.doubleClickAt({ x: 29.7, y: 25 });
+    await editor.doubleClickAt({ x: 22.8, y: 21.5 });
 
     expect(await editor.vertexCount()).toBe(5);
     const verts = await editor.vertices();
     const inserted = verts.find(
-      (v) => Math.abs(v.x - 30) < 1e-6 && Math.abs(v.y - 25) < 1e-6,
+      (v) => Math.abs(v.x - 23) < 1e-6 && Math.abs(v.y - 21.5) < 1e-6,
     );
     expect(inserted).toBeTruthy();
   });

@@ -94,8 +94,12 @@ async function placeFurnitureOnStep2(
 /** Draws a wall then advances 01 -> 02, without placing any furniture. */
 async function toStep2WithWall(editor: PlanEditorPage) {
   await editor.navigate();
+  // 見 venue-furniture-models.spec.ts 的同名說明:預設攤位改成 3x3m 之後,
+  // 3D 相機會 fit 到實際地板,下面的像素偏移是按 fit=50 的遠距取景調的。
+  // 開一塊 50x50 的場地把取景距離調回原樣。
+  await editor.applyCustomBoothSize(50, 50);
   await editor.wallTool();
-  await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+  await editor.drawWall({ x: 30, y: 30 }, { x: 35, y: 30 });
   await editor.clickNextStep();
 }
 
@@ -145,11 +149,13 @@ test.describe("精密 3D 場景 (步驟 03) - Task 2: 打光與陰影", () => {
   }) => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
+    // 見 toStep2WithWall 的說明:像素偏移需要固定的相機取景距離。
+    await editor.applyCustomBoothSize(50, 50);
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 30, y: 30 }, { x: 35, y: 30 });
     await editor.columnTool();
-    await editor.placeColumn({ x: 15, y: 15 });
+    await editor.placeColumn({ x: 40, y: 40 });
     await editor.clickNextStep();
 
     await placeFurnitureOnStep2(page, "table");
@@ -408,9 +414,9 @@ test.describe("精密 3D 場景 (步驟 03) - Task 2: 打光與陰影", () => {
     await editor.navigate();
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 30, y: 30 }, { x: 35, y: 30 });
     await editor.columnTool();
-    await editor.placeColumn({ x: 15, y: 15 });
+    await editor.placeColumn({ x: 40, y: 40 });
     await editor.clickNextStep();
 
     await placeFurnitureOnStep2(page, "table");

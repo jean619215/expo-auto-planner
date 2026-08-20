@@ -1,4 +1,4 @@
-import type { Page, Locator } from "@playwright/test";
+import { expect, type Page, type Locator } from "@playwright/test";
 
 export interface PlanPoint {
   x: number;
@@ -126,6 +126,7 @@ export interface MaterialProbeReport {
   floorAlbedo: AlbedoReadback | null;
   floorNormal: NormalReadback | null;
   wallAlbedo: AlbedoReadback | null;
+  columnAlbedo: AlbedoReadback | null;
   floorUvMeterError: number | null;
   wallUvMeterError: number | null;
   liveSurfaceTargets: number | null;
@@ -585,6 +586,224 @@ export class PlanEditorPage {
   async refinedFloorVertexCount(): Promise<number> {
     const raw = await this.refinedScene.getAttribute("data-floor-vertex-count");
     return Number(raw);
+  }
+
+  // --- R2 柱子邊界距離(feedback round 2, T4)---------------------------
+
+  /**
+   * 選取中柱子到場地四邊的距離(公分,整數);未選柱子時為 null。
+   * 量的是柱子邊緣到外接矩形邊界,不是中心到邊界。
+   */
+  async columnOffsetsCm(): Promise<{
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
+  } | null> {
+    const raw = await this.editor.getAttribute("data-column-offsets-cm");
+    return raw ? JSON.parse(raw) : null;
+  }
+
+  /** 場地(地板外接矩形)的總寬高,公分整數。 */
+  async venueSizeCm(): Promise<{ width: number; height: number }> {
+    const raw = await this.editor.getAttribute("data-venue-size-cm");
+    return JSON.parse(raw ?? "null");
+  }
+
+  /** 在柱子定位輸入框填入公分值並送出。 */
+  async setColumnOffset(
+    side: "left" | "right" | "top" | "bottom",
+    cm: number,
+  ) {
+    const input = this.page.getByTestId(`column-offset-${side}-input`);
+    await input.fill(String(cm));
+    await input.press("Enter");
+  }
+
+  // --- R6 步驟 03 材質選擇(feedback round 2, T8)------------------------
+
+  async selectFloorSurface(id: string) {
+    await this.page.getByTestId("surface-floor-select").selectOption(id);
+  }
+
+  async selectWallSurface(id: string) {
+    await this.page.getByTestId("surface-wall-select").selectOption(id);
+  }
+
+  /** 步驟 03 場景實際套用中的地板材質 id。 */
+  async refinedSurfaceFloor(): Promise<string> {
+    return (await this.refinedScene.getAttribute("data-surface-floor")) ?? "";
+  }
+
+  /** 步驟 03 場景實際套用中的牆面材質 id。 */
+  async refinedSurfaceWall(): Promise<string> {
+    return (await this.refinedScene.getAttribute("data-surface-wall")) ?? "";
+  }
+
+  /** 上傳一張材質圖到指定表面。 */
+  async uploadSurfaceImage(
+    surface: "floor" | "wall",
+    name: string,
+    buffer: Buffer,
+    mimeType = "image/png",
+  ) {
+    await this.page
+      .getByTestId(`surface-${surface}-upload`)
+      .setInputFiles({ name, mimeType, buffer });
+  }
+
+  /** 步驟 03 地板材質的來源:"preset" 或 "upload"。 */
+  async refinedSurfaceFloorSource(): Promise<string> {
+    return (
+      (await this.refinedScene.getAttribute("data-surface-floor-source")) ?? ""
+    );
+  }
+
+  /** 存檔快照裡記的材質選擇。 */
+  async planSnapshotSurfaces(): Promise<{ floor: string; wall: string }> {
+    const raw = await this.editor.getAttribute("data-plan-surfaces");
+    return JSON.parse(raw ?? "null");
+  }
+
+  // --- R5 步驟 02 家具外型(feedback round 2, T7)------------------------
+
+  /** 步驟 02 場上各種家具的幾何/材質摘要(探針量的,不是原始碼字面值)。 */
+  async sceneFurnitureShapes(): Promise<
+    {
+      kind: string;
+      partCount: number;
+      triangles: number;
+      hasMap: boolean;
+      hasNormalMap: boolean;
+    }[]
+  > {
+    const raw = await this.scene.getAttribute("data-furniture-shapes");
+    return JSON.parse(raw ?? "[]");
+  }
+
+  /** 步驟 03 專屬程序化材質的累計烘焙次數(步驟 02 應維持 0)。 */
+  async sceneSurfaceBakes(): Promise<number> {
+    return Number(await this.scene.getAttribute("data-surface-bakes"));
+  }
+
+  // --- R1 展位 preset(feedback round 2, T6)-----------------------------
+
+  get boothSizeConfirmDialog(): Locator {
+    return this.page.locator('[data-testid="booth-size-confirm-dialog"]');
+  }
+
+  /** 點 preset 按鈕(可能跳確認,不等待套用)。 */
+  async clickBoothPreset(w: number, h: number) {
+    await this.page.getByTestId(`booth-preset-${w}x${h}`).click();
+  }
+
+  /** 點 preset 並確認已套用(用於場上沒有東西會超出的情境)。 */
+  async applyBoothPreset(w: number, h: number) {
+    await this.clickBoothPreset(w, h);
+    await expect(this.editor).toHaveAttribute(
+      "data-venue-size-cm",
+      JSON.stringify({ width: w * 100, height: h * 100 }),
+    );
+  }
+
+  /** 填自訂長寬並套用。 */
+  async applyCustomBoothSize(w: number, h: number) {
+    await this.page.getByTestId("booth-custom-width-input").fill(String(w));
+    await this.page.getByTestId("booth-custom-height-input").fill(String(h));
+    await this.page.getByTestId("booth-custom-apply").click();
+  }
+
+  /** 確認對話框上顯示的「會超出場地的件數」。 */
+  async boothOutsideCount(): Promise<number> {
+    const raw = await this.boothSizeConfirmDialog.getAttribute(
+      "data-outside-count",
+    );
+    return Number(raw);
+  }
+
+  async acceptBoothSize() {
+    await this.page.getByTestId("booth-size-confirm-accept").click();
+  }
+
+  async cancelBoothSize() {
+    await this.page.getByTestId("booth-size-confirm-cancel").click();
+  }
+
+  // --- R4 步驟 02 刪除(feedback round 2, T2)---------------------------
+  //
+  // 步驟 02 的選取狀態住在 VenueScene 自己身上(3D 內的點選),與步驟 01 的
+  // `selectedType()`(PlanEditor 的 selectedObject)是兩回事 —— 兩者都要能
+  // 讀,才驗得出「進 02 時 01 的選取被清空」。
+
+  /** 步驟 02 場景內目前選取的物件類型(""=未選取)。 */
+  async sceneSelectedType(): Promise<string> {
+    return (await this.scene.getAttribute("data-selected-type")) ?? "";
+  }
+
+  /** 步驟 02 場景內目前選取的物件 id(""=未選取)。 */
+  async sceneSelectedId(): Promise<string> {
+    return (await this.scene.getAttribute("data-selected-id")) ?? "";
+  }
+
+  /** 步驟 02 的刪除鈕。 */
+  get sceneDeleteButton(): Locator {
+    return this.page.locator('[data-testid="scene-delete-button"]');
+  }
+
+  /** 按下步驟 02 的刪除鈕。 */
+  async clickSceneDelete() {
+    await this.sceneDeleteButton.click();
+  }
+
+  // --- R3 牆高(feedback round 2, T1)-----------------------------------
+  //
+  // `wallHeightM()` 是設定值,`sceneWallMeshHeightM()` / `sceneColumnMeshHeightM()`
+  // 是場景探針量到的實際 mesh 高度。兩者要分開讀 —— 只驗設定值的話,把
+  // boxGeometry 的高度寫死也會通過。
+
+  /** 目前的牆高設定值(公尺),讀自步驟 02 的 venue-scene。 */
+  async wallHeightM(): Promise<number> {
+    const raw = await this.scene.getAttribute("data-wall-height-m");
+    return Number(raw);
+  }
+
+  /** 步驟 03 的牆高設定值(公尺)。 */
+  async refinedWallHeightM(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute("data-wall-height-m");
+    return Number(raw);
+  }
+
+  /** 探針量到的第一面牆 mesh 的實際世界高度(公尺);無牆時為 0。 */
+  async sceneWallMeshHeightM(): Promise<number> {
+    const raw = await this.scene.getAttribute("data-wall-mesh-height-m");
+    return Number(raw);
+  }
+
+  /** 探針量到的第一根柱子 mesh 的實際世界高度(公尺);無柱時為 0。 */
+  async sceneColumnMeshHeightM(): Promise<number> {
+    const raw = await this.scene.getAttribute("data-column-mesh-height-m");
+    return Number(raw);
+  }
+
+  /** 步驟 03 探針量到的第一面牆 mesh 的實際世界高度(公尺)。 */
+  async refinedWallMeshHeightM(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute("data-wall-mesh-height-m");
+    return Number(raw);
+  }
+
+  /** 步驟 03 探針量到的第一根柱子 mesh 的實際世界高度(公尺)。 */
+  async refinedColumnMeshHeightM(): Promise<number> {
+    const raw = await this.refinedScene.getAttribute(
+      "data-column-mesh-height-m",
+    );
+    return Number(raw);
+  }
+
+  /** 在步驟 02 設定牆高。輸入後送出,值會被夾到合法範圍。 */
+  async setWallHeight(meters: number) {
+    const input = this.page.locator('[data-testid="wall-height-input"]');
+    await input.fill(String(meters));
+    await input.press("Enter");
   }
 
   // --- venue-refined-3d task 2: lighting/shadow diagnostics ------------

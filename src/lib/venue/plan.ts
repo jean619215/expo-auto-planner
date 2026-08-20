@@ -9,6 +9,10 @@
 // or relocating PlanSnapshot to a components-level file) per
 // architect-plan.md D3: single source of truth for FurnitureItem.
 import type { FurnitureItem } from "./furniture";
+import {
+  DEFAULT_SURFACE_SELECTION,
+  type SurfaceSelection,
+} from "./surfacePresets";
 
 export interface PlanPoint {
   x: number;
@@ -26,12 +30,38 @@ export const MIN_FLOOR_VERTICES = 3;
 export const GRID_MINOR_M = 1;
 export const GRID_MAJOR_M = 5;
 
-export const DEFAULT_FLOOR: FloorPolygon = [
-  { x: 20, y: 20 },
-  { x: 30, y: 20 },
-  { x: 30, y: 30 },
-  { x: 20, y: 30 },
+// 常見展位尺寸(公尺)。回饋:「展場絕大多數的都是 3*3 / 3*6 / 3*9 / 6*6」。
+export const BOOTH_PRESETS: { w: number; h: number }[] = [
+  { w: 3, h: 3 },
+  { w: 3, h: 6 },
+  { w: 3, h: 9 },
+  { w: 6, h: 6 },
 ];
+
+/** 預設攤位尺寸 —— 四種 preset 裡最常見的單位攤位。 */
+export const DEFAULT_BOOTH = BOOTH_PRESETS[0];
+
+/** 攤位左上角在平面座標系中的錨點。換尺寸時固定不動,場地往右下長。 */
+export const BOOTH_ORIGIN: PlanPoint = { x: 20, y: 20 };
+
+/** 以 origin 為左上角的矩形地板。 */
+export function createBoothFloor(
+  widthM: number,
+  heightM: number,
+  origin: PlanPoint = BOOTH_ORIGIN,
+): FloorPolygon {
+  return [
+    { x: origin.x, y: origin.y },
+    { x: origin.x + widthM, y: origin.y },
+    { x: origin.x + widthM, y: origin.y + heightM },
+    { x: origin.x, y: origin.y + heightM },
+  ];
+}
+
+export const DEFAULT_FLOOR: FloorPolygon = createBoothFloor(
+  DEFAULT_BOOTH.w,
+  DEFAULT_BOOTH.h,
+);
 
 function safeNumber(v: number): number {
   return Number.isFinite(v) ? v : 0;
@@ -40,16 +70,9 @@ function safeNumber(v: number): number {
 // Centered square floor sized proportionally to the venue (inset to the
 // [0.4s, 0.6s] band, matching DEFAULT_FLOOR's 20-30 band at s=50), snapped
 // to the 0.5m grid.
-export function createDefaultFloor(sizeM: number = VENUE_SIZE_M): FloorPolygon {
-  const inset = Math.round(sizeM * 0.4 * 2) / 2;
-  const outset = Math.round(sizeM * 0.6 * 2) / 2;
-  return [
-    { x: inset, y: inset },
-    { x: outset, y: inset },
-    { x: outset, y: outset },
-    { x: inset, y: outset },
-  ];
-}
+// createDefaultFloor(以場地尺寸的 40%~60% 取一個置中方形)在展位 preset
+// 之後沒有呼叫端了 —— 預設地板改由 createBoothFloor 產生,錨在
+// BOOTH_ORIGIN 而不是隨場地尺寸浮動。
 
 export function snapToGrid(v: number): number {
   const safe = safeNumber(v);
@@ -179,6 +202,22 @@ export function pxToMeters(
 // --- Wall / column object system (Task 2) ---------------------------------
 
 export const WALL_THICKNESS_M = 0.2;
+
+// --- 牆高(全域一個值,非 per-wall)----------------------------------------
+//
+// 牆與柱共用同一個高度 —— 展場實務上整場牆體是統一高度,所以 `WallSegment`
+// 刻意不加 height 欄位(那會連帶動到存檔格式與 AI 的 add_wall schema)。
+// 使用者回饋:「牆壁通常 4-6 米高」;4-6 是常態不是上限,硬夾在 4-6 會讓
+// 挑高場地做不了,所以範圍開到 2-10、預設落在常態的下緣 4。
+export const DEFAULT_WALL_HEIGHT_M = 4;
+export const MIN_WALL_HEIGHT_M = 2;
+export const MAX_WALL_HEIGHT_M = 10;
+
+/** 把任意輸入(含 NaN / 非數字)夾成合法牆高。非有限數一律回預設值。 */
+export function clampWallHeight(raw: number): number {
+  if (!Number.isFinite(raw)) return DEFAULT_WALL_HEIGHT_M;
+  return Math.min(MAX_WALL_HEIGHT_M, Math.max(MIN_WALL_HEIGHT_M, raw));
+}
 // Default size at creation time only — per-instance `w`/`h` may differ after resize.
 export const COLUMN_SIZE_M = 0.5;
 
@@ -373,8 +412,192 @@ export function resizeColumnCorner(
   return { id: column.id, center: newCenter, w: newWidth, h: newHeight };
 }
 
-export function formatMeters(v: number): string {
-  return `${v.toFixed(1)} m`;
+/**
+ * 尺寸標註字串。依台灣建築圖慣例以**公分**標註,取整數公分。
+ *
+ * 運算單位仍然是公尺 —— 這裡只做顯示層換算。取整是刻意的:平面圖上不需要
+ * 公釐級精度,而 `7.071 m` 這種對角線長度顯示成 `707cm` 比 `707.1cm` 乾淨。
+ */
+export function formatCentimeters(meters: number): string {
+  return `${Math.round(meters * 100)}cm`;
+}
+
+// --- 場地邊界與柱子到邊界的距離(feedback round 2, R2)--------------------
+//
+// 「場地四邊」定義為地板多邊形的**外接矩形**。地板可以是任意多邊形,而
+// 回饋參考圖那種「距左/距右/距上/距下」的標註方式只在矩形上有意義 ——
+// 對凹多邊形去問「距離左邊多遠」沒有單一答案。
+
+export interface FloorBounds {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  widthM: number;
+  heightM: number;
+}
+
+/** 地板多邊形的外接矩形。空多邊形回全 0(呼叫端不必再防 Infinity)。 */
+export function floorBoundsM(polygon: FloorPolygon): FloorBounds {
+  if (polygon.length === 0) {
+    return { minX: 0, maxX: 0, minY: 0, maxY: 0, widthM: 0, heightM: 0 };
+  }
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const vertex of polygon) {
+    minX = Math.min(minX, vertex.x);
+    maxX = Math.max(maxX, vertex.x);
+    minY = Math.min(minY, vertex.y);
+    maxY = Math.max(maxY, vertex.y);
+  }
+  return { minX, maxX, minY, maxY, widthM: maxX - minX, heightM: maxY - minY };
+}
+
+export interface BoundaryOffsets {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+/**
+ * 柱子四邊到場地邊界的距離(公尺)。
+ *
+ * 量的是**邊到邊**:柱子左緣到左邊界,不是中心到左邊界。這個定義的驗證
+ * 方式很直接 —— `left + w + right` 必然等於場地總寬(參考圖上的
+ * 1525 + 150 + 525 = 2200)。中心距的話會多算一個柱寬。
+ *
+ * 柱子可能被擺到地板外(柱子夾制的是 venueSizeM 而非地板多邊形),此時
+ * 對應方向會是負值 —— 不特別處理,負號本身就是「跑出去了」的正確資訊。
+ */
+export function columnBoundaryOffsetsM(
+  column: Column,
+  bounds: FloorBounds,
+): BoundaryOffsets {
+  return {
+    left: column.center.x - column.w / 2 - bounds.minX,
+    right: bounds.maxX - (column.center.x + column.w / 2),
+    top: column.center.y - column.h / 2 - bounds.minY,
+    bottom: bounds.maxY - (column.center.y + column.h / 2),
+  };
+}
+
+export type BoundarySide = "left" | "right" | "top" | "bottom";
+
+/**
+ * 把「柱子某一邊離場地邊界 offsetM 公尺」換算成柱子新的中心點。
+ *
+ * **刻意不吸附**(不經過 snapToGrid):拖曳有 SNAP_M 吸附是為了快,輸入
+ * 框存在的理由正好相反 —— 使用者打 137cm 就是要停在 137cm。兩種行為並存
+ * 是決策,不是疏漏;UI 需要明講「再拖曳一次會回到吸附格線」。
+ *
+ * 值會夾在 [0, 場地邊長 − 柱子邊長],所以柱子不會被輸入推出場地。
+ */
+export function columnCenterForOffsetM(
+  column: Column,
+  bounds: FloorBounds,
+  side: BoundarySide,
+  offsetM: number,
+): PlanPoint {
+  const spanX = Math.max(0, bounds.widthM - column.w);
+  const spanY = Math.max(0, bounds.heightM - column.h);
+  const clamp = (v: number, span: number) => Math.min(span, Math.max(0, v));
+
+  switch (side) {
+    case "left":
+      return {
+        x: bounds.minX + clamp(offsetM, spanX) + column.w / 2,
+        y: column.center.y,
+      };
+    case "right":
+      return {
+        x: bounds.maxX - clamp(offsetM, spanX) - column.w / 2,
+        y: column.center.y,
+      };
+    case "top":
+      return {
+        x: column.center.x,
+        y: bounds.minY + clamp(offsetM, spanY) + column.h / 2,
+      };
+    case "bottom":
+      return {
+        x: column.center.x,
+        y: bounds.maxY - clamp(offsetM, spanY) - column.h / 2,
+      };
+  }
+}
+
+// --- 換展位尺寸時的越界處理(feedback round 2, R1)-----------------------
+//
+// 柱子與家具夾制的基準是 venueSizeM(200),不是地板多邊形 —— 它們本來就
+// 可以擺在地板外。換到較小的展位時,這些東西會落在新場地之外,所以換尺寸
+// 前要先數出有幾件、讓使用者知道代價,確認後才把它們夾回來。
+
+/** 中心點 + 寬高的矩形物件(柱子與家具共用這個形狀)。 */
+interface RectObject {
+  center: PlanPoint;
+  w: number;
+  h: number;
+}
+
+/** 物件的軸對齊外框是否有任何部分超出邊界。 */
+export function isRectOutsideBounds(
+  rect: RectObject,
+  bounds: FloorBounds,
+): boolean {
+  return (
+    rect.center.x - rect.w / 2 < bounds.minX ||
+    rect.center.x + rect.w / 2 > bounds.maxX ||
+    rect.center.y - rect.h / 2 < bounds.minY ||
+    rect.center.y + rect.h / 2 > bounds.maxY
+  );
+}
+
+/**
+ * 把物件中心夾進邊界內。物件比場地還大時,退回置中 —— 夾制無解,置中至少
+ * 是可預期的結果。
+ */
+export function clampRectCenterToBounds(
+  rect: RectObject,
+  bounds: FloorBounds,
+): PlanPoint {
+  const clampAxis = (
+    value: number,
+    half: number,
+    min: number,
+    max: number,
+  ): number => {
+    if (max - min < half * 2) return (min + max) / 2;
+    return Math.min(max - half, Math.max(min + half, value));
+  };
+  return {
+    x: clampAxis(rect.center.x, rect.w / 2, bounds.minX, bounds.maxX),
+    y: clampAxis(rect.center.y, rect.h / 2, bounds.minY, bounds.maxY),
+  };
+}
+
+/** 牆的任一端點是否落在邊界外。 */
+export function isWallOutsideBounds(
+  wall: WallSegment,
+  bounds: FloorBounds,
+): boolean {
+  const outside = (p: PlanPoint) =>
+    p.x < bounds.minX || p.x > bounds.maxX || p.y < bounds.minY || p.y > bounds.maxY;
+  return outside(wall.start) || outside(wall.end);
+}
+
+/** 把牆的端點夾進邊界內。 */
+export function clampWallToBounds(
+  wall: WallSegment,
+  bounds: FloorBounds,
+): WallSegment {
+  const clampPoint = (p: PlanPoint): PlanPoint => ({
+    x: Math.min(bounds.maxX, Math.max(bounds.minX, p.x)),
+    y: Math.min(bounds.maxY, Math.max(bounds.minY, p.y)),
+  });
+  return { id: wall.id, start: clampPoint(wall.start), end: clampPoint(wall.end) };
 }
 
 export function wallLengthM(wall: WallSegment): number {
@@ -404,6 +627,8 @@ export interface PlanSnapshot {
   columns: Column[];
   furniture: FurnitureItem[];
   venueSizeM: number;
+  wallHeightM: number;
+  surfaces: SurfaceSelection;
 }
 
 // 固定欄位順序 stringify — 快照物件永遠以下面的字面量順序組裝,不會出現
@@ -415,14 +640,20 @@ export function serializePlanSnapshot(snapshot: PlanSnapshot): string {
     columns: snapshot.columns,
     furniture: snapshot.furniture,
     venueSizeM: snapshot.venueSizeM,
+    wallHeightM: snapshot.wallHeightM,
+    surfaces: snapshot.surfaces,
   });
 }
 
 // 未存讀過(savedBaseline === null)時的 dirty 判定基準:初始空場地快照。
+// 未存讀過時的 dirty 判定基準,必須與編輯器的初始 state 逐欄位相同 ——
+// 對不上的話一開畫面就被判定為已修改,讀檔會無故彈出「捨棄變更?」。
 export const EMPTY_PLAN_BASELINE = serializePlanSnapshot({
-  polygon: createDefaultFloor(VENUE_SIZE_M),
+  polygon: DEFAULT_FLOOR,
   walls: [],
   columns: [],
   furniture: [],
   venueSizeM: PLAN_AREA_SIZE_M,
+  wallHeightM: DEFAULT_WALL_HEIGHT_M,
+  surfaces: DEFAULT_SURFACE_SELECTION,
 });

@@ -1,6 +1,9 @@
 "use client";
 
 import {
+  Suspense,
+  useCallback,
+  useEffect,
   useRef,
   useState,
   type ComponentRef,
@@ -22,10 +25,14 @@ import {
   RotateCcw,
   PanelLeftClose,
   PanelLeftOpen,
+  Trash2,
 } from "lucide-react";
 import {
+  MAX_WALL_HEIGHT_M,
+  MIN_WALL_HEIGHT_M,
   VENUE_SIZE_M,
   WALL_THICKNESS_M,
+  clampWallHeight,
   translateColumn,
   translateWall,
   wallLengthM,
@@ -44,8 +51,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { segmentClassName } from "./PlanToolbar";
 import { useFloorGeometry } from "./floorGeometry";
-
-const WALL_HEIGHT_M = 3;
+import WhiteboxFurnitureItem from "./whiteboxFurniture";
+import VenueSceneProbe, {
+  VENUE_WALL_NAME,
+  VENUE_COLUMN_NAME,
+  type VenueSceneMeasurements,
+} from "./VenueSceneProbe";
 
 type SelectedId =
   | { type: "wall" | "column" | "furniture"; id: string }
@@ -72,6 +83,16 @@ interface VenueSceneProps {
   // 選填:相機取景/gizmo 尺寸的 fit 基準,與 venueSizeM(ground plane/clamp
   // 用)分離 — 預設回退到 venueSizeM,維持既有呼叫端行為不變。
   viewFitSizeM?: number;
+  /**
+   * 相機取景中心(公尺,平面 XY)。預設 fit/2 —— 場地固定從原點展開時的
+   * 舊行為。展位 preset 之後場地不再從原點起算,相機必須對著攤位中心,
+   * 否則畫面中心會落在地板外(3D 內點地板放家具會全部失效)。
+   */
+  viewCenterM?: { x: number; y: number };
+  /** 全域牆高(公尺)。牆與柱共用,唯一來源是 PlanEditor 的頂層 state。 */
+  wallHeightM: number;
+  /** 使用者在本步驟調整牆高時回寫給 state owner;未給則不顯示調整 UI。 */
+  onWallHeightChange?: (meters: number) => void;
   onSceneChange?: (next: {
     walls: WallSegment[];
     columns: Column[];
@@ -102,9 +123,13 @@ export default function VenueScene({
   furniture,
   venueSizeM = VENUE_SIZE_M,
   viewFitSizeM,
+  viewCenterM,
+  wallHeightM,
+  onWallHeightChange,
   onSceneChange,
 }: VenueSceneProps) {
   const fit = viewFitSizeM ?? venueSizeM;
+  const center = viewCenterM ?? { x: fit / 2, y: fit / 2 };
   const [selectedId, setSelectedId] = useState<SelectedId>(null);
   const [transformMode, setTransformMode] = useState<"translate" | "rotate">(
     "translate",
@@ -114,6 +139,16 @@ export default function VenueScene({
   const selectedMeshRef = useRef<THREE.Object3D | null>(null);
   const dragStartRef = useRef<{ x: number; z: number } | null>(null);
   const orbitRef = useRef<ComponentRef<typeof OrbitControls>>(null);
+  const [measurements, setMeasurements] = useState<VenueSceneMeasurements>({
+    wallHeightM: 0,
+    columnHeightM: 0,
+    furnitureShapes: [],
+    surfaceBakes: 0,
+  });
+  const handleProbeReport = useCallback(
+    (next: VenueSceneMeasurements) => setMeasurements(next),
+    [],
+  );
 
   function resetView() {
     orbitRef.current?.reset();
@@ -123,6 +158,53 @@ export default function VenueScene({
     setSelectedId(next);
     setTransformMode("translate");
   }
+
+  // 步驟 02 的刪除(feedback round 2, T2)。範圍比照步驟 01 的
+  // deleteSelectedObject():選到什麼刪什麼 —— 選取機制三種物件都支援,
+  // 只讓家具可刪會變成「選得到卻刪不掉」。
+  const deleteSelected = useCallback(() => {
+    if (!selectedId) return;
+    setSelectedId(null);
+    selectedMeshRef.current = null;
+    onSceneChange?.({
+      walls:
+        selectedId.type === "wall"
+          ? walls.filter((w) => w.id !== selectedId.id)
+          : walls,
+      columns:
+        selectedId.type === "column"
+          ? columns.filter((c) => c.id !== selectedId.id)
+          : columns,
+      furniture:
+        selectedId.type === "furniture"
+          ? furniture.filter((f) => f.id !== selectedId.id)
+          : furniture,
+    });
+  }, [selectedId, walls, columns, furniture, onSceneChange]);
+
+  // Delete/Backspace 綁在 document 而不是某個容器:3D 的點選發生在 canvas
+  // 上,焦點不一定落在任何可接收鍵盤事件的元素,綁容器會有「選好了卻按不
+  // 動」的空窗。代價是要自己排除輸入中的欄位 —— 否則在牆高輸入框裡按
+  // Backspace 會把場上的家具刪掉。
+  useEffect(() => {
+    if (!selectedId) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      e.preventDefault();
+      deleteSelected();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [selectedId, deleteSelected]);
 
   function handleDragMouseDown() {
     const obj = selectedMeshRef.current;
@@ -208,6 +290,13 @@ export default function VenueScene({
       data-column-mesh-count={columns.length}
       data-furniture-mesh-count={furniture.length}
       data-floor-vertex-count={polygon.length}
+      data-selected-type={selectedId?.type ?? ""}
+      data-selected-id={selectedId?.id ?? ""}
+      data-wall-height-m={wallHeightM}
+      data-wall-mesh-height-m={measurements.wallHeightM}
+      data-column-mesh-height-m={measurements.columnHeightM}
+      data-furniture-shapes={JSON.stringify(measurements.furnitureShapes)}
+      data-surface-bakes={measurements.surfaceBakes}
       className="mt-4 w-full"
     >
       <div className="flex gap-3">
@@ -232,6 +321,36 @@ export default function VenueScene({
           </button>
           {sidebarOpen && (
             <div className="mt-2 flex flex-col gap-3">
+              {onWallHeightChange && (
+                <div className="flex flex-col gap-1.5">
+                  <span className="px-0.5 text-xs font-bold text-muted-foreground">
+                    場地
+                  </span>
+                  <label className="flex items-center gap-1.5 px-0.5 text-xs text-muted-foreground">
+                    牆高
+                    <input
+                      type="number"
+                      data-testid="wall-height-input"
+                      min={MIN_WALL_HEIGHT_M}
+                      max={MAX_WALL_HEIGHT_M}
+                      step={0.5}
+                      defaultValue={wallHeightM}
+                      key={wallHeightM}
+                      onBlur={(e) =>
+                        onWallHeightChange(clampWallHeight(e.target.valueAsNumber))
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter") return;
+                        onWallHeightChange(
+                          clampWallHeight(e.currentTarget.valueAsNumber),
+                        );
+                      }}
+                      className="w-16 rounded border border-stone-300 bg-card px-1 py-0.5 text-right text-foreground"
+                    />
+                    m
+                  </label>
+                </div>
+              )}
               <div className="flex flex-col gap-1.5">
                 <span className="px-0.5 text-xs font-bold text-muted-foreground">
                   家具
@@ -258,11 +377,11 @@ export default function VenueScene({
                   },
                 )}
               </div>
-              {selectedFurniture && (
-                <div className="flex flex-col gap-1.5">
-                  <span className="px-0.5 text-xs font-bold text-muted-foreground">
-                    調整
-                  </span>
+              <div className="flex flex-col gap-1.5">
+                <span className="px-0.5 text-xs font-bold text-muted-foreground">
+                  調整
+                </span>
+                {selectedFurniture && (
                   <div className="inline-flex overflow-hidden rounded-md border-[1.5px] border-blueprint bg-card">
                     <button
                       type="button"
@@ -283,8 +402,20 @@ export default function VenueScene({
                       旋轉
                     </button>
                   </div>
-                </div>
-              )}
+                )}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  data-testid="scene-delete-button"
+                  disabled={!selectionExists}
+                  onClick={deleteSelected}
+                  className="w-full justify-start"
+                >
+                  <Trash2 />
+                  刪除
+                </Button>
+              </div>
             </div>
           )}
         </aside>
@@ -305,7 +436,11 @@ export default function VenueScene({
           <div className="h-[480px] w-full overflow-hidden rounded border border-stone-300 bg-stone-100">
         <Canvas
           camera={{
-            position: [fit * 0.7, fit * 0.9, fit * 0.7],
+            position: [
+              center.x + fit * 0.7,
+              fit * 0.9,
+              center.y + fit * 0.7,
+            ],
             fov: 50,
           }}
         >
@@ -320,8 +455,9 @@ export default function VenueScene({
             maxPolarAngle={Math.PI / 2 - 0.05}
             minDistance={5}
             maxDistance={150}
-            target={[fit / 2, 0, fit / 2]}
+            target={[center.x, 0, center.y]}
           />
+          <VenueSceneProbe onReport={handleProbeReport} />
           <gridHelper
             args={[venueSizeM, venueSizeM]}
             position={[venueSizeM / 2, 0.01, venueSizeM / 2]}
@@ -336,12 +472,13 @@ export default function VenueScene({
             return (
               <mesh
                 key={wall.id}
+                name={VENUE_WALL_NAME}
                 ref={(node) => {
                   if (isSelected) selectedMeshRef.current = node;
                 }}
                 position={[
                   (wall.start.x + wall.end.x) / 2,
-                  WALL_HEIGHT_M / 2,
+                  wallHeightM / 2,
                   (wall.start.y + wall.end.y) / 2,
                 ]}
                 rotation={[0, rotationY, 0]}
@@ -351,7 +488,7 @@ export default function VenueScene({
                 }}
               >
                 <boxGeometry
-                  args={[wallLengthM(wall), WALL_HEIGHT_M, WALL_THICKNESS_M]}
+                  args={[wallLengthM(wall), wallHeightM, WALL_THICKNESS_M]}
                 />
                 <meshStandardMaterial color={isSelected ? "#1F4E79" : "#78350f"} />
               </mesh>
@@ -362,46 +499,40 @@ export default function VenueScene({
             return (
               <mesh
                 key={col.id}
+                name={VENUE_COLUMN_NAME}
                 ref={(node) => {
                   if (isSelected) selectedMeshRef.current = node;
                 }}
-                position={[col.center.x, WALL_HEIGHT_M / 2, col.center.y]}
+                position={[col.center.x, wallHeightM / 2, col.center.y]}
                 onClick={(e) => {
                   e.stopPropagation();
                   selectObject({ type: "column", id: col.id });
                 }}
               >
-                <boxGeometry args={[col.w, WALL_HEIGHT_M, col.h]} />
+                <boxGeometry args={[col.w, wallHeightM, col.h]} />
                 <meshStandardMaterial color={isSelected ? "#1F4E79" : "#78716c"} />
               </mesh>
             );
           })}
+          {/* 家具外型:與步驟 03 共用同一份幾何,材質換成單色。模型是
+              非同步解碼的,所以逐件包 Suspense —— 一件還在解碼不該讓整個
+              場景空白。 */}
           {furniture.map((item) => {
             const isSelected =
               selectedId?.type === "furniture" && selectedId.id === item.id;
-            const defaults = FURNITURE_DEFAULTS[item.kind];
             return (
-              <mesh
-                key={item.id}
-                ref={(node) => {
-                  if (isSelected) selectedMeshRef.current = node;
-                }}
-                position={[
-                  item.center.x,
-                  defaults.height3d / 2,
-                  item.center.y,
-                ]}
-                rotation={[0, (-item.rotationDeg * Math.PI) / 180, 0]}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  selectObject({ type: "furniture", id: item.id });
-                }}
-              >
-                <boxGeometry args={[item.w, defaults.height3d, item.h]} />
-                <meshStandardMaterial
-                  color={isSelected ? "#1F4E79" : defaults.color}
+              <Suspense key={item.id} fallback={null}>
+                <WhiteboxFurnitureItem
+                  item={item}
+                  selected={isSelected}
+                  meshRef={(node) => {
+                    if (isSelected) selectedMeshRef.current = node;
+                  }}
+                  onSelect={() =>
+                    selectObject({ type: "furniture", id: item.id })
+                  }
                 />
-              </mesh>
+              </Suspense>
             );
           })}
           {selectionExists && (

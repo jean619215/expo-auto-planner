@@ -95,6 +95,17 @@ function furnitureInstanceKindFromName(name: string): string | null {
 // furniture items.
 const PROBE_ACTIVE_FRAMES = 120;
 
+// 量測用的 Box3 重複使用 —— 每幀新建是白白製造垃圾。
+const MEASURE_BOX = new THREE.Box3();
+
+/** mesh 的實際世界高度(公尺),四捨五入到 mm;無 mesh 或包圍盒無效時 null。 */
+function measureHeightM(mesh: THREE.Object3D | null): number | null {
+  if (!mesh) return null;
+  const box = MEASURE_BOX.setFromObject(mesh);
+  const height = box.max.y - box.min.y;
+  return Number.isFinite(height) ? Math.round(height * 1000) / 1000 : null;
+}
+
 export interface RefinedDiagnostics {
   lightCount: number;
   shadowCastingLightCount: number;
@@ -109,6 +120,17 @@ export interface RefinedDiagnostics {
   // AC2 真正要斷言的東西。
   shadowCasterWallCount: number;
   shadowCasterColumnCount: number;
+  /**
+   * 第一面牆 / 第一根柱子的**實際**世界高度(公尺),無則為 null。
+   *
+   * 為什麼不用 `data-wall-height-m` 就好:那個屬性是把 prop 印回 DOM,
+   * 幾何就算被寫死成別的值也照樣正確。牆高改成可調之後(feedback round 2
+   * T1),唯一能區分「幾何真的跟著變」與「只是設定值換了個數字」的讀數
+   * 就是這裡量到的包圍盒 —— 破壞驗證時把 h 寫死成 3,靠的就是這兩個數字
+   * 才抓得到。
+   */
+  wallMeshHeightM: number | null;
+  columnMeshHeightM: number | null;
   shadowCasterFurnitureCount: number;
   floorReceivesShadow: boolean;
   floorCastsShadow: boolean;
@@ -204,6 +226,9 @@ export interface MaterialProbeReport {
   // (`#78350f` -> `#d6d3d1`, ~3.5x the linear brightness) previously had no
   // GPU-readback brightness check at all; T5 covered only the floor.
   wallAlbedo: AlbedoReadback | null;
+  /** 柱子 albedo 的全域統計。柱子沒有獨立材質選項,跟隨牆面 —— 這個讀數
+   *  是「跟隨」這件事唯一能被看見的地方(貼圖參數描述不會因為底色而變)。 */
+  columnAlbedo: AlbedoReadback | null;
   floorUvMeterError: number | null;
   wallUvMeterError: number | null;
   liveSurfaceTargets: number | null;
@@ -219,6 +244,7 @@ const NOT_READY_MATERIALS: MaterialProbeReport = {
   floorAlbedo: null,
   floorNormal: null,
   wallAlbedo: null,
+  columnAlbedo: null,
   floorUvMeterError: null,
   wallUvMeterError: null,
   liveSurfaceTargets: null,
@@ -604,10 +630,23 @@ interface RefinedSceneProbeProps {
    * 對外的診斷會停在一份「還沒有家具」的過期快照。
    */
   resetKey: number | string;
+  /**
+   * 材質本身換了才會變的鍵(feedback round 2, T8 的材質選擇)。
+   *
+   * 與 `resetKey` 分開的理由:材質診斷是一次 GPU readback,刻意每次掛載
+   * 只做一次、不進每幀路徑,所以場景編輯(resetKey 變動)不會重算它 ——
+   * 烘焙與場景內容本來就是解耦的。但使用者換材質時,那份快取就過期了,
+   * 不清掉的話回報的會是換之前那一份,看起來像「換材質沒生效」。
+   */
+  materialsKey: string;
   onReport: (diagnostics: RefinedDiagnostics) => void;
 }
 
-export default function RefinedSceneProbe({ resetKey, onReport }: RefinedSceneProbeProps) {
+export default function RefinedSceneProbe({
+  resetKey,
+  materialsKey,
+  onReport,
+}: RefinedSceneProbeProps) {
   const gl = useThree((state) => state.gl);
   const scene = useThree((state) => state.scene);
   const { ready: materialsReady, textureSet } = useSurfaceMaterials();
@@ -617,6 +656,8 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
   // work and does not need to repeat every frame (architect-plan.md Test
   // Plan: "只在首次報告時做一次,不進每幀路徑").
   const materialsCacheRef = useRef<MaterialProbeReport | null>(null);
+  // 上一次量到的地板材質 uuid —— 材質物件換了才代表快取過期。
+  const lastFloorMaterialUuidRef = useRef<string | null>(null);
 
   // `resetKey` changes whenever RefinedScene's geometry props change
   // identity (a new revision) or a furniture model finishes loading — re-arm
@@ -627,6 +668,17 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
   useLayoutEffect(() => {
     frameRef.current = 0;
   }, [resetKey]);
+
+  // 材質選擇換了:重新武裝幀數,讓探針有機會再量一次。
+  //
+  // 這裡**不**清 readback 快取 —— 清快取的時機必須是「材質物件真的換了」,
+  // 而不是「使用者選了別的」。兩者不同步:上傳的圖是非同步載入的,選擇一變
+  // 就清快取的話,探針會在材質還沒換上去的那一幀立刻重算,把**舊**材質再
+  // 快取一次,之後材質真的換了也不會再有人去量它。清快取的判斷在下面的
+  // useFrame 裡,依材質物件的 uuid。
+  useLayoutEffect(() => {
+    frameRef.current = 0;
+  }, [materialsKey]);
 
   useFrame(() => {
     frameRef.current += 1;
@@ -711,6 +763,14 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
     const floor = found.floor;
     const shadowCamera = key ? key.shadow.camera : null;
 
+    const floorMaterialUuid = floor
+      ? (floor.material as THREE.Material).uuid
+      : null;
+    if (lastFloorMaterialUuidRef.current !== floorMaterialUuid) {
+      lastFloorMaterialUuidRef.current = floorMaterialUuid;
+      materialsCacheRef.current = null;
+    }
+
     if (
       !materialsCacheRef.current &&
       materialsReady &&
@@ -732,6 +792,7 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
         floorAlbedo: readFullAlbedoStats(gl, textureSet.floorAlbedoTarget),
         floorNormal: readFullNormalStats(gl, textureSet.floorNormalTarget),
         wallAlbedo: readFullAlbedoStats(gl, textureSet.wallAlbedoTarget),
+        columnAlbedo: readFullAlbedoStats(gl, textureSet.columnAlbedoTarget),
         floorUvMeterError: computeFloorUvMeterError(floor),
         wallUvMeterError: found.wall ? computeWallUvMeterError(found.wall) : null,
         liveSurfaceTargets: stats.liveTargets,
@@ -745,6 +806,8 @@ export default function RefinedSceneProbe({ resetKey, onReport }: RefinedScenePr
       shadowCasterMeshCount,
       shadowCasterWallCount,
       shadowCasterColumnCount,
+      wallMeshHeightM: measureHeightM(found.wall),
+      columnMeshHeightM: measureHeightM(found.column),
       shadowCasterFurnitureCount:
         shadowCasterFurnitureBoxCount +
         [...furnitureInstances.values()].reduce((sum, n) => sum + n, 0),

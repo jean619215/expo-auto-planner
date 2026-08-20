@@ -1,11 +1,14 @@
 "use client";
 
 import { Fragment, useEffect, useRef, useState } from "react";
-import { Circle, Layer, Line, Rect, Stage, Text } from "react-konva";
+import { Arrow, Circle, Layer, Line, Rect, Stage, Text } from "react-konva";
 import type Konva from "konva";
 import { ZoomIn, ZoomOut, Maximize } from "lucide-react";
 import {
+  BOOTH_PRESETS,
+  DEFAULT_BOOTH,
   DEFAULT_FLOOR,
+  DEFAULT_WALL_HEIGHT_M,
   EMPTY_PLAN_BASELINE,
   GRID_MAJOR_M,
   GRID_MINOR_M,
@@ -14,13 +17,23 @@ import {
   VENUE_SIZE_M,
   WALL_THICKNESS_M,
   clampColumnCenter,
+  clampRectCenterToBounds,
+  clampWallHeight,
+  clampWallToBounds,
+  columnBoundaryOffsetsM,
+  columnCenterForOffsetM,
   computePxPerMeter,
+  BOOTH_ORIGIN,
+  createBoothFloor,
   createColumn,
   createObjectId,
   createWall,
   findClosestEdge,
-  formatMeters,
+  floorBoundsM,
+  formatCentimeters,
   insertVertexOnEdge,
+  isRectOutsideBounds,
+  isWallOutsideBounds,
   metersToPx,
   moveVertex,
   moveWallEndpoint,
@@ -32,6 +45,7 @@ import {
   translateColumn,
   translateWall,
   wallLengthM,
+  type BoundarySide,
   type Column,
   type FloorPolygon,
   type PlanPoint,
@@ -58,10 +72,34 @@ import PlanSlotsDialog, {
 import PlanToolbar, { segmentClassName, type EditorMode } from "./PlanToolbar";
 import VenueSceneLoader from "./VenueSceneLoader";
 import RefinedSceneLoader from "./RefinedSceneLoader";
+import {
+  DEFAULT_SURFACE_SELECTION,
+  FLOOR_PRESETS,
+  WALL_PRESETS,
+  floorPreset,
+  wallPreset,
+  type SurfaceSelection,
+} from "@/lib/venue/surfacePresets";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const MIN_STAGE_PX = 320;
 const MAX_STAGE_PX = 800;
+// 尺寸標註的顏色 —— 與圖面本身的藍圖色調刻意區隔,標註不是圖的一部分。
+const DIMENSION_COLOR = "#dc2626";
+
+// 上傳材質圖的大小上限。純前端預覽,沒有後端可以擋,所以這裡就是唯一的關卡。
+const MAX_SURFACE_UPLOAD_BYTES = 8 * 1024 * 1024;
+
 // 預設視圖 fit 尺寸(= VENUE_SIZE_M,與現行預設視覺逐像素一致的關鍵)。
 const DEFAULT_VIEW_SIZE_M = VENUE_SIZE_M;
 // zoom out 到底恰好完整容納 PLAN_AREA_SIZE_M(200)。
@@ -175,6 +213,30 @@ export default function PlanEditor() {
   const [walls, setWalls] = useState<WallSegment[]>([]);
   const [columns, setColumns] = useState<Column[]>([]);
   const [furniture, setFurniture] = useState<FurnitureItem[]>([]);
+  // 全域牆高(公尺)。牆與柱共用,步驟 02 可調、步驟 03 唯讀跟隨 —— 兩個
+  // 場景讀的是這一份,不各自持有,否則 02↔03 會出現不一致的高度。
+  const [wallHeightM, setWallHeightM] = useState(DEFAULT_WALL_HEIGHT_M);
+  // 換展位尺寸的待確認狀態:非 null 表示對話框開著,值就是使用者選的尺寸。
+  const [pendingBoothSize, setPendingBoothSize] = useState<{
+    w: number;
+    h: number;
+  } | null>(null);
+  // 步驟 03 的地板/牆面材質選擇。與牆高同理:state owner 在這裡,場景唯讀。
+  const [surfaces, setSurfaces] = useState<SurfaceSelection>(
+    DEFAULT_SURFACE_SELECTION,
+  );
+  // 使用者上傳的材質圖。刻意只活在瀏覽器裡:blob URL,不進存檔、不上傳
+  // 後端、重整就沒了 —— 這一輪的需求是「上傳材質來預覽」,持久化另立
+  // story(需要新的上傳 API、檔案驗證、RLS 與配額)。
+  const [surfaceUploads, setSurfaceUploads] = useState<{
+    floor: string | null;
+    wall: string | null;
+  }>({ floor: null, wall: null });
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [customBooth, setCustomBooth] = useState({
+    w: String(DEFAULT_BOOTH.w),
+    h: String(DEFAULT_BOOTH.h),
+  });
   const [selectedObject, setSelectedObject] = useState<SelectedObject>(null);
   const [draftWall, setDraftWall] = useState<{
     start: PlanPoint;
@@ -293,7 +355,15 @@ export default function PlanEditor() {
   // --- 存檔 UI(Task 3):快照 / dirty 判定 / 讀檔套用 -----------------------
 
   function getSnapshot(): PlanSnapshot {
-    return { polygon, walls, columns, furniture, venueSizeM: PLAN_AREA_SIZE_M };
+    return {
+      polygon,
+      walls,
+      columns,
+      furniture,
+      venueSizeM: PLAN_AREA_SIZE_M,
+      wallHeightM,
+      surfaces,
+    };
   }
 
   // 序列化比對,不做逐操作 dirty flag(取捨見 architect-plan.md D5)。僅在
@@ -314,16 +384,29 @@ export default function PlanEditor() {
       walls?: WallSegment[];
       columns?: Column[];
       furniture?: FurnitureItem[];
+      wallHeightM?: number;
+      surfaces?: SurfaceSelection;
     };
     const loadedPolygon = rawPlan.polygon ?? DEFAULT_FLOOR;
     const loadedWalls = rawPlan.walls ?? [];
     const loadedColumns = rawPlan.columns ?? [];
     const loadedFurniture = rawPlan.furniture ?? [];
+    // 缺欄位的舊存檔一律回預設牆高 —— 決議是舊檔作廢、不寫遷移,但讀到
+    // 舊檔也不該炸,clampWallHeight 對 undefined 會回 DEFAULT_WALL_HEIGHT_M。
+    const loadedWallHeightM = clampWallHeight(rawPlan.wallHeightM as number);
+    // 缺欄位或存了不存在的 preset id 時,floorPreset/wallPreset 會回第一個
+    // 選項,所以這裡不需要額外的驗證分支。
+    const loadedSurfaces: SurfaceSelection = {
+      floor: floorPreset(rawPlan.surfaces?.floor ?? "").id,
+      wall: wallPreset(rawPlan.surfaces?.wall ?? "").id,
+    };
 
     setPolygon(loadedPolygon);
     setWalls(loadedWalls);
     setColumns(loadedColumns);
     setFurniture(loadedFurniture);
+    setWallHeightM(loadedWallHeightM);
+    setSurfaces(loadedSurfaces);
     setSelectedObject(null);
     setSelectedVertex(null);
 
@@ -340,6 +423,8 @@ export default function PlanEditor() {
         columns: loadedColumns,
         furniture: loadedFurniture,
         venueSizeM: PLAN_AREA_SIZE_M,
+        wallHeightM: loadedWallHeightM,
+        surfaces: loadedSurfaces,
       }),
     );
   }
@@ -443,9 +528,15 @@ export default function PlanEditor() {
     setSceneGenerated(true);
     setGeneration((g) => g + 1);
     setStep("preview");
-    // 進入 Step 2 前清除既有選取,避免殘留的 selectedObject/selectedVertex
-    // 在返回 Step 1 前於 Step 2 內被鍵盤 Delete/Backspace 誤刪(即使
-    // onKeyDown 已改綁定到 step-edit,這裡仍同步清除以求雙重保險)。
+    // 進入 Step 2 前清除既有選取。
+    //
+    // 原本的理由是「防止殘留選取在 Step 2 被鍵盤誤刪」—— 那個前提在
+    // feedback round 2 T2 之後不成立了:Step 2 現在本來就能刪東西,而且
+    // 用的是 VenueScene 自己的選取狀態,不是這裡的 selectedObject。
+    //
+    // 行為保留的是新的理由:跨畫面帶著選取,會讓進到 Step 2 之後第一次
+    // 按 Delete 的目標變得不明確 —— 使用者看到的是 3D 場景,腦中記得的
+    // 卻是 2D 裡選的那個東西。要刪就在 Step 2 重新點一次。
     setSelectedObject(null);
     setSelectedVertex(null);
   }
@@ -914,16 +1005,147 @@ export default function PlanEditor() {
       : null;
 
   const columnLabelText = selectedColumn
-    ? `${selectedColumn.w.toFixed(1)} x ${selectedColumn.h.toFixed(1)} m`
+    ? `${Math.round(selectedColumn.w * 100)} × ${Math.round(selectedColumn.h * 100)}cm`
     : "";
 
   const wallLabelText = selectedWall
-    ? formatMeters(wallLengthM(selectedWall))
+    ? formatCentimeters(wallLengthM(selectedWall))
     : "";
+
+  // 場地邊界(地板外接矩形)與選取柱子到四邊的距離。顯示層一律公分整數,
+  // 運算仍是公尺。
+  const floorBounds = floorBoundsM(polygon);
+  const venueSizeCm = {
+    width: Math.round(floorBounds.widthM * 100),
+    height: Math.round(floorBounds.heightM * 100),
+  };
+  const columnOffsetsM = selectedColumn
+    ? columnBoundaryOffsetsM(selectedColumn, floorBounds)
+    : null;
+  const columnOffsetsCm = columnOffsetsM
+    ? {
+        left: Math.round(columnOffsetsM.left * 100),
+        right: Math.round(columnOffsetsM.right * 100),
+        top: Math.round(columnOffsetsM.top * 100),
+        bottom: Math.round(columnOffsetsM.bottom * 100),
+      }
+    : null;
+
+  // --- R1 展位尺寸 -------------------------------------------------------
+  //
+  // 換尺寸會把地板換成以 BOOTH_ORIGIN 為左上角的矩形。原本擺在外圍的柱子/
+  // 家具/牆會落到新場地外,所以先數出件數;有東西會被搬動就先問過使用者,
+  // 沒有就直接套用(不為了「一致」而多一個沒有資訊量的對話框)。
+  function outsideCountFor(widthM: number, heightM: number): number {
+    const nextBounds = floorBoundsM(createBoothFloor(widthM, heightM));
+    return (
+      columns.filter((c) => isRectOutsideBounds(c, nextBounds)).length +
+      furniture.filter((f) => isRectOutsideBounds(f, nextBounds)).length +
+      walls.filter((w) => isWallOutsideBounds(w, nextBounds)).length
+    );
+  }
+
+  function applyBoothSize(widthM: number, heightM: number) {
+    const nextPolygon = createBoothFloor(widthM, heightM);
+    const nextBounds = floorBoundsM(nextPolygon);
+
+    setPolygon(nextPolygon);
+    setColumns((prev) =>
+      prev.map((c) => ({ ...c, center: clampRectCenterToBounds(c, nextBounds) })),
+    );
+    setFurniture((prev) =>
+      prev.map((f) => ({ ...f, center: clampRectCenterToBounds(f, nextBounds) })),
+    );
+    setWalls((prev) => prev.map((w) => clampWallToBounds(w, nextBounds)));
+    setSelectedVertex(null);
+    fitViewTo(widthM, heightM);
+  }
+
+  /** 把視圖縮放/平移到剛好框住新場地(留一成邊距)。 */
+  function fitViewTo(widthM: number, heightM: number) {
+    const longest = Math.max(widthM, heightM);
+    if (!(longest > 0)) return;
+    const rawScale = (stagePx * 0.9) / (longest * pxPerMeter);
+    const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, rawScale));
+    const centerPx = metersToPx(
+      { x: BOOTH_ORIGIN.x + widthM / 2, y: BOOTH_ORIGIN.y + heightM / 2 },
+      pxPerMeter,
+    );
+    setView({
+      scale,
+      x: stagePx / 2 - centerPx.x * scale,
+      y: stagePx / 2 - centerPx.y * scale,
+    });
+  }
+
+  function requestBoothSize(widthM: number, heightM: number) {
+    if (!(widthM > 0) || !(heightM > 0)) return;
+    if (outsideCountFor(widthM, heightM) > 0) {
+      setPendingBoothSize({ w: widthM, h: heightM });
+      return;
+    }
+    applyBoothSize(widthM, heightM);
+  }
+
+  // R6:上傳材質圖。只接受圖片、只接受 8MB 以內 —— 兩者都在前端擋下,
+  // 因為這條路徑根本不碰後端,沒有第二道關卡可以依賴。
+  function handleSurfaceUpload(surface: "floor" | "wall", file: File | null) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setUploadError("只接受圖片檔");
+      return;
+    }
+    if (file.size > MAX_SURFACE_UPLOAD_BYTES) {
+      setUploadError("圖片超過 8MB");
+      return;
+    }
+    setUploadError(null);
+    setSurfaceUploads((prev) => {
+      // 換掉舊的就把舊的 blob URL 釋放,否則整個 session 會一直累積。
+      if (prev[surface]) URL.revokeObjectURL(prev[surface]!);
+      return { ...prev, [surface]: URL.createObjectURL(file) };
+    });
+  }
+
+  function clearSurfaceUpload(surface: "floor" | "wall") {
+    setSurfaceUploads((prev) => {
+      if (prev[surface]) URL.revokeObjectURL(prev[surface]!);
+      return { ...prev, [surface]: null };
+    });
+  }
+
+  // R2:用輸入的公分值精確定位柱子。負值與非數字直接拒絕(柱子不動),
+  // 其餘由 columnCenterForOffsetM 夾在場地內。
+  function setColumnOffsetCm(side: BoundarySide, cm: number) {
+    if (!selectedColumn) return;
+    if (!Number.isFinite(cm) || cm < 0) return;
+    const nextCenter = columnCenterForOffsetM(
+      selectedColumn,
+      floorBounds,
+      side,
+      cm / 100,
+    );
+    setColumns((prev) =>
+      prev.map((c) =>
+        c.id === selectedColumn.id ? { ...c, center: nextCenter } : c,
+      ),
+    );
+  }
+
+  // 3D 場景的取景基準:對著實際地板,而不是固定的 50m 原點視角。展位
+  // preset 之後地板不再從原點展開,沿用舊的 fit/2 會讓畫面中心落在地板外
+  // ——「在 3D 內點地板放家具」會整個失效。
+  const sceneFit = {
+    sizeM: Math.max(4, floorBounds.widthM, floorBounds.heightM),
+    center: {
+      x: (floorBounds.minX + floorBounds.maxX) / 2,
+      y: (floorBounds.minY + floorBounds.maxY) / 2,
+    },
+  };
 
   const edgeLabelTexts = polygon.map((vertex, i) => {
     const next = polygon[(i + 1) % polygon.length];
-    return formatMeters(Math.hypot(next.x - vertex.x, next.y - vertex.y));
+    return formatCentimeters(Math.hypot(next.x - vertex.x, next.y - vertex.y));
   });
 
   const floorCentroidPx = metersToPx(
@@ -952,6 +1174,11 @@ export default function PlanEditor() {
       data-column-label={columnLabelText}
       data-wall-label={wallLabelText}
       data-edge-labels={JSON.stringify(edgeLabelTexts)}
+      data-venue-size-cm={JSON.stringify(venueSizeCm)}
+      data-plan-surfaces={JSON.stringify(surfaces)}
+      data-column-offsets-cm={
+        columnOffsetsCm ? JSON.stringify(columnOffsetsCm) : undefined
+      }
       data-scene-generated={sceneGenerated}
       data-generation={generation}
       data-step={step}
@@ -1044,6 +1271,119 @@ export default function PlanEditor() {
                     下一步
                   </Button>
                 </div>
+                <div
+                  data-testid="booth-size-bar"
+                  className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-stone-300 bg-card px-2 py-1.5 text-xs"
+                >
+                  <span className="font-bold text-muted-foreground">
+                    展位尺寸
+                  </span>
+                  {BOOTH_PRESETS.map((preset) => (
+                    <Button
+                      key={`${preset.w}x${preset.h}`}
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      data-testid={`booth-preset-${preset.w}x${preset.h}`}
+                      onClick={() => requestBoothSize(preset.w, preset.h)}
+                      className="h-7 px-2"
+                    >
+                      {preset.w}×{preset.h}m
+                    </Button>
+                  ))}
+                  <label className="flex items-center gap-1 text-muted-foreground">
+                    自訂
+                    <input
+                      type="number"
+                      data-testid="booth-custom-width-input"
+                      min={1}
+                      step={0.5}
+                      value={customBooth.w}
+                      onChange={(e) =>
+                        setCustomBooth((prev) => ({ ...prev, w: e.target.value }))
+                      }
+                      className="w-14 rounded border border-stone-300 bg-card px-1 py-0.5 text-right text-foreground"
+                    />
+                    ×
+                    <input
+                      type="number"
+                      data-testid="booth-custom-height-input"
+                      min={1}
+                      step={0.5}
+                      value={customBooth.h}
+                      onChange={(e) =>
+                        setCustomBooth((prev) => ({ ...prev, h: e.target.value }))
+                      }
+                      className="w-14 rounded border border-stone-300 bg-card px-1 py-0.5 text-right text-foreground"
+                    />
+                    m
+                  </label>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    data-testid="booth-custom-apply"
+                    onClick={() =>
+                      requestBoothSize(
+                        Number(customBooth.w),
+                        Number(customBooth.h),
+                      )
+                    }
+                    className="h-7 px-2"
+                  >
+                    套用
+                  </Button>
+                </div>
+                {selectedColumn && columnOffsetsCm && (
+                  <div
+                    data-testid="column-offset-panel"
+                    className="mb-2 flex flex-wrap items-center gap-2 rounded-md border border-stone-300 bg-card px-2 py-1.5 text-xs"
+                  >
+                    <span className="font-bold text-muted-foreground">
+                      柱子定位
+                    </span>
+                    {(
+                      [
+                        ["left", "左"],
+                        ["right", "右"],
+                        ["top", "上"],
+                        ["bottom", "下"],
+                      ] as [BoundarySide, string][]
+                    ).map(([side, label]) => (
+                      <label
+                        key={side}
+                        className="flex items-center gap-1 text-muted-foreground"
+                      >
+                        {label}
+                        <input
+                          type="number"
+                          data-testid={`column-offset-${side}-input`}
+                          min={0}
+                          step={1}
+                          // key 綁目前值:拖曳或改另一邊之後,輸入框要跟著
+                          // 更新成新的實際距離,而不是留著使用者上次打的字。
+                          key={`${selectedColumn.id}-${side}-${columnOffsetsCm[side]}`}
+                          defaultValue={columnOffsetsCm[side]}
+                          onBlur={(e) =>
+                            setColumnOffsetCm(side, e.target.valueAsNumber)
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key !== "Enter") return;
+                            setColumnOffsetCm(side, e.currentTarget.valueAsNumber);
+                          }}
+                          className="w-20 rounded border border-stone-300 bg-card px-1 py-0.5 text-right text-foreground"
+                        />
+                        cm
+                      </label>
+                    ))}
+                    <span
+                      data-testid="column-offset-hint"
+                      className="text-muted-foreground"
+                    >
+                      輸入值不受 50cm 吸附限制;之後拖曳以 50cm 為單位移動,會保留這個尾數
+                    </span>
+                  </div>
+                )}
                 <Stage
                   width={stagePx}
                   height={stagePx}
@@ -1461,6 +1801,141 @@ export default function PlanEditor() {
                           />
                         );
                       })()}
+                    {/* R2:選取柱子時,標出柱子四邊到場地邊界的距離,
+                        外加場地總寬高。紅色雙箭頭 + 公分數字,比照回饋
+                        附的參考圖。全部 listening={false} —— 這是唯讀
+                        標註,不能攔截點擊。 */}
+                    {selectedColumn &&
+                      columnOffsetsCm &&
+                      (() => {
+                        const min = metersToPx(
+                          { x: floorBounds.minX, y: floorBounds.minY },
+                          pxPerMeter,
+                        );
+                        const max = metersToPx(
+                          { x: floorBounds.maxX, y: floorBounds.maxY },
+                          pxPerMeter,
+                        );
+                        const center = metersToPx(
+                          selectedColumn.center,
+                          pxPerMeter,
+                        );
+                        const halfW = (selectedColumn.w * pxPerMeter) / 2;
+                        const halfH = (selectedColumn.h * pxPerMeter) / 2;
+                        const dims: {
+                          key: string;
+                          points: number[];
+                          text: string;
+                          labelX: number;
+                          labelY: number;
+                        }[] = [
+                          {
+                            key: "left",
+                            points: [min.x, center.y, center.x - halfW, center.y],
+                            text: `${columnOffsetsCm.left}cm`,
+                            labelX: (min.x + center.x - halfW) / 2,
+                            labelY: center.y - 14,
+                          },
+                          {
+                            key: "right",
+                            points: [center.x + halfW, center.y, max.x, center.y],
+                            text: `${columnOffsetsCm.right}cm`,
+                            labelX: (center.x + halfW + max.x) / 2,
+                            labelY: center.y - 14,
+                          },
+                          {
+                            key: "top",
+                            points: [center.x, min.y, center.x, center.y - halfH],
+                            text: `${columnOffsetsCm.top}cm`,
+                            labelX: center.x + 4,
+                            labelY: (min.y + center.y - halfH) / 2,
+                          },
+                          {
+                            key: "bottom",
+                            points: [center.x, center.y + halfH, center.x, max.y],
+                            text: `${columnOffsetsCm.bottom}cm`,
+                            labelX: center.x + 4,
+                            labelY: (center.y + halfH + max.y) / 2,
+                          },
+                        ];
+                        return (
+                          <Fragment>
+                            {dims.map((dim) => (
+                              <Fragment key={dim.key}>
+                                <Arrow
+                                  listening={false}
+                                  points={dim.points}
+                                  pointerAtBeginning
+                                  pointerLength={5}
+                                  pointerWidth={5}
+                                  stroke={DIMENSION_COLOR}
+                                  fill={DIMENSION_COLOR}
+                                  strokeWidth={1}
+                                />
+                                <Text
+                                  listening={false}
+                                  x={dim.labelX}
+                                  y={dim.labelY}
+                                  text={dim.text}
+                                  fontSize={11}
+                                  fill={DIMENSION_COLOR}
+                                />
+                              </Fragment>
+                            ))}
+                          </Fragment>
+                        );
+                      })()}
+                    {/* 場地總寬高:恆顯示,畫在地板外接矩形之外一段距離。 */}
+                    {(() => {
+                      const min = metersToPx(
+                        { x: floorBounds.minX, y: floorBounds.minY },
+                        pxPerMeter,
+                      );
+                      const max = metersToPx(
+                        { x: floorBounds.maxX, y: floorBounds.maxY },
+                        pxPerMeter,
+                      );
+                      return (
+                        <Fragment>
+                          <Arrow
+                            listening={false}
+                            points={[min.x, min.y - 18, max.x, min.y - 18]}
+                            pointerAtBeginning
+                            pointerLength={5}
+                            pointerWidth={5}
+                            stroke={DIMENSION_COLOR}
+                            fill={DIMENSION_COLOR}
+                            strokeWidth={1}
+                          />
+                          <Text
+                            listening={false}
+                            x={(min.x + max.x) / 2}
+                            y={min.y - 32}
+                            text={`${venueSizeCm.width}cm`}
+                            fontSize={11}
+                            fill={DIMENSION_COLOR}
+                          />
+                          <Arrow
+                            listening={false}
+                            points={[max.x + 18, min.y, max.x + 18, max.y]}
+                            pointerAtBeginning
+                            pointerLength={5}
+                            pointerWidth={5}
+                            stroke={DIMENSION_COLOR}
+                            fill={DIMENSION_COLOR}
+                            strokeWidth={1}
+                          />
+                          <Text
+                            listening={false}
+                            x={max.x + 22}
+                            y={(min.y + max.y) / 2}
+                            text={`${venueSizeCm.height}cm`}
+                            fontSize={11}
+                            fill={DIMENSION_COLOR}
+                          />
+                        </Fragment>
+                      );
+                    })()}
                     {wallLabelText &&
                       selectedWall &&
                       (() => {
@@ -1573,7 +2048,10 @@ export default function PlanEditor() {
                 columns={columns}
                 furniture={furniture}
                 venueSizeM={PLAN_AREA_SIZE_M}
-                viewFitSizeM={VENUE_SIZE_M}
+                viewFitSizeM={sceneFit.sizeM}
+                viewCenterM={sceneFit.center}
+                wallHeightM={wallHeightM}
+                onWallHeightChange={setWallHeightM}
                 onSceneChange={handleSceneChange}
               />
             </div>
@@ -1589,13 +2067,95 @@ export default function PlanEditor() {
               >
                 上一步
               </Button>
+              <div
+                data-testid="surface-picker"
+                className="mb-2 flex flex-wrap items-center gap-3 rounded-md border border-stone-300 bg-card px-2 py-1.5 text-xs"
+              >
+                <label className="flex items-center gap-1 text-muted-foreground">
+                  地板
+                  <select
+                    data-testid="surface-floor-select"
+                    value={surfaces.floor}
+                    onChange={(e) =>
+                      setSurfaces((prev) => ({ ...prev, floor: e.target.value }))
+                    }
+                    className="rounded border border-stone-300 bg-card px-1 py-0.5 text-foreground"
+                  >
+                    {FLOOR_PRESETS.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex items-center gap-1 text-muted-foreground">
+                  牆面
+                  <select
+                    data-testid="surface-wall-select"
+                    value={surfaces.wall}
+                    onChange={(e) =>
+                      setSurfaces((prev) => ({ ...prev, wall: e.target.value }))
+                    }
+                    className="rounded border border-stone-300 bg-card px-1 py-0.5 text-foreground"
+                  >
+                    {WALL_PRESETS.map((preset) => (
+                      <option key={preset.id} value={preset.id}>
+                        {preset.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {(["floor", "wall"] as const).map((surface) => (
+                  <label
+                    key={surface}
+                    className="flex items-center gap-1 text-muted-foreground"
+                  >
+                    {surface === "floor" ? "自訂地板圖" : "自訂牆面圖"}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      data-testid={`surface-${surface}-upload`}
+                      onChange={(e) =>
+                        handleSurfaceUpload(surface, e.target.files?.[0] ?? null)
+                      }
+                      className="w-40 text-[11px]"
+                    />
+                    {surfaceUploads[surface] && (
+                      <button
+                        type="button"
+                        data-testid={`surface-${surface}-upload-clear`}
+                        onClick={() => clearSurfaceUpload(surface)}
+                        className="rounded border border-stone-300 px-1"
+                      >
+                        清除
+                      </button>
+                    )}
+                  </label>
+                ))}
+                {uploadError && (
+                  <span
+                    role="alert"
+                    data-testid="surface-upload-error"
+                    className="text-destructive"
+                  >
+                    {uploadError}
+                  </span>
+                )}
+                <span className="text-muted-foreground">
+                  柱子跟隨牆面材質;上傳的圖只當顏色用,不產生凹凸
+                </span>
+              </div>
               <RefinedSceneLoader
                 polygon={polygon}
                 walls={walls}
                 columns={columns}
                 furniture={furniture}
                 venueSizeM={PLAN_AREA_SIZE_M}
-                viewFitSizeM={VENUE_SIZE_M}
+                viewFitSizeM={sceneFit.sizeM}
+                viewCenterM={sceneFit.center}
+                surfaces={surfaces}
+                surfaceUploads={surfaceUploads}
+                wallHeightM={wallHeightM}
               />
             </div>
           )}
@@ -1625,6 +2185,50 @@ export default function PlanEditor() {
         onSaved={handleSlotSaved}
         onDeleted={handleSlotDeleted}
       />
+
+      {/* R1:換展位尺寸前的確認。只在真的有東西會被搬動時才出現 —— 沒有
+          越界物件就直接套用,不為了「一致」而多一個沒有資訊量的對話框。 */}
+      <AlertDialog
+        open={pendingBoothSize !== null}
+        onOpenChange={(next) => {
+          if (!next) setPendingBoothSize(null);
+        }}
+      >
+        <AlertDialogContent
+          data-testid="booth-size-confirm-dialog"
+          data-outside-count={
+            pendingBoothSize
+              ? outsideCountFor(pendingBoothSize.w, pendingBoothSize.h)
+              : 0
+          }
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle>更換展位尺寸?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingBoothSize &&
+                `場地將改為 ${pendingBoothSize.w} × ${pendingBoothSize.h} 公尺。目前有 ${outsideCountFor(
+                  pendingBoothSize.w,
+                  pendingBoothSize.h,
+                )} 件物件會落在新場地外,將被移到場地邊界內。`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="booth-size-confirm-cancel">
+              取消
+            </AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="booth-size-confirm-accept"
+              onClick={() => {
+                if (!pendingBoothSize) return;
+                applyBoothSize(pendingBoothSize.w, pendingBoothSize.h);
+                setPendingBoothSize(null);
+              }}
+            >
+              更換
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

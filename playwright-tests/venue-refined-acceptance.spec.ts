@@ -104,6 +104,11 @@ const NINE_SPOTS = [
 
 async function toStep2(editor: PlanEditorPage) {
   await editor.navigate();
+  // 預設攤位在 feedback round 2 之後是 3x3m,而 3D 相機現在會 fit 到實際
+  // 地板 —— 下面那些像素偏移是按「fit=50 的遠距取景」調出來的,場地一小,
+  // 同樣的像素對應的世界距離就變小,家具會互相擋住彼此的點擊。開一塊
+  // 50x50 的場地把取景距離調回原樣,這些偏移才維持原本的語意。
+  await editor.applyCustomBoothSize(50, 50);
   await editor.clickNextStep();
 }
 
@@ -295,8 +300,13 @@ test.describe("精密 3D 場景 (步驟 03) - Task 7: 效能與驗收", () => {
     await toStep2(editor);
     await placeAllNine(page, editor);
 
-    // 驗收條件 7 的前半:在步驟 02 停留時完全不碰步驟 03 的資源。
-    expect(glbRequests, "步驟 02 不得載入任何 GLB").toEqual([]);
+    // 驗收條件 7 的前半原本是「步驟 02 完全不碰 GLB」。feedback round 2 的
+    // R5 推翻了那條 —— 步驟 02 現在也要顯示家具輪廓,幾何就在 GLB 裡。
+    // 改守真正剩下的規定:步驟 02 不烘焙步驟 03 專屬的地板/牆材質。
+    expect(
+      await editor.sceneSurfaceBakes(),
+      "步驟 02 烘焙了步驟 03 專屬的表面材質",
+    ).toBe(0);
 
     await editor.goToRefined();
     await waitForRefinedReady(editor);

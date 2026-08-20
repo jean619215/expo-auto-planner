@@ -138,6 +138,28 @@ function normalizeModel(
   };
 }
 
+/**
+ * 取得某個 kind 正規化後的幾何(依 kind 快取,見 furnitureModelStats.ts)。
+ *
+ * 步驟 02 的白模輪廓與步驟 03 的精細場景共用這個 hook —— 兩邊畫的是**同一
+ * 份**幾何,差別只在材質:03 用 GLB 自帶的 PBR 材質,02 用單色。共用而不是
+ * 各算一份,是「02 與 03 的家具外型必然一致」這件事的來源。
+ */
+export function useNormalizedFurnitureModel(
+  kind: FurnitureKind,
+  url: string,
+  rotationY: number
+): { parts: FurnitureModelPart[]; report: FurnitureModelReport } {
+  const gltf = useGLTF(url, DRACO_DECODER_PATH);
+  return useMemo(
+    () =>
+      getOrBuildNormalizedModel(kind, () =>
+        normalizeModel(gltf.scene, kind, rotationY)
+      ),
+    [gltf.scene, kind, rotationY]
+  );
+}
+
 interface FurnitureKindGroupProps {
   kind: FurnitureKind;
   url: string;
@@ -154,21 +176,11 @@ function FurnitureKindGroup({
   onReport,
 }: FurnitureKindGroupProps) {
   // useGLTF 會 suspend,所以這個元件一定被包在 <Suspense> 裡。
-  const gltf = useGLTF(url, DRACO_DECODER_PATH);
-
+  //
   // 依 kind 快取,不是每次掛載各自算一份。理由(StrictMode 雙重建置、
   // 96k 面植栽每趟往返重 clone)寫在 furnitureModelStats.ts 的檔頭。
-  //
-  // 快取本身就是這些 geometry 的擁有者,所以這裡**沒有** dispose ——
-  // 上限是「有 GLB 的 kind 數 x 每個 GLB 的 mesh 數」,不隨使用增長,
-  // 與 GLB 原始資源歸 useGLTF 模組層快取管的規則一致。
-  const { parts, report } = useMemo(
-    () =>
-      getOrBuildNormalizedModel(kind, () =>
-        normalizeModel(gltf.scene, kind, rotationY)
-      ),
-    [gltf.scene, kind, rotationY]
-  );
+  // 快取本身就是這些 geometry 的擁有者,所以這裡**沒有** dispose。
+  const { parts, report } = useNormalizedFurnitureModel(kind, url, rotationY);
 
   const reportedRef = useRef<string>("");
   useEffect(() => {

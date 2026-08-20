@@ -1,0 +1,122 @@
+"use client";
+
+// 步驟 02 白模場景的內部探針(feedback round 2, T1)。
+//
+// 存在理由與 RefinedSceneProbe 相同:牆高改成可調之後,「設定值有沒有生效」
+// 不能靠把 prop 印回 DOM 來驗 —— 那種屬性即使 boxGeometry 的高度被寫死成
+// 3 也照樣是對的。這裡量的是**場景圖裡實際 mesh 的世界包圍盒**,是唯一能
+// 區分「幾何真的變高了」與「只是設定值換了個數字」的讀數。
+//
+// 只量第一面牆與第一根柱子:牆高是全域值,全部 mesh 必然同高,量一個就夠。
+
+import { useRef } from "react";
+import * as THREE from "three";
+import { useFrame, useThree } from "@react-three/fiber";
+import { getSurfaceTextureStats } from "./surfaceTextures";
+
+/** 牆/柱 mesh 用這些名字標記自己,探針才找得到(見 VenueScene.tsx)。 */
+export const VENUE_WALL_NAME = "venue-wall";
+export const VENUE_COLUMN_NAME = "venue-column";
+
+/** 家具 mesh 的命名前綴(見 whiteboxFurniture.tsx)。 */
+export const FURNITURE_NAME_PREFIX = "venue-furniture-";
+
+/** geometry 的三角面數(index 優先,否則用頂點數)。 */
+function triangleCount(geometry: THREE.BufferGeometry): number {
+  const index = geometry.getIndex();
+  if (index) return index.count / 3;
+  const position = geometry.getAttribute("position");
+  return position ? position.count / 3 : 0;
+}
+
+/** 場上某一種家具的實際幾何/材質摘要。 */
+export interface WhiteboxFurnitureShape {
+  kind: string;
+  /** 這個 kind 被拆成幾個零件 mesh。 */
+  partCount: number;
+  /** 零件三角面數總和。單一 box 是 12,所以 >12 就證明不是方塊了。 */
+  triangles: number;
+  /** 材質上有沒有掛貼圖 —— 步驟 02 的規定是「有形狀、沒貼圖」。 */
+  hasMap: boolean;
+  hasNormalMap: boolean;
+}
+
+export interface VenueSceneMeasurements {
+  /** 第一面牆 mesh 的實際世界高度(公尺);場上無牆時為 0。 */
+  wallHeightM: number;
+  /** 第一根柱子 mesh 的實際世界高度(公尺);場上無柱時為 0。 */
+  columnHeightM: number;
+  /** 場上各種家具的幾何/材質摘要,依 kind 排序。 */
+  furnitureShapes: WhiteboxFurnitureShape[];
+  /**
+   * 步驟 03 專屬的地板/牆程序化材質累計烘焙次數。
+   *
+   * 步驟 02 現在會載入 GLB(貼圖嵌在檔案裡,擋不掉也不需要擋),所以
+   * 「步驟 02 不載入步驟 03 專用資源」這條規定的實質內容改成兩件事:
+   * 家具材質上沒有貼圖(見 hasMap),以及這個數字維持 0。
+   */
+  surfaceBakes: number;
+}
+
+interface VenueSceneProbeProps {
+  onReport: (measurements: VenueSceneMeasurements) => void;
+}
+
+export default function VenueSceneProbe({ onReport }: VenueSceneProbeProps) {
+  const { scene } = useThree();
+  // Box3 重複使用 —— 每幀都 new 一個是白白製造垃圾(AGENTS.md:不在 render
+  // 期間新建物件)。
+  const boxRef = useRef(new THREE.Box3());
+  const lastRef = useRef<string>("");
+
+  useFrame(() => {
+    const measure = (name: string): number => {
+      const node = scene.getObjectByName(name);
+      if (!node) return 0;
+      const box = boxRef.current.setFromObject(node);
+      const height = box.max.y - box.min.y;
+      // 幾何尚未上傳/包圍盒為空時 Box3 會是 -Infinity..Infinity。
+      return Number.isFinite(height) ? Math.round(height * 1000) / 1000 : 0;
+    };
+
+    const shapes = new Map<string, WhiteboxFurnitureShape>();
+    scene.traverse((node) => {
+      if (!(node instanceof THREE.Mesh)) return;
+      if (!node.name.startsWith(FURNITURE_NAME_PREFIX)) return;
+      const kind = node.name.slice(FURNITURE_NAME_PREFIX.length);
+      const existing = shapes.get(kind) ?? {
+        kind,
+        partCount: 0,
+        triangles: 0,
+        hasMap: false,
+        hasNormalMap: false,
+      };
+      // 同一個 kind 可能場上有多件,每件都掛同一組零件 —— partCount 只算
+      // 一件的零件數,所以用第一件為準(後續件的零件是同樣的幾何)。
+      const material = node.material as THREE.MeshStandardMaterial;
+      shapes.set(kind, {
+        kind,
+        partCount: existing.partCount + 1,
+        triangles: existing.triangles + triangleCount(node.geometry),
+        hasMap: existing.hasMap || material?.map != null,
+        hasNormalMap: existing.hasNormalMap || material?.normalMap != null,
+      });
+    });
+
+    const next: VenueSceneMeasurements = {
+      wallHeightM: measure(VENUE_WALL_NAME),
+      columnHeightM: measure(VENUE_COLUMN_NAME),
+      furnitureShapes: [...shapes.values()].sort((a, b) =>
+        a.kind.localeCompare(b.kind),
+      ),
+      surfaceBakes: getSurfaceTextureStats().totalBakes,
+    };
+
+    const key = JSON.stringify(next);
+    if (key === lastRef.current) return;
+    lastRef.current = key;
+    onReport(next);
+  });
+
+  return null;
+}

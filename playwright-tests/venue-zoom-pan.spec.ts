@@ -32,11 +32,12 @@ test.describe("Venue zoom/pan - 案1 預設視覺迴歸", () => {
     expect(stageSize / ppm).toBeCloseTo(50, 5);
 
     const verts = await editor.vertices();
+    // 預設攤位 3×3m,錨在 BOOTH_ORIGIN (20,20)(feedback round 2, R1)。
     expect(verts).toEqual([
       { x: 20, y: 20 },
-      { x: 30, y: 20 },
-      { x: 30, y: 30 },
-      { x: 20, y: 30 },
+      { x: 23, y: 20 },
+      { x: 23, y: 23 },
+      { x: 20, y: 23 },
     ]);
   });
 });
@@ -145,7 +146,7 @@ test.describe("Venue zoom/pan - 案6 pan 區隔", () => {
     await editor.clickZoomReset();
 
     // 地板內部點拖曳(未命中頂點/邊,落在多邊形內部)-> stage 不變。
-    await editor.panByDrag({ x: 25, y: 25 }, { x: 26, y: 26 });
+    await editor.panByDrag({ x: 21.5, y: 21.5 }, { x: 21.8, y: 21.8 });
     const posAfterFloorDrag = await editor.stagePosition();
     expect(posAfterFloorDrag.x).toBeCloseTo(0, 5);
     expect(posAfterFloorDrag.y).toBeCloseTo(0, 5);

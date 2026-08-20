@@ -105,7 +105,7 @@ function finishMaterialSpec(
  * 個理由):`<Instances>` 只吃單一 geometry,巢狀 `<group>` 的變換會被丟掉,
  * 而且烘完之後每個 instance 只需要負責「擺在平面圖的哪裡、轉幾度」。
  */
-function buildPartGeometry(part: FurniturePart): THREE.BufferGeometry {
+export function buildPartGeometry(part: FurniturePart): THREE.BufferGeometry {
   const geometry =
     part.shape.kind === "box"
       ? new THREE.BoxGeometry(part.shape.w, part.shape.h, part.shape.d)
