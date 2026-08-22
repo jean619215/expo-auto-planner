@@ -113,3 +113,11 @@ Use the `notion-assistant` subagent to update the card matching the **current ta
 - When the **last** task of a story completes, also update the story's own row in the Stories database: set its `狀態` to `已完成`.
 
 This applies at every stage transition, including pauses (architect awaiting approval, review critical-issue pause, QA escalation) — the Notion card should always reflect current reality even while the pipeline is paused for human input.
+
+---
+
+## Documentation Lookup (project-owned — not touched by scanner)
+
+- **Next.js:一律讀 `node_modules/next/dist/docs/`(423 份 md)。不要查 Context7、不要憑訓練資料。** 這個 build 有 breaking changes,線上文件對它可能是錯的 —— 而且錯得很有說服力:格式正確、語氣權威、內容不符。那比沒有文件更糟。
+- 其餘套件(`three` / `@react-three/fiber` / `@react-three/drei` / `konva` / `@supabase/ssr` / `tailwindcss` v4)本機只附 README,可用 Context7 MCP 查,**查的時候指定版本**(見 `package.json`)。
+- Context7 是 user scope 的 MCP(`https://mcp.context7.com/mcp`),四個專案共用,匿名層每月 1000 次。
