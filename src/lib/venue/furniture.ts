@@ -3,11 +3,12 @@
 // reuses clampColumnCenter for boundary clamping.
 
 import {
-  VENUE_SIZE_M,
+  DEFAULT_PLAN_AREA,
   clampColumnCenter,
   createObjectId,
   snapPoint,
   snapToGrid,
+  type FloorBounds,
   type PlanPoint,
 } from "./plan";
 
@@ -57,17 +58,17 @@ function normalizeDeg(deg: number): number {
 export function createFurniture(
   kind: FurnitureKind,
   rawCenter: PlanPoint,
-  sizeM: number = VENUE_SIZE_M,
+  area: FloorBounds = DEFAULT_PLAN_AREA,
 ): FurnitureItem {
   const defaults = FURNITURE_DEFAULTS[kind];
   return {
     id: createObjectId(),
     kind,
     center: clampColumnCenter(
-      snapPoint(rawCenter, sizeM),
+      snapPoint(rawCenter, area),
       defaults.w,
       defaults.h,
-      sizeM,
+      area,
     ),
     w: defaults.w,
     h: defaults.h,
@@ -78,7 +79,7 @@ export function createFurniture(
 export function translateFurniture(
   item: FurnitureItem,
   deltaRaw: PlanPoint,
-  sizeM: number = VENUE_SIZE_M,
+  area: FloorBounds = DEFAULT_PLAN_AREA,
 ): FurnitureItem {
   const deltaX = snapToGrid(deltaRaw.x);
   const deltaY = snapToGrid(deltaRaw.y);
@@ -88,7 +89,7 @@ export function translateFurniture(
   };
   return {
     ...item,
-    center: clampColumnCenter(moved, item.w, item.h, sizeM),
+    center: clampColumnCenter(moved, item.w, item.h, area),
   };
 }
 

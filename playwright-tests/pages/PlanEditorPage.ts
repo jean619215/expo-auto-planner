@@ -332,6 +332,14 @@ export class PlanEditorPage {
     return Number(raw);
   }
 
+  /** 場上的家具(`data-furniture`),含中心點與外廓尺寸。 */
+  async furniture(): Promise<
+    { id: string; center: PlanPoint; w: number; h: number }[]
+  > {
+    const raw = await this.editor.getAttribute("data-furniture");
+    return JSON.parse(raw ?? "[]");
+  }
+
   async columnCount(): Promise<number> {
     const raw = await this.editor.getAttribute("data-column-count");
     return Number(raw);
@@ -711,6 +719,25 @@ export class PlanEditorPage {
     await this.page.getByTestId("booth-custom-width-input").fill(String(w));
     await this.page.getByTestId("booth-custom-height-input").fill(String(h));
     await this.page.getByTestId("booth-custom-apply").click();
+  }
+
+  /** 可編輯範圍(攤位 + 邊距)。探針讀的是實作算出來的矩形,不是回音。 */
+  async planArea(): Promise<{
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+    widthM: number;
+    heightM: number;
+  }> {
+    const raw = await this.editor.getAttribute("data-plan-area");
+    return JSON.parse(raw ?? "{}");
+  }
+
+  /** 實際畫出來的格線條數(直線 + 橫線)。 */
+  async gridLineCount(): Promise<number> {
+    const raw = await this.editor.getAttribute("data-grid-line-count");
+    return Number(raw);
   }
 
   /** 確認對話框上顯示的「會超出場地的件數」。 */

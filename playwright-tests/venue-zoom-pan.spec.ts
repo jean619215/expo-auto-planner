@@ -8,9 +8,17 @@ import { PlanSlotsPage } from "./pages/PlanSlotsPage";
 // 物件/地板)、縮放/平移狀態下互動座標正確性、擴大範圍(200x200)、存檔固定
 // 200 + 舊檔相容。
 //
-// Default floor polygon (src/lib/venue/plan.ts DEFAULT_FLOOR): a 10x10m
-// square at (20,20)-(30,20)-(30,30)-(20,30). Default view fit size = 50m
-// (DEFAULT_VIEW_SIZE_M), plannable range = 200m (PLAN_AREA_SIZE_M).
+// Default floor polygon (src/lib/venue/plan.ts DEFAULT_FLOOR): 預設 3×3m
+// 攤位,錨在 (20,20)。Default view fit size = 50m (DEFAULT_VIEW_SIZE_M)。
+//
+// 第三輪 T1 之後,可編輯範圍不再是固定的 200m 見方,而是「攤位 + 5m 邊距」。
+// 需要在攤位外一大片地方操作的案例,先開一塊夠大的攤位再 `clickZoomReset()`
+// 把視圖收回預設 —— 換尺寸會觸發 fitViewTo,不重置的話畫面會停在攤位上,
+// 低座標反而點不到。
+async function openWideRoom(editor: PlanEditorPage) {
+  await editor.applyCustomBoothSize(30, 30);
+  await editor.clickZoomReset();
+}
 
 const PLAN_SLOT_RE = /\/api\/plans\/\d$/;
 
@@ -135,6 +143,7 @@ test.describe("Venue zoom/pan - 案6 pan 區隔", () => {
   test("空白處拖曳平移;地板/物件上拖曳不平移", async ({ page }) => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
+    await openWideRoom(editor);
 
     // 空白處(地板範圍外)拖曳 -> Stage 平移,vertices/objects 不變。
     const beforeVerts = await editor.vertices();
@@ -153,15 +162,15 @@ test.describe("Venue zoom/pan - 案6 pan 區隔", () => {
 
     // 選取物件後在物件上拖曳 -> 物件公尺座標改變,stage x/y 不變。
     await editor.columnTool();
-    await editor.placeColumn({ x: 10, y: 40 });
+    await editor.placeColumn({ x: 18, y: 40 });
     await editor.selectTool();
-    await editor.dragObjectBody({ x: 10, y: 40 }, { x: 12, y: 42 });
+    await editor.dragObjectBody({ x: 18, y: 40 }, { x: 20, y: 42 });
 
     const posAfterObjectDrag = await editor.stagePosition();
     expect(posAfterObjectDrag.x).toBeCloseTo(0, 5);
     expect(posAfterObjectDrag.y).toBeCloseTo(0, 5);
     const { columns } = await editor.objects();
-    expect(columns[0].center.x).toBeCloseTo(12, 5);
+    expect(columns[0].center.x).toBeCloseTo(20, 5);
     expect(columns[0].center.y).toBeCloseTo(42, 5);
   });
 });
@@ -172,6 +181,7 @@ test.describe("Venue zoom/pan - 案7 縮放/平移狀態下互動正確性", () 
   }) => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
+    await openWideRoom(editor);
 
     // 進入非預設 view:先在預設 scale(1x,全 50m 可視)下平移,再放大 —
     // 放大後的可視範圍縮小到約 [10,50]x[10,50](span = 50/1.25 = 40m),
@@ -254,15 +264,16 @@ test.describe("Venue zoom/pan - 案7 縮放/平移狀態下互動正確性", () 
   });
 });
 
-test.describe("Venue zoom/pan - 案8 擴大範圍(200x200)", () => {
-  test("zoom out 至 25% 後,可於超出 50m 的座標放置柱子", async ({ page }) => {
+test.describe("Venue zoom/pan - 案8 可編輯範圍可以超出預設視窗", () => {
+  test("大攤位 + zoom out 後,可於超出 50m 的座標放置柱子", async ({ page }) => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
 
-    // 按鈕縮放錨點固定在畫布中心(畫面中心的公尺座標點在縮放過程中不變),
-    // 連點縮小到底後可視範圍是以該中心點向外展開的一個約 200m 寬的視窗
-    // (span = 50/0.25 = 200m)—— 100 在此視窗內、且超出移除前的 50m 上限,
-    // 足以驗證「50-200 區間可編輯、clamp 200 生效」這條 edge case。
+    // T1 之前這一項守的是固定的 200m 範圍。範圍改成跟著攤位走之後,守的東西
+    // 變成「範圍確實會長,不是被預設視圖的 50m 綁死」:開一塊 80×80 的攤位,
+    // 範圍是 [15,105],然後縮小到底(span = 50/0.25 = 200m 視窗)去點 100。
+    await editor.applyCustomBoothSize(80, 80);
+    await editor.clickZoomReset();
     for (let i = 0; i < 30; i++) {
       await editor.clickZoomOut();
     }
@@ -278,8 +289,8 @@ test.describe("Venue zoom/pan - 案8 擴大範圍(200x200)", () => {
   });
 });
 
-test.describe("Venue zoom/pan - 案9 存檔固定 200 + 舊檔相容", () => {
-  test("PUT payload venueSizeM === 200;GET 回舊值 40 時可正常編輯且 PUT 仍送 200", async ({
+test.describe("Venue zoom/pan - 案9 存檔的 venueSizeM 跟著攤位 + 舊檔相容", () => {
+  test("讀入 10×10 舊檔後,PUT 送的 venueSizeM 是該攤位的可編輯範圍寬(20),不是舊檔的 40", async ({
     page,
   }) => {
     let capturedBody: Record<string, unknown> | null = null;
@@ -366,7 +377,8 @@ test.describe("Venue zoom/pan - 案9 存檔固定 200 + 舊檔相容", () => {
       .poll(async () => editor.vertexCount())
       .toBe(4);
 
-    // 隨後存檔,PUT 仍固定送 200。
+    // 隨後存檔。讀進來的地板是 10×10(從 (5,5) 起算),攤位因此重新錨定在
+    // 那裡,可編輯範圍是 [0,20] —— 寬 20。舊檔寫的 40 一律忽略。
     await slots.open();
     await slots.saveToSlot(1);
     await slots.confirmOverwrite();
@@ -374,6 +386,6 @@ test.describe("Venue zoom/pan - 案9 存檔固定 200 + 舊檔相容", () => {
     await expect.poll(() => capturedBody !== null).toBe(true);
     const plan = (capturedBody as unknown as { plan: Record<string, unknown> })
       .plan;
-    expect(plan.venueSizeM).toBe(200);
+    expect(plan.venueSizeM).toBe(20);
   });
 });

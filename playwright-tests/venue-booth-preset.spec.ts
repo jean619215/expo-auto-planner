@@ -66,11 +66,17 @@ test.describe("Booth size presets (T6)", () => {
     await editor.navigate();
     await editor.applyBoothPreset(6, 6);
 
-    // 放兩根柱子在 6×6 的外圈,縮回 3×3 時兩根都會落在場地外。
+    // 換過 preset 之後視圖會 fit 到攤位上,遠一點的座標點不到 —— 先重置視圖。
+    await editor.clickZoomReset();
+    // 兩根柱子放在 6×6 的可編輯範圍([15,31])外圈。縮回 3×3 之後範圍只剩
+    // [15,28],兩根都落在外面。
+    //
+    // 不能放在 25 那一帶:攤位外那 5m 邊距是合法的暫存區,25 在 3×3 的範圍
+    // 裡面,不會被判定為超出 —— 那是邊距該有的行為,不是這一項要驗的東西。
     await editor.columnTool();
-    await editor.placeColumn({ x: 25, y: 25 });
+    await editor.placeColumn({ x: 30, y: 30 });
     await editor.columnTool();
-    await editor.placeColumn({ x: 24, y: 24.5 });
+    await editor.placeColumn({ x: 29.5, y: 29.5 });
     expect((await editor.objects()).columns.length).toBe(2);
 
     await editor.clickBoothPreset(3, 3);
@@ -83,8 +89,9 @@ test.describe("Booth size presets (T6)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.applyBoothPreset(6, 6);
+    await editor.clickZoomReset();
     await editor.columnTool();
-    await editor.placeColumn({ x: 25, y: 25 });
+    await editor.placeColumn({ x: 30, y: 30 });
 
     const sizeBefore = await editor.venueSizeCm();
     const centerBefore = (await editor.objects()).columns[0].center;
@@ -96,29 +103,41 @@ test.describe("Booth size presets (T6)", () => {
     expect((await editor.objects()).columns[0].center).toEqual(centerBefore);
   });
 
-  test("確認後尺寸改變,超出的物件被夾回場地內", async ({ page }) => {
+  test("確認後尺寸改變,超出的物件被夾回可編輯範圍內", async ({ page }) => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.applyBoothPreset(6, 6);
+    await editor.clickZoomReset();
     await editor.columnTool();
-    await editor.placeColumn({ x: 25, y: 25 });
+    await editor.placeColumn({ x: 30, y: 30 });
 
     await editor.clickBoothPreset(3, 3);
     await editor.acceptBoothSize();
 
     expect((await editor.venueSizeCm()).width).toBe(300);
 
+    // 夾進**可編輯範圍**(攤位 + 5m 邊距 = [15,28]),不是夾進攤位本身。
+    // 夾進攤位會把刻意放在邊距暫存區的東西一起吸回去。
+    // 邊界寫死,不讀 `data-plan-area` —— 讀實作自己回報的值會讓實作壞掉時
+    // 兩邊一起漂移,守衛就形同虛設(T1 破壞驗證實測過)。
+    const AREA_MIN_M = 15;
+    const AREA_MAX_M = 28;
     const column = (await editor.objects()).columns[0];
-    const verts = await editor.vertices();
-    const minX = Math.min(...verts.map((v) => v.x));
-    const maxX = Math.max(...verts.map((v) => v.x));
-    const minY = Math.min(...verts.map((v) => v.y));
-    const maxY = Math.max(...verts.map((v) => v.y));
 
-    expect(column.center.x - column.w / 2).toBeGreaterThanOrEqual(minX - 1e-6);
-    expect(column.center.x + column.w / 2).toBeLessThanOrEqual(maxX + 1e-6);
-    expect(column.center.y - column.h / 2).toBeGreaterThanOrEqual(minY - 1e-6);
-    expect(column.center.y + column.h / 2).toBeLessThanOrEqual(maxY + 1e-6);
+    expect(column.center.x - column.w / 2).toBeGreaterThanOrEqual(
+      AREA_MIN_M - 1e-6,
+    );
+    expect(column.center.x + column.w / 2).toBeLessThanOrEqual(
+      AREA_MAX_M + 1e-6,
+    );
+    expect(column.center.y - column.h / 2).toBeGreaterThanOrEqual(
+      AREA_MIN_M - 1e-6,
+    );
+    expect(column.center.y + column.h / 2).toBeLessThanOrEqual(
+      AREA_MAX_M + 1e-6,
+    );
+    // 真的被移動過(原本在 30,30)。
+    expect(column.center.x).toBeLessThan(30);
   });
 
   test("沒有物件會超出時,不跳確認,直接套用", async ({ page }) => {
