@@ -53,7 +53,7 @@ async function waitForMaterialDiagnostics(editor: PlanEditorPage) {
 async function toStep2WithWall(editor: PlanEditorPage) {
   await editor.navigate();
   await editor.wallTool();
-  await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+  await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
   await editor.clickNextStep();
 }
 
@@ -61,7 +61,7 @@ async function toStep2WithWall(editor: PlanEditorPage) {
 async function toStep2WithWallAndColumn(editor: PlanEditorPage) {
   await editor.navigate();
   await editor.wallTool();
-  await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+  await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
   await editor.columnTool();
   await editor.placeColumn({ x: 15, y: 15 });
   await editor.clickNextStep();
@@ -324,7 +324,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 3: 程序化 PBR 材質(地�
     expect(await editor.refinedScene.count()).toBe(0);
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.clickNextStep();
     // 仍在 02(preview),尚未進入 03。
     expect(await editor.refinedScene.count()).toBe(0);
@@ -414,7 +414,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 3: 程序化 PBR 材質(地�
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.clickNextStep();
 
     // 步驟 02 的 venue-scene 不掛材質探針。

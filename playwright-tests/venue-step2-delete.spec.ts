@@ -99,7 +99,7 @@ test.describe("Venue step 02 delete (R4)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.columnTool();
-    await editor.placeColumn({ x: 8, y: 8 });
+    await editor.placeColumn({ x: 21, y: 21 });
     await editor.clickNextStep();
     await expect(editor.stepPreview).toBeVisible();
 
@@ -143,7 +143,7 @@ test.describe("Venue step 02 delete (R4)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.columnTool();
-    await editor.placeColumn({ x: 8, y: 8 });
+    await editor.placeColumn({ x: 21, y: 21 });
     expect(await editor.selectedType()).toBe("column");
 
     await editor.clickNextStep();

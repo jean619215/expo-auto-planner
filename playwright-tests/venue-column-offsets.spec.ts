@@ -119,12 +119,16 @@ test.describe("Column boundary offsets (T4)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
 
-    // 把頂點 0 (20,20) 拉到 (20,26) 之外會改變外接矩形高度;先確認基準。
+    // 先確認基準:預設 3×3 攤位。
     expect((await editor.venueSizeCm()).width).toBe(300);
 
-    await editor.dragVertexTo(0, { x: 14, y: 20 });
+    // 把頂點 0 (20,20) 往左拉到可編輯範圍的左緣 15(= 攤位外的 5m 邊距)。
+    // 外接矩形因此從 [20,23] 變成 [15,23],寬 8m。
+    // 原本這裡拉到 14 並期望 900cm —— T1 之後 14 已在可編輯範圍外,會被夾成
+    // 15,期望值跟著改。守的東西沒變:總寬高跟著外接矩形走。
+    await editor.dragVertexTo(0, { x: 15, y: 20 });
 
     const size = await editor.venueSizeCm();
-    expect(size.width).toBe(900);
+    expect(size.width).toBe(800);
   });
 });
