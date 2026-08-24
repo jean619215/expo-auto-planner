@@ -31,10 +31,17 @@ async function waitForRefinedCanvas(page: Page) {
   });
 }
 
-/** Waits for the scene probe's first report (`data-lighting-ready="true"`). */
+/**
+ * Waits for the scene probe's first report (`data-lighting-ready="true"`).
+ *
+ * 30s 不是隨手放大的:沒有 GPU 的環境(CI 容器走 SwiftShader 軟體算圖)掛一次
+ * 步驟 03 的場景要十幾秒,整批連跑時更久。原本的 10s 在單跑時剛好夠、連跑時
+ * 就不夠 —— 失敗會呈現成「lightingReady 一直是 false」,看起來像場景壞掉,
+ * 其實只是還沒畫完。見 AGENTS.md「重量級 3D 測試要明確編列 timeout 預算」。
+ */
 async function waitForLightingReady(editor: PlanEditorPage) {
   await expect
-    .poll(() => editor.refinedLightingReady(), { timeout: 10_000 })
+    .poll(() => editor.refinedLightingReady(), { timeout: 30_000 })
     .toBe(true);
 }
 

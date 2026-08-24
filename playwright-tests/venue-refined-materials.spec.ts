@@ -25,17 +25,24 @@ const FORBIDDEN_TEXTURE_ASSET_PATTERNS = [
   "polyhaven",
 ];
 
-/** Waits for the scene probe's first report (`data-lighting-ready="true"`). */
+/**
+ * Waits for the scene probe's first report (`data-lighting-ready="true"`).
+ *
+ * 30s 不是隨手放大的:沒有 GPU 的環境(CI 容器走 SwiftShader 軟體算圖)掛一次
+ * 步驟 03 的場景要十幾秒,整批連跑時更久。原本的 10s 在單跑時剛好夠、連跑時
+ * 就不夠 —— 失敗會呈現成「lightingReady 一直是 false」,看起來像場景壞掉,
+ * 其實只是還沒畫完。見 AGENTS.md「重量級 3D 測試要明確編列 timeout 預算」。
+ */
 async function waitForLightingReady(editor: PlanEditorPage) {
   await expect
-    .poll(() => editor.refinedLightingReady(), { timeout: 10_000 })
+    .poll(() => editor.refinedLightingReady(), { timeout: 30_000 })
     .toBe(true);
 }
 
 /** Waits for SurfaceMaterials' bake to commit (`data-materials-ready="true"`). */
 async function waitForMaterialsReady(editor: PlanEditorPage) {
   await expect
-    .poll(() => editor.refinedMaterialsReady(), { timeout: 15_000 })
+    .poll(() => editor.refinedMaterialsReady(), { timeout: 30_000 })
     .toBe(true);
 }
 
@@ -43,7 +50,7 @@ async function waitForMaterialsReady(editor: PlanEditorPage) {
 async function waitForMaterialDiagnostics(editor: PlanEditorPage) {
   await expect
     .poll(async () => (await editor.refinedMaterialDiagnostics())?.ready, {
-      timeout: 15_000,
+      timeout: 30_000,
     })
     .toBe(true);
   return editor.refinedMaterialDiagnostics();
@@ -286,6 +293,9 @@ test.describe("精密 3D 場景 (步驟 03) - Task 3: 程序化 PBR 材質(地�
   });
 
   test("T7: 往返多次不累積(真實 dispose 事件驅動的計數)", async ({ page }) => {
+    // 多趟 02<->03 往返,每趟都要重建/卸掉一個 WebGL context —— 預設 30s
+    // 在無 GPU 的環境不夠(同 venue-refined-lighting 案例12)。
+    test.slow();
     const editor = new PlanEditorPage(page);
     await toStep2WithWall(editor);
 
