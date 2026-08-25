@@ -354,10 +354,15 @@ export default function PlanEditor() {
   // 關鍵:zoom/pan 是後面 Stage transform 這一層,與此無關。
   const pxPerMeter = computePxPerMeter(stagePx, DEFAULT_VIEW_SIZE_M);
   /**
-   * 可編輯範圍 —— 由目前地板反推(攤位外擴一圈邊距),前端所有 clamp 的依據。
+   * 可編輯範圍 —— 由 `boothBounds` 外擴一圈邊距,前端所有 clamp 的依據。
    *
-   * 跟著地板走而不是存一份獨立 state:地板就是攤位,兩份會不同步。改攤位尺寸
-   * (`applyBoothSize`)換的是地板,範圍自然跟著換,不需要額外同步一次。
+   * 錨的是 `boothBounds`(使用者選定的攤位尺寸),**不是** `polygon`(地板現況)。
+   * 兩者平時相等,但拖曳頂點只動 `polygon`,`boothBounds` 只在四個地方重錨:
+   * 初始化、讀檔、AI 重畫整塊地板、`applyBoothSize`。
+   *
+   * 這份看似重複的 state 不能省。改成從 `polygon` 即時推導會構成回饋迴圈:
+   * 拖大地板 → 範圍跟著變大 → 更大的範圍允許把頂點拖得更遠。實測一次 8 步
+   * 拖曳就把 3m 攤位拉到 40m 外。詳見 `planAreaFor` 的註解。
    */
   const planArea = useMemo(
     () =>
