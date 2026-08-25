@@ -1,170 +1,150 @@
-# 接續執行備忘 — story `stories/venue-refined-3d.md`(精密 3D 場景 步驟 03)
+# 接續執行備忘 — story `stories/venue-catalog-and-quote-draft.md`(第三輪:家具目錄與報價)
 
-> 最後更新:2026-08-11(story 全數完成)。這份是「隔一陣子回來要怎麼接下去」的入口,
-> 逐階段細節仍在 `.claude/pipeline/task-log.md`。
+> 最後更新:2026-08-24(T1 完成,T2 待開工)。
+> 這份是「隔一陣子回來、或換一個 agent 接手要怎麼繼續」的入口。
+> 逐階段細節在 `.claude/pipeline/task-log.md`,決策與驗收條件在 story 檔本身。
 
-## 進度總覽(7 個 task)
+---
 
-| # | task | 狀態 |
-|---|---|---|
-| 1 | 步驟 03 骨架 + 唯讀 `RefinedScene` | ✅ 完成 `c7c06c5` |
-| 2 | 打光與陰影(VSM soft shadow) | ✅ 完成 `571339f` |
-| 3 | 程序化 PBR 材質(地板/牆/柱) | ✅ 完成 `127ce70` |
-| 4 | 家具模型 asset pipeline | ✅ 完成 `76937e9` + `c54166b` |
-| 5 | 匯入 6 種真實家具模型 | ✅ 完成(review 抓到並修掉 1 個 🔴) |
-| 6 | 3 種展場家具程序化幾何 | ✅ 完成(review 抓到並修掉 1 個 🔴) |
-| 7 | 效能與驗收 | ✅ 完成 |
+## 一分鐘現況
 
-**七個 task 全部完成,story 收尾。** 九種家具全部有造型:六種匯入 Poly Haven
-CC0 模型,三種程序化。
+| 項目 | 狀態 |
+|---|---|
+| 第一輪(白模產生器)、第二輪(使用者回饋)| ✅ 已合併進 `master`(PR #12 / #13) |
+| 第三輪 T1(可編輯範圍)| ✅ 完成,已推上 `claude/work-status-review-wg0mmu` |
+| 第三輪 T2–T9 | ⬜ 待開工,決策與驗收條件都已寫定 |
+| 免登入 26 支 spec | ✅ 241 通過、0 失敗 |
+| `npm run lint` / `npx tsc --noEmit` | ✅ 乾淨 |
 
-## Task 7 做了什麼
+**分支關係**:`claude/work-status-review-wg0mmu` 的基底是 `origin/docs/venue-catalog-and-quote`
+(第三輪的規劃文件在那支上,且它已 merge 了完整的 master)。開 PR 時
+**base 要選 `docs/venue-catalog-and-quote`**,選 master 會把規劃那 6 個 commit 一起帶進來。
 
-**效能** —— 把下方「接手前一定要知道的第 3 點」點名的現成題目做掉。匯入模型
-那條路原本是「`useMemo` 建立 + `useEffect` 卸載時 dispose」,在 React
-StrictMode 下被丟棄的那一份 clone 永遠沒人 dispose,而它沒上傳過 GPU 所以
-`gl.info.memory` 也看不見。新增 `furnitureModelStats.ts`(依 kind 的模組層
-快取 + 計數,形狀刻意做成 `proceduralFurnitureStats.ts` 的對應物),
-`furnitureModels.tsx` 改走 `getOrBuildNormalizedModel()` 並移除 dispose ——
-快取本身就是擁有者。順帶消掉「每趟往返重新 clone 96k 面植栽 + 三次
-`applyMatrix4`」的主執行緒成本。對外量測是 `data-furniture-model-stats`。
+---
 
-**驗收** —— 新 spec `venue-refined-acceptance.spec.ts`(六案例),守的是**整個
-story 的驗收條件**,不是單一 task:三步驟往返、九種家具都有造型且兩條路互斥、
-唯讀、資源只在進入 03 時載入且往返不累積、等比縮放、01/02 未退化。
+## T1 做了什麼(以及接手 T2 前一定要知道的三件事)
 
-兩次蓄意破壞驗證 D 真的擋得住:整支繞過快取 → `cachedKinds` 期望 6 得 0;
-只關掉 cache 命中 → `totalBuilds` 期望 6 得 **18**(正好 3 倍 —— StrictMode
-雙重建置加上每趟往返重建)。
+把固定的 `PLAN_AREA_SIZE_M = 200`(200m 見方)換成「攤位 + 5m 邊距」的可編輯範圍。
+攤位錨在 `BOOTH_ORIGIN = (20,20)`,所以預設 3×3 攤位的範圍是 `[15,28]²`。
 
-### 寫這支 spec 踩到的兩個坑(已寫進 spec 註解)
+### 1. 可編輯範圍是矩形,型別重用 `FloorBounds`
 
-1. **03→02 是 `clickBackToPreview()`,02→01 才是 `clickBackToEdit()`** ——
-   兩顆是不同的按鈕,用錯會在 `backToEditButton` 的 click 上逾時。
-2. **往返要用 `backToPreview()` 並等 `canvas` 只剩一張**。02 與 03 互斥掛載,
-   不等這個就切回去會撞上兩個 WebGL context 並存的瞬間,探針時常來不及重新
-   武裝,失敗會呈現為「`refinedLightingReady` 一直是 false」。沿用
-   `venue-refined-lighting` 案例12 的寫法。
-3. 這支比其他 venue spec 重得多(擺九件家具 + 往返四趟),預設 30s 的
-   **test timeout** 不夠,而逾時會偽裝成「某個 poll 失敗」,極度誤導。已用
-   `test.describe.configure({ timeout: 180_000 })`。
+夾制函式的簽章從 `sizeM: number` 全面改成 `area: FloorBounds`。`FloorBounds` 本來就是
+「軸對齊矩形」的型別,既有的 `clampRectCenterToBounds` / `isRectOutsideBounds` /
+`clampWallToBounds` 因此直接吃得下。**不要為同一個概念再開一個新型別。**
 
-## Task 7 接手前一定要知道的三件事(保留供追溯)
+入口是 `planAreaFor(boothW, boothH, origin)`,住在 `src/lib/venue/plan.ts`。
 
-### 1. 兩條繪製路徑是同構的,不要再分岔
+### 2. 範圍必須錨在「使用者選定的攤位尺寸」,不能由地板即時推導 ⚠️
 
-匯入模型(`furnitureModels.tsx`)與程序化(`proceduralFurniture.tsx`)共用:
-同樣的座標約定(底面貼 y=0、水平置中)、同樣用 drei `<Instances>`、同樣的
-場景圖命名 `refined-furniture-instance:{kind}:{part}`。探針因此只有一套計數
-邏輯。要加第三種來源的話,照這個介面接上去,不要另立命名。
+這是 T1 過程中最貴的一課,也最容易被下一個人「順手改回去」。
 
-### 2. `<Instances>` 的容量必須進 `key`(踩過的地雷)
+由 `polygon` 即時推導是最直覺的寫法,而它會構成**回饋迴圈**:拖曳頂點讓地板變大 →
+範圍跟著變大 → 更大的範圍允許把頂點拖得更遠。實測**一次 8 步的拖曳就把 3m 攤位的
+地板拉到 63m 外**。
 
-drei 的 `<Instances>` 在**第一次 render** 就把 `limit * 16` 的矩陣緩衝區配置
-好,之後改 `limit` prop **不會重配**,而多出來的 instance 會寫在 typed array
-界外被靜默丟棄。task 5 原本寫死 256,實測讀入 300 張椅子的存檔只畫得出 256
-張。現在統一走 `instanceLimit.ts` 的 2 冪次桶,**呼叫端必須把桶編進 `key`**。
-回歸:`venue-furniture-models.spec.ts` 的 M8。
+現在的做法:`PlanEditor.tsx` 有一份 `boothBounds` state,只在「真正重新定義攤位」時
+更新 —— 換 preset / 自訂尺寸 / 讀檔 / AI 重畫地板,共四處。頂點的自由編輯則在那圈
+邊距內活動。`planAreaFor` 的註解裡寫了這個陷阱,**改動前先讀那段**。
 
-### 3. `gl.info.memory` 看不到 material —— 別再用它證明「有釋放」
+### 3. 邊距是暫存區,不是禁區
 
-`gl.info.memory` 只統計 geometries 與 textures。task 6 的程序化 material 是
-自己 `new` 的,漏放在那裡完全看不見。而且 React StrictMode(Next.js 預設開啟)
-會把 render 跑兩次、只 commit 一次,所以「`useMemo` 建立 + `useEffect` 卸載時
-dispose」這個看似正確的寫法,**被丟棄的那一份永遠沒人 dispose** —— 實測預期 9
-組、實際 18 組。
+換攤位尺寸時,物件是夾進**可編輯範圍**而不是攤位本身(`applyBoothSize` /
+`outsideCountFor` 都是)。夾進攤位會把刻意放在邊距的家具一起吸回去,那就沒有暫存區了。
+`venue-booth-preset` 的三個案例因此要用 30 那一帶的座標 —— 25 在 3×3 的範圍裡面,
+不算超出。
 
-現在程序化資源改成**依 kind 的模組層快取**(`proceduralFurnitureStats.ts`),
-上限 3 種 x 3 零件 = 9 組,不隨使用增長,而且往返步驟 02/03 完全不重建。
-任何「資源有沒有釋放」的斷言請讀
-`data-procedural-furniture-stats`(three 自身 dispose 事件驅動),不要只看
-`gl.info.memory`。
+---
 
-~~**匯入模型那條路仍是「useMemo 建立 + useEffect dispose」**~~ —— **task 7 已
-處理**:改成 `furnitureModelStats.ts` 的依 kind 快取,讀
-`data-furniture-model-stats`。兩條路現在對稱了。
+## 動座標系時會踩到的地雷(T2/T3 高機率遇到)
 
-## Task 6 做了什麼
+### 九支 spec 共用的牆會「安靜地不存在」
 
-- `src/lib/venue/proceduralFurniture.ts` — **純領域**零件規格(不 import
-  React/three):每種家具由哪些盒子/圓柱組成、擺哪、什麼表面處理,尺寸全部是
-  `FURNITURE_DEFAULTS` 的 w / height3d / h 的函數。另有
-  `proceduralFurnitureSizeM()` 可在沒有 WebGL 的情況下驗算外廓。
-- `src/components/venue/proceduralFurniture.tsx` — 把規格變成 geometry /
-  material 與 instancing。
-- 造型:櫃檯 = 內縮踢腳座 + 主體 + 外伸檯面;易拉寶 = 捲軸箱 + 後方支桿 +
-  布面;講台 = 底座 + 收窄立柱 + **傾斜讀寫台面**。
-- 傾斜檯面是唯一的幾何陷阱:傾斜的板子在高度與深度兩個方向佔的空間都比自身
-  尺寸大,直接拿 `d = h` 再轉 10° 會同時撐破深度與高度。實作反解出「傾斜後
-  剛好等於 h」的板深,再把中心壓到「傾斜後最高點剛好等於 height3d」。
-  P1 實測三軸誤差 0。
-- 保底路徑仍在:既沒有模型、也沒有程序化造型的 kind 會退回白模 box
-  (`REFINED_FURNITURE_BOX_NAME`),日後往 `FURNITURE_DEFAULTS` 加新 kind 時
-  至少畫得出來,也仍然被算進投影件數。
+`drawWall({ x: 5, y: 5 }, { x: 10, y: 5 })` 這個樣式散在九支 spec 裡。範圍改成
+`[15,28]` 之後,兩端都被夾到同一點,`createWall` 回傳 `null`,**牆根本不會被建立** ——
+而多數案例不斷言牆數,於是安靜地在一個沒有牆的場景上繼續跑,測試照樣綠。
 
-## 測試現況
+T1 已經全部改成 `(20,20) → (25,20)`。**下次再動座標系,先 grep 一次這類樣式**,
+不要只看測試有沒有紅。
 
-- `venue-procedural-furniture` 8/8(P1–P8)、`venue-furniture-models` 8/8、
-  `venue-refined-lighting` 14/14、`venue-refined-materials` 14/14、
-  `venue-furniture-assets` 6/6、`venue-refined-acceptance` 6/6。
-- 免登入的 14 支 spec 全套:見 `qa-report.md` 的執行紀錄。
-- 需要帳密的 5 支(`ai-panel` / `membership-task7-task9` / `points-shop` /
-  `profile-edit-mode` / `site-header`)在本環境**沒有跑** —— 它們在檔案載入期
-  就會因為缺 `.env.playwright.local` 的 `PW_VERIFIED_EMAIL` /
-  `PW_VERIFIED_PASSWORD` 而 throw。有憑證的機器要補跑。
-- `npm run lint` 與 `npx tsc --noEmit` 乾淨(排除既有的
-  `app/api/plans/[slot]/conversation/route.ts` 與 `.next/dev/types` 雜訊)。
-- 人工判讀用截圖:`playwright-report/procedural-furniture.png`(P8 產出,
-  不斷言)、`refined-lighting.png`、`refined-materials-*.png`。
+### 探針不能拿來當夾制斷言的基準
 
-## 仍未完成的事項
+破壞驗證時抓到兩個空守衛:柱子拖曳與頂點拖曳原本拿 `data-plan-area` 回報的範圍當
+比較基準,把實作改回固定 200m 之後**實作與斷言一起漂移**,兩支照樣全綠。
 
-- [ ] **重跑 `node scripts/build-venue-models.mjs` 的下載階段**。本環境跑不了:
-      `api.polyhaven.com` 被 egress policy 擋(CONNECT 403),依代理規範不得
-      繞路。**已驗證**:`copyDracoDecoder()` 正常跑完並正確印出
-      `three@0.185.1` —— 那正是原本被修過、風險最高的一段。下載/轉檔那段自
-      上次成功執行後未曾改動,在有對外網路的機器補跑一次即可。
-- [ ] 需帳密的 5 支 spec 補跑。
+夾制類斷言一律**寫死由規格算出來的邊界**(`venue-plan-area.spec.ts` 的
+`MIN_EDGE_M` / `MAX_EDGE_M` = 15 / 28)。這條也已經寫進 `AGENTS.md`。
 
-## 這個 story 的長期約束(來自 AGENTS.md,任何後續改動前必讀)
+### 既有測試的更新量會超出 story 第六節的預估
 
-- 家具尺寸**不可**由使用者調整,只能移動與旋轉;尺寸唯一來源是
-  `FURNITURE_DEFAULTS` 的 `w` / `h` / `height3d`。匯入模型一律**等比**縮放到
-  該尺寸,不得非等比拉伸變形;不加縮放把手、AI tool schema 不加 w/h 參數。
-- `RefinedScene` 是唯讀場景:不持有幾何 `useState`、不掛 `TransformControls`、
-  不回寫 `onSceneChange`;與步驟 02 互斥掛載(一次只有一個 WebGL context)。
-- 不在 render 期間新建 geometry/material/texture,用 `useMemo` 快取並在卸載時
-  `dispose()`。(**兩條家具路徑都已改用模組層快取**,理由見上方第 3 點 ——
-  快取本身是擁有者,所以那裡沒有 dispose,這是刻意的。)
-- 重複家具用 drei `<Instances>`。
-- `src/lib/venue/` 純領域;瀏覽器限定函式庫透過 `*Loader.tsx`(`ssr:false`)包一層。
+story 第六節只點名 `venue-objects` / `venue-zoom-pan`。T1 實際還動到
+`venue-dimensions`、`venue-plan-editor`、`venue-booth-preset`、`venue-3d-scene`、
+`venue-column-offsets`、`venue-refined-lighting`。T2/T3 的 `kind → code` 影響面更大,
+排時間時把這塊算進去。
 
-## 已知技術債(不阻擋)
+---
 
-- task 3 review 的 🟡 Issue 6 未修:`venue-refined-materials.spec.ts` 的 T3
-  牆面 UV 守衛複製了實作的「面 → 跨距」對照表,若 `BoxGeometry` 的 group
-  順序改變,實作與測試會一起壞、測不出來。
-- 同一件程序化家具內相同表面處理會各自持有一個 material(櫃檯的踢腳座與檯面
-  都是 accent)。量級是每個 kind 至多 3 個,對 draw call 無影響,不值得為它
-  加一層 finish→material 的間接性。
+## 下一步:T2
 
-## 環境備忘
+> 建 `src/lib/venue/catalog.ts` 資料層,9 個 kind 遷移成 9 個品項。純資料與型別,不動 UI。
 
-- 本次是在容器裡跑的(Node v22.22.2,`npm install` 需自己先跑一次;沒有
-  `.env.local` 的話 `cp .env.example .env.local` 即可讓 dev server 起來 ——
-  `/venue` 不是受保護頁面,不需要真的 Supabase)。原本備忘裡的 macOS nvm PATH
-  只適用於開發機。
-- Playwright 瀏覽器:容器內只有 chromium-1194,而專案的 playwright 要 1228。
-  用 `PLAYWRIGHT_BROWSERS_PATH` 指到一個放了 `chromium-1228` /
-  `chromium_headless_shell-1228` 符號連結的目錄即可,不需要改
-  `playwright.config.ts`。
-- 步驟 02 放家具的可點擊地板很小(預設 10m x 10m,螢幕上是畫布中心附近一塊
-  菱形):水平約 ±60px、垂直約 ±15px 之外就點空了。兩支家具 spec 的
-  `placeFurnitureOnStep2()` 每次都會驗證真的放上去了,新測試沿用它,不要自己
-  寫一個不驗證的版本。
-- 要在步驟 03 拍到看得清輪廓的截圖:先左鍵上拖把相機壓低到接近視平線,再滾
-  **60 格左右**的滾輪 —— OrbitControls 每格只縮一小段,而預設相機距離 target
-  約 47m、家具只有 1~2m 高,滾十幾格是完全不夠的(P8 的寫法可直接抄)。
-- `src/app/api/plans/[slot]/conversation/route.ts` 有 **既存的** tsc 錯誤
-  (TS2344/TS2339),在乾淨的 `571339f` 上就存在,與本 story 無關 —— 不要動它,
-  也不要把它當成自己改壞的。
+驗收條件在 story 第五節。開工前必讀 story 的 D1（為什麼 `FurnitureItem` 只存 `code`）
+與 D5（欄位形狀照廠商資料設計）。
+
+T2 之後的 T3 會把 `kind` 換成快取鍵與探針分組鍵,那才是真正會讓一批測試轉紅的一步。
+
+---
+
+## 環境:怎麼把測試跑起來(實測可用)
+
+```bash
+npm install
+cp .env.example .env.local     # /venue 不是受保護頁面,不需要真的 Supabase
+npm run dev
+```
+
+**Playwright 瀏覽器**:專案要 chromium-1228,容器裡只有 1194。用
+`PLAYWRIGHT_BROWSERS_PATH` 指到自建目錄即可,**但 1228 的 headless shell 換了路徑與
+檔名** —— 整個目錄直接做符號連結會失敗,要建出:
+
+```
+$SP/pw-browsers/chromium-1228                -> /opt/pw-browsers/chromium-1194
+$SP/pw-browsers/chromium_headless_shell-1228/chrome-headless-shell-linux64/
+    chrome-headless-shell                    -> .../chromium_headless_shell-1194/chrome-linux/headless_shell
+    (同目錄其餘檔案也要逐一連結,並在上層 touch INSTALLATION_COMPLETE)
+```
+
+跑測試要帶 `NO_PROXY=localhost,127.0.0.1`,否則連不到 dev server。
+
+**全套約 33 分鐘,超過單一指令的 10 分鐘上限** —— 分兩批跑或丟背景,
+**不要接 `| grep`**(會讓輸出緩衝到結束才寫出,也丟掉錯誤細節)。
+
+### 這台機器沒有 GPU,3D 測試慢 3–4 倍
+
+走 SwiftShader 軟體算圖。掛一次步驟 03 的場景要十幾秒,整批連跑更久。壓在預設
+30s(或內層 10s poll)邊緣的測試會**偽裝成隨機 flake** —— 同一份程式換台機器就翻面。
+
+已經編列過預算的:`venue-procedural-furniture` P6/P8、`venue-refined-lighting`
+案例12/14、`venue-refined-materials` T7 與其材質 poll、`venue-wall-height` 的兩支
+步驟 03 案例、`waitForLightingReady`(10s → 30s)。新寫的重量級 3D 測試比照辦理,
+並在註解寫下實測耗時。
+
+---
+
+## 仍未完成(兩項都是環境限制,不是程式問題)
+
+- **需帳密的 5 支 spec 未跑**(`ai-panel` / `membership-task7-task9` / `points-shop` /
+  `profile-edit-mode` / `site-header`)。它們在檔案載入期就會因為缺
+  `.env.playwright.local` 的 `PW_VERIFIED_EMAIL` / `PW_VERIFIED_PASSWORD` 而 throw。
+- **`node scripts/build-venue-models.mjs` 的下載階段未重跑**。`api.polyhaven.com` 被
+  egress policy 擋(CONNECT 403,已多次確認),依代理規範不得繞路。下載/轉檔那段自
+  上次成功執行後未曾改動,在有對外網路的機器補跑一次即可。
+- 上傳材質的持久化未做(第二輪決議如此,另立 story)。
+
+---
+
+## 更早幾輪的細節去哪找
+
+- 第二輪(使用者回饋)的決議、驗收、踩雷紀錄:`stories/venue-feedback-round2-draft.md`
+- 第一輪(精密 3D 場景)的七個 task:`stories/venue-refined-3d.md`
+- 跨輪都適用的硬規則:`AGENTS.md`(特別是「場地規劃器:第二輪定案的約束」那一節)
