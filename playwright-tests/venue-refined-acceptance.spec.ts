@@ -9,7 +9,7 @@ import { PlanEditorPage } from "./pages/PlanEditorPage";
 // 的東西:
 //
 //   A  三步驟流程走得完、也回得來,進度列與內容一致(story 驗收條件 1、2)。
-//   B  九種家具在步驟 03 全部不是白方塊:六種來自 GLB、三種來自程序化幾何,
+//   B  目錄裡每一件在步驟 03 都有造型:曲面件來自 GLB、方正件來自程序化,
 //      而且兩條路互斥(story 驗收條件 3)。
 //   C  唯讀 —— 點物件不會進選取/搬移,只有 orbit controls(驗收條件 6)。
 //   D  資源只在進入步驟 03 時載入(驗收條件 7),而且**離開再回來不會累積**。
@@ -24,11 +24,23 @@ import { PlanEditorPage } from "./pages/PlanEditorPage";
 // 只是「根本沒再畫」,而 totalBuilds 在模型明明在畫面上時仍不漲,就只剩快取
 // 命中一種解釋。
 
-/** 有 GLB 的六種。對應 src/lib/venue/models.ts。 */
-const MODEL_KINDS = ["TBL-120-75", "CHR-45-90", "CAB-60-180", "SOF-180-80", "DSP-100-160", "PLT-50-120"];
+// T5(第三輪 D4)重新劃了這條線:方正規格件全部改走程序化,因為一份 GLB 只有
+// 一種比例,做不出「同款不同高度」的兩個品項。留在 GLB 的只剩方箱畫不出來的
+// 曲面件。兩份清單合起來仍是目錄的全部品項 —— 下面的案例靠這點確認「每一件
+// 都有造型」。
+/** 仍走 GLB 的曲面件。 */
+const MODEL_KINDS = ["CHR-45-90", "SOF-180-80", "PLT-50-120"];
 
-/** 沒有 CC0 資產、走程序化幾何的三種。對應 src/lib/venue/proceduralFurniture.ts。 */
-const PROCEDURAL_KINDS = ["CNT-100-110", "BNR-80-200", "POD-60-110"];
+/** 走程序化幾何的方正規格件與展場專屬家具。 */
+const PROCEDURAL_KINDS = [
+  "CNT-100-110",
+  "BNR-80-200",
+  "POD-60-110",
+  "TBL-120-75",
+  "TBL-120-100",
+  "CAB-60-180",
+  "DSP-100-160",
+];
 
 /** 等比縮放的容許誤差 —— 浮點與 bounding box 計算的雜訊,不是給變形留空間的。 */
 const UNIFORM_SCALE_EPSILON = 1e-4;
@@ -90,7 +102,9 @@ async function placeFurnitureOnStep2(
  * 水平約 ±60px、垂直約 ±15px 就出界(RESUME.md 的環境備忘),所以是扁的格狀
  * 而不是正方格。
  */
-const NINE_SPOTS = [
+// 一個品項一格。目錄長大時這裡要跟著加格子 —— placeAll() 會斷言件數,
+// 格子不夠會直接紅在那裡,不會靜靜少放一件。
+const CATALOG_SPOTS = [
   { x: -44, y: -10 },
   { x: 0, y: -10 },
   { x: 44, y: -10 },
@@ -100,6 +114,7 @@ const NINE_SPOTS = [
   { x: -44, y: 10 },
   { x: 0, y: 10 },
   { x: 44, y: 10 },
+  { x: -22, y: 20 },
 ];
 
 async function toStep2(editor: PlanEditorPage) {
@@ -112,19 +127,27 @@ async function toStep2(editor: PlanEditorPage) {
   await editor.clickNextStep();
 }
 
-/** 九個品項各一件。 */
-async function placeAllNine(page: Page, editor: PlanEditorPage) {
+/** 目錄裡每個品項各一件。 */
+async function placeAll(page: Page, editor: PlanEditorPage) {
   const codes = [...MODEL_KINDS, ...PROCEDURAL_KINDS];
+  expect(
+    CATALOG_SPOTS.length,
+    "格子不夠放完目錄裡的品項 —— 目錄長大了就補格子",
+  ).toBeGreaterThanOrEqual(codes.length);
   for (const [index, code] of codes.entries()) {
-    await placeFurnitureOnStep2(page, editor, code, NINE_SPOTS[index]);
+    await placeFurnitureOnStep2(page, editor, code, CATALOG_SPOTS[index]);
   }
   expect(await editor.furnitureCount()).toBe(codes.length);
 }
 
-// 這一支比其他 venue spec 重得多:B/D/E 要一件一件擺滿九種家具(每件都要等
+// 這一支比其他 venue spec 重得多:B/D/E 要一件一件擺滿目錄裡的每個品項(每件都要等
 // furnitureCount 真的變),D 還要再往返 02<->03 三趟、每趟重新等場景就緒。
 // 預設的 30s test timeout 不夠,逾時會偽裝成「某個 poll 失敗」,查起來很誤導。
-test.describe.configure({ timeout: 180_000 });
+//
+// 180s 也不夠了:T5 讓目錄多一個品項(高桌),B/D/E 每支就多擺一件、多等一次
+// 放置確認。D 最重(擺滿 + 往返三趟),單獨跑實測 2.2 分,整批連跑 3.1 分 ——
+// 剛好越過 3 分鐘。目錄之後還會長(T6),這裡留的餘裕要跟著走。
+test.describe.configure({ timeout: 300_000 });
 
 test.describe("精密 3D 場景 (步驟 03) - Task 7: 效能與驗收", () => {
   test("A: 三步驟流程走得完也回得來,每一步的內容與進度列一致", async ({
@@ -164,12 +187,12 @@ test.describe("精密 3D 場景 (步驟 03) - Task 7: 效能與驗收", () => {
     expect(await editor.columnCount()).toBe(1);
   });
 
-  test("B: 九種家具在步驟 03 全部有造型,六種來自 GLB、三種來自程序化,且兩條路互斥", async ({
+  test("B: 目錄每一件在步驟 03 都有造型,GLB 與程序化兩條路互斥", async ({
     page,
   }) => {
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
-    await placeAllNine(page, editor);
+    await placeAll(page, editor);
 
     await editor.goToRefined();
     await waitForRefinedReady(editor);
@@ -211,7 +234,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 7: 效能與驗收", () => {
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
     for (const [index, code] of MODEL_KINDS.entries()) {
-      await placeFurnitureOnStep2(page, editor, code, NINE_SPOTS[index]);
+      await placeFurnitureOnStep2(page, editor, code, CATALOG_SPOTS[index]);
     }
 
     await editor.goToRefined();
@@ -298,7 +321,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 7: 效能與驗收", () => {
 
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
-    await placeAllNine(page, editor);
+    await placeAll(page, editor);
 
     // 驗收條件 7 的前半原本是「步驟 02 完全不碰 GLB」。feedback round 2 的
     // R5 推翻了那條 —— 步驟 02 現在也要顯示家具輪廓,幾何就在 GLB 裡。

@@ -165,6 +165,147 @@ function podiumParts(w: number, h: number, height3d: number): FurniturePart[] {
 }
 
 /**
+ * 桌子:桌板 + 四支收在角落的桌腳。
+ *
+ * 方正規格件走程序化的理由(第三輪 D4):目錄要有「桌子 H75」與「桌子 H100」
+ * 兩個品項,而一份 GLB 只有一種比例 —— 等比縮放做不出兩種正確高度,非等比
+ * 拉伸又違反「匯入模型一律等比縮放」的硬規定,拉長的桌腳也很難看。造型由
+ * 參數拼出來就沒有這個問題:高度就是 `height3d`。
+ */
+function tableParts(w: number, h: number, height3d: number): FurniturePart[] {
+  const topH = SLAB_M;
+  const legH = height3d - topH;
+  const legSide = 0.05;
+  // 桌腳從外緣內縮一點點 —— 切齊外緣看起來像箱子而不是桌子。
+  const inset = legSide / 2 + 0.02;
+  const legX = w / 2 - inset;
+  const legZ = h / 2 - inset;
+
+  const legs: FurniturePart[] = [
+    [-1, -1],
+    [1, -1],
+    [-1, 1],
+    [1, 1],
+  ].map(([sx, sz], i) => ({
+    id: `leg-${i}`,
+    shape: { kind: "box" as const, w: legSide, h: legH, d: legSide },
+    position: [sx * legX, legH / 2, sz * legZ] as [number, number, number],
+    finish: "metal" as const,
+  }));
+
+  return [
+    ...legs,
+    {
+      // 桌板吃滿標稱尺寸 —— 這是整件家具的最大水平外廓。
+      id: "top",
+      shape: { kind: "box", w, h: topH, d: h },
+      position: [0, legH + topH / 2, 0],
+      finish: "body",
+    },
+  ];
+}
+
+/**
+ * 櫃子:主體 + 頂板 + 一條把手橫料。
+ *
+ * 只有一個盒子的話,櫃子與展示櫃在白模下完全分不出來;把手是最省的識別特徵。
+ */
+function cabinetParts(w: number, h: number, height3d: number): FurniturePart[] {
+  const plinthH = BASE_M;
+  const topH = SLAB_M * 0.6;
+  const bodyH = height3d - plinthH - topH;
+  const handleH = 0.03;
+
+  return [
+    {
+      id: "plinth",
+      shape: { kind: "box", w: w * 0.9, h: plinthH, d: h * 0.9 },
+      position: [0, plinthH / 2, 0],
+      finish: "accent",
+    },
+    {
+      id: "body",
+      shape: { kind: "box", w, h: bodyH, d: h },
+      position: [0, plinthH + bodyH / 2, 0],
+      finish: "body",
+    },
+    {
+      // 橫料貼在正面(-Z),略微凸出於櫃體之外仍在標稱深度內。
+      id: "handle",
+      shape: { kind: "box", w: w * 0.5, h: handleH, d: 0.02 },
+      position: [0, plinthH + bodyH * 0.62, -h / 2 + 0.01],
+      finish: "metal",
+    },
+    {
+      id: "top",
+      shape: { kind: "box", w, h: topH, d: h },
+      position: [0, plinthH + bodyH + topH / 2, 0],
+      finish: "accent",
+    },
+  ];
+}
+
+/**
+ * 展示櫃:底座 + 兩片層板 + 頂板。
+ *
+ * 層板是它與實心櫃子的差別 —— 白模下「看得到分層」就足以辨識,不需要玻璃。
+ */
+function displayCaseParts(
+  w: number,
+  h: number,
+  height3d: number,
+): FurniturePart[] {
+  const baseH = BASE_M;
+  const topH = SLAB_M * 0.6;
+  const shelfH = 0.03;
+  const innerH = height3d - baseH - topH;
+  const postSide = 0.04;
+  const postX = w / 2 - postSide / 2;
+  const postZ = h / 2 - postSide / 2;
+
+  const posts: FurniturePart[] = [
+    [-1, -1],
+    [1, -1],
+    [-1, 1],
+    [1, 1],
+  ].map(([sx, sz], i) => ({
+    id: `post-${i}`,
+    shape: { kind: "box" as const, w: postSide, h: innerH, d: postSide },
+    position: [sx * postX, baseH + innerH / 2, sz * postZ] as [
+      number,
+      number,
+      number,
+    ],
+    finish: "metal" as const,
+  }));
+
+  // 兩片層板把內部空間三等分,位置隨 height3d 走。
+  const shelves: FurniturePart[] = [1, 2].map((n) => ({
+    id: `shelf-${n}`,
+    shape: { kind: "box" as const, w: w * 0.94, h: shelfH, d: h * 0.94 },
+    position: [0, baseH + (innerH * n) / 3, 0] as [number, number, number],
+    finish: "panel" as const,
+  }));
+
+  return [
+    {
+      id: "base",
+      shape: { kind: "box", w, h: baseH, d: h },
+      position: [0, baseH / 2, 0],
+      finish: "accent",
+    },
+    ...posts,
+    ...shelves,
+    {
+      id: "top",
+      shape: { kind: "box", w, h: topH, d: h },
+      position: [0, baseH + innerH + topH / 2, 0],
+      finish: "accent",
+    },
+  ];
+}
+
+/**
  * 造型名對到零件建構函式。
  *
  * 索引鍵是**造型**而不是品項:同一個造型會被多個品項共用(目錄長大之後,
@@ -178,6 +319,9 @@ const BUILDERS: Record<
   counter: counterParts,
   bannerStand: bannerStandParts,
   podium: podiumParts,
+  table: tableParts,
+  cabinet: cabinetParts,
+  displayCase: displayCaseParts,
 };
 
 /** 這個代碼是否由程序化幾何繪製(而非匯入模型或白模 box)。 */

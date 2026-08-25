@@ -139,7 +139,8 @@ test.describe("Step 02 furniture silhouettes (T7)", () => {
     const editor = new PlanEditorPage(page);
     await toStep2WithRoom(editor);
 
-    await place(page, editor, "TBL-120-75");
+    // T5 之後桌子走程序化 —— 這一項守的是**模型**快取,必須放仍是 GLB 的品項。
+    await place(page, editor, "CHR-45-90");
 
     await editor.goToRefined();
     await expect

@@ -16,13 +16,21 @@ import { MODEL_BASE_PATH } from "./models";
 export type CatalogCurrency = "TWD";
 
 /**
- * 程序化造型的形狀名。
+ * 程序化造型的形狀名,與 `proceduralFurniture.ts` 的 `BUILDERS` 一一對應。
  *
- * 目前與 `proceduralFurniture.ts` 的 `BUILDERS` 一一對應 —— 那三件是展場專用
- * 家具,Poly Haven 沒有對應資產。第三輪 T5 會把方正規格件(桌、櫃、展示櫃)
- * 也搬過來,屆時這個聯集會長大。
+ * **方正規格件一律走這裡**(第三輪 D4):目錄要有「桌子 H75」與「桌子 H100」
+ * 兩個品項,而一份 GLB 只有一種比例 —— 等比縮放做不出兩種正確高度,非等比
+ * 拉伸又違反「匯入模型一律等比縮放」的硬規定。程序化造型的尺寸就是參數。
+ *
+ * 留給 GLB 的只剩有曲面、方箱畫不出來的:椅子、沙發、植栽。
  */
-export type ProceduralShape = "counter" | "bannerStand" | "podium";
+export type ProceduralShape =
+  | "counter"
+  | "bannerStand"
+  | "podium"
+  | "table"
+  | "cabinet"
+  | "displayCase";
 
 /**
  * 品項的幾何來源。
@@ -125,7 +133,7 @@ export const CATALOG: readonly CatalogItem[] = [
     price: 3200,
     currency: "TWD",
     supplier: null,
-    geometry: modelGeometry("display.glb", 0, false),
+    geometry: { kind: "procedural", shape: "displayCase" },
     w: 1.0,
     d: 0.5,
     height3d: 1.6,
@@ -155,10 +163,28 @@ export const CATALOG: readonly CatalogItem[] = [
     price: 650,
     currency: "TWD",
     supplier: null,
-    geometry: modelGeometry("table.glb", 0, false),
+    geometry: { kind: "procedural", shape: "table" },
     w: 1.2,
     d: 0.7,
     height3d: 0.75,
+    color: "#8a6d3b",
+  },
+  {
+    // 與 TBL-120-75 同款、只有高度不同 —— 這一對就是 D4 的存在理由:
+    // 兩個品項共用一個造型(`shape: "table"`),各自的高度是參數。
+    // GLB 做不到這件事,而使用者要的本來就是「選另一個型號」而不是拉高桌子。
+    code: "TBL-120-100",
+    name: "高桌 120×70×H100",
+    spec: "Bar Table",
+    category: "B",
+    subCategory: "B1",
+    price: 780,
+    currency: "TWD",
+    supplier: null,
+    geometry: { kind: "procedural", shape: "table" },
+    w: 1.2,
+    d: 0.7,
+    height3d: 1.0,
     color: "#8a6d3b",
   },
   {
@@ -231,7 +257,7 @@ export const CATALOG: readonly CatalogItem[] = [
     currency: "TWD",
     supplier: null,
     // 模型原生長邊在 X,平面圖目標長邊在 Y(見 models.ts 的同一筆)。
-    geometry: modelGeometry("cabinet.glb", 90, false),
+    geometry: { kind: "procedural", shape: "cabinet" },
     w: 0.6,
     d: 1.2,
     height3d: 1.8,

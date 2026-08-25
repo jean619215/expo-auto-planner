@@ -1,6 +1,6 @@
 # 接續執行備忘 — story `stories/venue-catalog-and-quote-draft.md`(第三輪:家具目錄與報價)
 
-> 最後更新:2026-08-25(T1–T4 完成,T5 待開工)。
+> 最後更新:2026-08-25(T1–T5 完成,T6 待開工)。
 > 這份是「隔一陣子回來、或換一個 agent 接手要怎麼繼續」的入口。
 > 逐階段細節在 `.claude/pipeline/task-log.md`,決策與驗收條件在 story 檔本身。
 
@@ -11,9 +11,9 @@
 | 項目 | 狀態 |
 |---|---|
 | 第一輪(白模產生器)、第二輪(使用者回饋)| ✅ 已合併進 `master`(PR #12 / #13) |
-| 第三輪 T1–T4(可編輯範圍 / 目錄資料層 / 繪製路徑 / AI schema)| ✅ 完成 |
-| 第三輪 T5–T9 | ⬜ 待開工,決策與驗收條件都已寫定 |
-| 免登入 29 支 spec | ✅ 263 通過、0 失敗 |
+| 第三輪 T1–T5(可編輯範圍 / 目錄 / 繪製路徑 / AI schema / 程序化幾何)| ✅ 完成 |
+| 第三輪 T6–T9 | ⬜ 待開工,決策與驗收條件都已寫定 |
+| 免登入 30 支 spec | ✅ 269 通過、0 失敗 |
 | `npm run lint` / `npx tsc --noEmit` | ✅ 乾淨 |
 
 **分支關係**:第三輪的所有工作都落在 `docs/venue-catalog-and-quote` 上(它已 merge 了
@@ -84,32 +84,56 @@ story 第六節只點名 `venue-objects` / `venue-zoom-pan`。T1 實際還動到
 
 ---
 
-## 下一步:T5
+## 下一步:T6
 
-> 方正規格件(展台、桌子、櫃子、櫃檯、講台、層板)改程序化參數化幾何,
-> 讓「同款不同尺寸」真的可行。
+> 擴充目錄:三層分類 + 品項與價格。資料工作為主。
 
-驗收條件在 story 第五節。程序化 builder 現在以 `ProceduralShape` 為鍵(T3 做的),
-尺寸變體共用造型 —— T5 要做的是把更多方箱體品項接上這條路,而不是各自寫 builder。
+驗收條件在 story 第五節。目前目錄有 10 個品項(9 個原始 + T5 加的高桌),
+競品是 233 項。
+
+### 開工前必須先決定的三件事
+
+**1. AI 附錄會變太貴。** 模型現在從每輪的目前配置附錄(`AiPanel` 的
+`configJson.catalogue`)知道有哪些代碼。十項很便宜,兩百多項不是 —— 每一輪都
+送一次。T4 的紀錄寫明:屆時應改成**給模型一支查詢工具**,而不是繼續加大清單。
+這件事要在目錄變大的同時處理,不能拖。
+
+**2. `CatalogGeometry.rotationY` 目前沒有任何使用者。** 原本只有 cabinet 用到
+(模型長邊在 X、平面圖長邊在 Z),cabinet 改程序化之後就空了,守著它的
+`venue-furniture-models` M2 已移除。T6 匯入新模型時若用得上,補一支同型的測試;
+若確定用不上,把欄位一起拿掉。**不要放著不管。**
+
+**3. 三個不再使用的 GLB。** `table.glb` / `cabinet.glb` / `display.glb` 仍在
+`public/models/venue/`,`venue-furniture-assets` 的 A1/A2/B 仍在守它們,但沒有
+品項會請求。要清的話會牽動 `ATTRIBUTION.md` 與 `build-venue-models.mjs`,與
+目錄擴充一起做比較省事。
+
+### 新增方正品項的做法(T5 建立的路)
+
+程序化 builder 以 `ProceduralShape` 為鍵,**尺寸變體共用造型**:
+`TBL-120-75` 與 `TBL-120-100` 都是 `shape: "table"`,差別只在 `height3d`。
+新增一個尺寸變體只要加一筆目錄資料,不必碰 `proceduralFurniture.ts`。
+需要新造型時才加 builder,並在 `ProceduralShape` 聯集加名字。
 
 **注意**:幾何快取仍以 `code` 為鍵。兩個尺寸變體共用 shape 但不共用 mesh,
-快取若改以 shape 為鍵,第二個變體會拿到第一個的幾何(T3 的 commit 記了這件事)。
+快取若改以 shape 為鍵,第二個變體會拿到第一個的幾何(T3 的 commit 記了)。
 
-### AI 那條路徑目前的樣子(T4 剛改完,動它之前先看這裡)
+**造型要有識別特徵。** 白模下只有一個盒子的話,櫃子與展示櫃完全分不出來 ——
+T5 給櫃子加了把手橫料、給展示櫃加了層板,就是為了這個。
+
+### AI 那條路徑目前的樣子(動它之前先看這裡)
 
 - tool schema 的 `code` 是**自由字串**,沒有 enum —— 目錄會長大,enum 跟著改動
   會讓 prompt cache 前綴每次失效。
-- 模型從**每輪的目前配置附錄**(`AiPanel` 的 `configJson` 裡的 `catalogue` 欄位)
-  知道有哪些代碼可用。不要把目錄搬進 system prompt 或 tool description —— 那兩者
-  在快取前綴裡,搬過去等於把 enum 的問題原樣搬回來。
-- 目錄長到上百項時(T6)這份附錄會太貴,屆時應改成給模型一支查詢工具。
+- 模型從**每輪的目前配置附錄**知道有哪些代碼可用。不要把目錄搬進 system prompt
+  或 tool description —— 那兩者在快取前綴裡,搬過去等於把 enum 的問題原樣搬回來。
 - 代碼合法性由套用端(`PlanEditor` 的 `applyActions`)查目錄決定,查不到就跳過
   該一件並回報,**不中斷同一批的其他 action**。
 
 **改 schema 時,fixture 要一起改。** 三處在用:`ai-panel-persistent`、
 `venue-refined-materials` T14、`ai-panel`(需帳密)。只改一邊的症狀是 handler
 丟例外、`applyActions` 整個掛掉、面板不渲染,而測試只說「找不到 ai-action-summary」
-—— 指不到真正的原因。T3 踩過一次。
+—— 指不到真正的原因。T3 踩過一次,T4 改 schema 時又驗證了一次。
 
 ---
 

@@ -13,6 +13,9 @@ import { catalogItem, CATALOG } from "../src/lib/venue/catalog";
 // 要消滅的不一致。
 
 const TABLE = "TBL-120-75";
+// T5 之後方正規格件全走程序化,仍是 GLB 的只剩椅/沙發/植栽。
+// 「模型快取」相關的案例必須用這三者之一,否則場上根本沒有模型可快取。
+const CHAIR = "CHR-45-90";
 const COUNTER = "CNT-100-110";
 const PODIUM = "POD-60-110";
 
@@ -198,7 +201,7 @@ test.describe("Catalogue drives drawing (T3)", () => {
     test.slow();
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
-    await place(page, editor, TABLE);
+    await place(page, editor, CHAIR);
 
     await editor.goToRefined();
     await expect
