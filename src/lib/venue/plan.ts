@@ -21,10 +21,15 @@ export interface PlanPoint {
 
 export type FloorPolygon = PlanPoint[];
 
-// 預設地板生成尺寸與預設視圖 fit 尺寸(非可規劃範圍上限 — 見 PLAN_AREA_SIZE_M)。
+// 預設地板生成尺寸與預設視圖 fit 尺寸(非可編輯範圍 — 見 planAreaFor)。
 export const VENUE_SIZE_M = 50;
-// 可規劃範圍上限(公尺),前端 clamp 唯一來源。
-export const PLAN_AREA_SIZE_M = 200;
+/**
+ * 攤位四周的可編輯邊距(公尺)。
+ *
+ * 這圈邊距是**暫存區**:重排攤位時可以先把家具挪出攤位放著,再一件件擺回去。
+ * 沒有它的話,唯一的空地就是攤位本身,而攤位正是要清空的那塊。
+ */
+export const PLAN_AREA_MARGIN_M = 5;
 export const SNAP_M = 0.5;
 export const MIN_FLOOR_VERTICES = 3;
 export const GRID_MINOR_M = 1;
@@ -63,6 +68,43 @@ export const DEFAULT_FLOOR: FloorPolygon = createBoothFloor(
   DEFAULT_BOOTH.h,
 );
 
+/**
+ * 可編輯範圍 = 攤位外擴 `PLAN_AREA_MARGIN_M`。**前端所有 clamp 的唯一來源。**
+ *
+ * 取代原本固定的 200m 見方:攤位是 3×3 時,可編輯範圍是 13×13 而不是 200×200。
+ * 那個固定值讓使用者可以把柱子拖到離攤位 190m 外 —— 在畫面上是「東西不見了」,
+ * 而且格線每軸要畫 200 條。範圍跟著攤位走之後,兩個問題一起消失。
+ *
+ * 回傳型別刻意重用 `FloorBounds`:可編輯範圍與地板外接矩形是同一種東西(一個
+ * 軸對齊矩形),既有的 `clampRectCenterToBounds` / `isRectOutsideBounds` /
+ * `clampWallToBounds` 因此可以直接吃它,不必為了同一個概念養兩套詞彙。
+ *
+ * 錨點是 `BOOTH_ORIGIN` 而不是世界原點 —— 攤位換尺寸時左上角固定不動(見
+ * `BOOTH_ORIGIN`),所以範圍是以攤位為中心往外長,minX/minY 會是負邊距後的值。
+ *
+ * **不要接一個「從目前地板多邊形即時推導範圍」的版本。** 那會構成回饋迴圈:
+ * 拖曳頂點讓地板變大 → 範圍跟著變大 → 更大的範圍允許把頂點拖得更遠。實測
+ * 一次 8 步的拖曳就能把 3m 攤位的地板拉到 40m 外。呼叫端要傳的是**使用者
+ * 選定的攤位尺寸**(只在換 preset / 自訂尺寸 / 讀檔 / AI 重畫地板時改變),
+ * 不是每一幀的地板現況。
+ */
+export function planAreaFor(
+  boothWidthM: number,
+  boothHeightM: number,
+  origin: PlanPoint = BOOTH_ORIGIN,
+): FloorBounds {
+  const minX = origin.x - PLAN_AREA_MARGIN_M;
+  const minY = origin.y - PLAN_AREA_MARGIN_M;
+  const maxX = origin.x + boothWidthM + PLAN_AREA_MARGIN_M;
+  const maxY = origin.y + boothHeightM + PLAN_AREA_MARGIN_M;
+  return { minX, maxX, minY, maxY, widthM: maxX - minX, heightM: maxY - minY };
+}
+
+export const DEFAULT_PLAN_AREA: FloorBounds = planAreaFor(
+  DEFAULT_BOOTH.w,
+  DEFAULT_BOOTH.h,
+);
+
 function safeNumber(v: number): number {
   return Number.isFinite(v) ? v : 0;
 }
@@ -79,15 +121,19 @@ export function snapToGrid(v: number): number {
   return Math.round(safe / SNAP_M) * SNAP_M;
 }
 
-export function clampToBounds(v: number, sizeM: number = VENUE_SIZE_M): number {
+/** 把單軸座標夾進 [min, max]。 */
+export function clampToBounds(v: number, min: number, max: number): number {
   const safe = safeNumber(v);
-  return Math.min(sizeM, Math.max(0, safe));
+  return Math.min(max, Math.max(min, safe));
 }
 
-export function snapPoint(p: PlanPoint, sizeM: number = VENUE_SIZE_M): PlanPoint {
+export function snapPoint(
+  p: PlanPoint,
+  area: FloorBounds = DEFAULT_PLAN_AREA,
+): PlanPoint {
   return {
-    x: clampToBounds(snapToGrid(p.x), sizeM),
-    y: clampToBounds(snapToGrid(p.y), sizeM),
+    x: clampToBounds(snapToGrid(p.x), area.minX, area.maxX),
+    y: clampToBounds(snapToGrid(p.y), area.minY, area.maxY),
   };
 }
 
@@ -148,12 +194,12 @@ export function insertVertexOnEdge(
   polygon: FloorPolygon,
   edgeIndex: number,
   rawPoint: PlanPoint,
-  sizeM: number = VENUE_SIZE_M,
+  area: FloorBounds = DEFAULT_PLAN_AREA,
 ): FloorPolygon {
   const a = polygon[edgeIndex];
   const b = polygon[(edgeIndex + 1) % polygon.length];
   const projected = closestPointOnSegment(a, b, rawPoint);
-  const snapped = snapPoint(projected, sizeM);
+  const snapped = snapPoint(projected, area);
 
   if (samePoint(snapped, a) || samePoint(snapped, b)) {
     return polygon;
@@ -178,9 +224,9 @@ export function moveVertex(
   polygon: FloorPolygon,
   index: number,
   rawPoint: PlanPoint,
-  sizeM: number = VENUE_SIZE_M,
+  area: FloorBounds = DEFAULT_PLAN_AREA,
 ): FloorPolygon {
-  const snapped = snapPoint(rawPoint, sizeM);
+  const snapped = snapPoint(rawPoint, area);
   return polygon.map((vertex, i) => (i === index ? snapped : vertex));
 }
 
@@ -247,10 +293,10 @@ export function createObjectId(): string {
 export function createWall(
   rawStart: PlanPoint,
   rawEnd: PlanPoint,
-  sizeM: number = VENUE_SIZE_M,
+  area: FloorBounds = DEFAULT_PLAN_AREA,
 ): WallSegment | null {
-  const start = snapPoint(rawStart, sizeM);
-  const end = snapPoint(rawEnd, sizeM);
+  const start = snapPoint(rawStart, area);
+  const end = snapPoint(rawEnd, area);
   if (samePoint(start, end)) {
     return null;
   }
@@ -258,7 +304,7 @@ export function createWall(
 }
 
 // Clamps an already-grid-aligned-or-boundary center into
-// [w/2, VENUE_SIZE_M - w/2] x [h/2, VENUE_SIZE_M - h/2] per-axis. Deliberately
+// [minX + w/2, maxX - w/2] x [minY + h/2, maxY - h/2] per-axis. Deliberately
 // does NOT re-snap to the 0.5m grid: the boundary values themselves
 // (e.g. 0.25 / 49.75 for the default 0.5m size) are half-grid offsets, so
 // re-snapping an already-clamped center (as would happen on repeated
@@ -269,25 +315,28 @@ export function clampColumnCenter(
   p: PlanPoint,
   w: number,
   h: number,
-  sizeM: number = VENUE_SIZE_M,
+  area: FloorBounds = DEFAULT_PLAN_AREA,
 ): PlanPoint {
   const halfW = w / 2;
   const halfH = h / 2;
   const safe = { x: safeNumber(p.x), y: safeNumber(p.y) };
   return {
-    x: Math.min(sizeM - halfW, Math.max(halfW, safe.x)),
-    y: Math.min(sizeM - halfH, Math.max(halfH, safe.y)),
+    x: Math.min(area.maxX - halfW, Math.max(area.minX + halfW, safe.x)),
+    y: Math.min(area.maxY - halfH, Math.max(area.minY + halfH, safe.y)),
   };
 }
 
-export function createColumn(rawCenter: PlanPoint, sizeM: number = VENUE_SIZE_M): Column {
+export function createColumn(
+  rawCenter: PlanPoint,
+  area: FloorBounds = DEFAULT_PLAN_AREA,
+): Column {
   return {
     id: createObjectId(),
     center: clampColumnCenter(
-      snapPoint(rawCenter, sizeM),
+      snapPoint(rawCenter, area),
       COLUMN_SIZE_M,
       COLUMN_SIZE_M,
-      sizeM,
+      area,
     ),
     w: COLUMN_SIZE_M,
     h: COLUMN_SIZE_M,
@@ -297,7 +346,7 @@ export function createColumn(rawCenter: PlanPoint, sizeM: number = VENUE_SIZE_M)
 export function translateWall(
   wall: WallSegment,
   deltaRaw: PlanPoint,
-  sizeM: number = VENUE_SIZE_M,
+  area: FloorBounds = DEFAULT_PLAN_AREA,
 ): WallSegment {
   const deltaX = snapToGrid(deltaRaw.x);
   const deltaY = snapToGrid(deltaRaw.y);
@@ -308,12 +357,12 @@ export function translateWall(
   const maxY = Math.max(wall.start.y, wall.end.y);
 
   const clampedDeltaX = Math.min(
-    sizeM - maxX,
-    Math.max(-minX, deltaX),
+    area.maxX - maxX,
+    Math.max(area.minX - minX, deltaX),
   );
   const clampedDeltaY = Math.min(
-    sizeM - maxY,
-    Math.max(-minY, deltaY),
+    area.maxY - maxY,
+    Math.max(area.minY - minY, deltaY),
   );
 
   return {
@@ -332,7 +381,7 @@ export function translateWall(
 export function translateColumn(
   col: Column,
   deltaRaw: PlanPoint,
-  sizeM: number = VENUE_SIZE_M,
+  area: FloorBounds = DEFAULT_PLAN_AREA,
 ): Column {
   const deltaX = snapToGrid(deltaRaw.x);
   const deltaY = snapToGrid(deltaRaw.y);
@@ -342,7 +391,7 @@ export function translateColumn(
   };
   return {
     id: col.id,
-    center: clampColumnCenter(moved, col.w, col.h, sizeM),
+    center: clampColumnCenter(moved, col.w, col.h, area),
     w: col.w,
     h: col.h,
   };
@@ -363,7 +412,7 @@ export function resizeColumnCorner(
   column: Column,
   corner: { x: -1 | 1; y: -1 | 1 },
   rawPoint: PlanPoint,
-  sizeM: number = VENUE_SIZE_M,
+  area: FloorBounds = DEFAULT_PLAN_AREA,
 ): Column {
   const left = column.center.x - column.w / 2;
   const right = column.center.x + column.w / 2;
@@ -375,7 +424,7 @@ export function resizeColumnCorner(
     y: corner.y === -1 ? bottom : top,
   };
 
-  const snapped = snapPoint(rawPoint, sizeM);
+  const snapped = snapPoint(rawPoint, area);
 
   // 1) Minimum-size clamp: floor the new width/height at SNAP_M.
   //
@@ -392,16 +441,16 @@ export function resizeColumnCorner(
   let newHeight = Math.max(SNAP_M, corner.y * (snapped.y - anchor.y));
 
   // 2) Boundary clamp: cap growth so the anchor-relative extent stays within
-  // [0, sizeM], without moving the anchor.
-  if (corner.x === 1 && anchor.x + newWidth > sizeM) {
-    newWidth = sizeM - anchor.x;
-  } else if (corner.x === -1 && anchor.x - newWidth < 0) {
-    newWidth = anchor.x;
+  // the editable area, without moving the anchor.
+  if (corner.x === 1 && anchor.x + newWidth > area.maxX) {
+    newWidth = area.maxX - anchor.x;
+  } else if (corner.x === -1 && anchor.x - newWidth < area.minX) {
+    newWidth = anchor.x - area.minX;
   }
-  if (corner.y === 1 && anchor.y + newHeight > sizeM) {
-    newHeight = sizeM - anchor.y;
-  } else if (corner.y === -1 && anchor.y - newHeight < 0) {
-    newHeight = anchor.y;
+  if (corner.y === 1 && anchor.y + newHeight > area.maxY) {
+    newHeight = area.maxY - anchor.y;
+  } else if (corner.y === -1 && anchor.y - newHeight < area.minY) {
+    newHeight = anchor.y - area.minY;
   }
 
   const newCenter = {
@@ -608,9 +657,9 @@ export function moveWallEndpoint(
   wall: WallSegment,
   which: "start" | "end",
   rawPoint: PlanPoint,
-  sizeM: number = VENUE_SIZE_M,
+  area: FloorBounds = DEFAULT_PLAN_AREA,
 ): WallSegment {
-  const snapped = snapPoint(rawPoint, sizeM);
+  const snapped = snapPoint(rawPoint, area);
   const newStart = which === "start" ? snapped : wall.start;
   const newEnd = which === "end" ? snapped : wall.end;
   if (samePoint(newStart, newEnd)) {
@@ -626,6 +675,11 @@ export interface PlanSnapshot {
   walls: WallSegment[];
   columns: Column[];
   furniture: FurnitureItem[];
+  /**
+   * 可編輯範圍的寬(公尺)。**衍生值,讀檔時一律忽略** —— 範圍由 `polygon`
+   * 反推(`planAreaForFloor`),存這個欄位只是為了不動存檔 API 的形狀。
+   * 範圍現在是矩形,單一數字表達不完整,要用就用 `polygon`。
+   */
   venueSizeM: number;
   wallHeightM: number;
   surfaces: SurfaceSelection;
@@ -653,7 +707,7 @@ export const EMPTY_PLAN_BASELINE = serializePlanSnapshot({
   walls: [],
   columns: [],
   furniture: [],
-  venueSizeM: PLAN_AREA_SIZE_M,
+  venueSizeM: DEFAULT_PLAN_AREA.widthM,
   wallHeightM: DEFAULT_WALL_HEIGHT_M,
   surfaces: DEFAULT_SURFACE_SELECTION,
 });

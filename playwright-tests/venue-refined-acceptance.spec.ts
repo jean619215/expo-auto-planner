@@ -136,7 +136,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 7: 效能與驗收", () => {
     expect(await editor.currentStep()).toBe("edit");
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.columnTool();
     await editor.placeColumn({ x: 15, y: 15 });
 
@@ -389,7 +389,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 7: 效能與驗收", () => {
 
     // 01:畫得動、選得到、刪得掉。
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     expect(await editor.wallCount()).toBe(1);
     await editor.columnTool();
     await editor.placeColumn({ x: 15, y: 15 });

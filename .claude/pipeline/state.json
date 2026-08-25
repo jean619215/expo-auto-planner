@@ -1,10 +1,11 @@
 {
-  "story_file": "stories/venue-refined-3d.md",
-  "story_title": "精密 3D 場景 (步驟 03)",
-  "task_index": 6,
-  "current_task": "[FRONTEND] 效能與驗收:步驟 03 資源只在進入時載入、離開可釋放,Playwright 驗收三步驟流程與唯讀行為",
+  "story_file": "stories/venue-catalog-and-quote-draft.md",
+  "story_title": "家具目錄與報價(第三輪)",
+  "task_index": 0,
+  "current_task": "[FRONTEND] T1 可編輯範圍改成「攤位 + 5m 邊距」,取代 PLAN_AREA_SIZE_M",
   "task_type": "FRONTEND",
   "stage": "complete",
+  "next_task": "[FRONTEND] T2 建 src/lib/venue/catalog.ts 資料層,9 個 kind 遷移成 9 個品項",
   "iteration": {
     "review": 0,
     "qa": 0
@@ -23,5 +24,5 @@
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "last_updated": "2026-08-11T00:00:00+08:00"
+  "last_updated": "2026-08-24T23:00:00+08:00"
 }

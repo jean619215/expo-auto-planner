@@ -149,7 +149,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 4: 家具模型 asset pipelin
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.columnTool();
     await editor.placeColumn({ x: 15, y: 15 });
 
@@ -175,7 +175,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 4: 家具模型 asset pipelin
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.clickNextStep();
 
     expect(await editor.currentStep()).toBe("preview");
@@ -194,7 +194,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 4: 家具模型 asset pipelin
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.clickNextStep();
     await expect.poll(() => editor.sceneGenerated(), { timeout: 15_000 }).toBe(true);
     await editor.clickBackToEdit();

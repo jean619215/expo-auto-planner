@@ -189,7 +189,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 6: 展場家具程序化幾�
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.columnTool();
     await editor.placeColumn({ x: 15, y: 15 });
     await editor.clickNextStep();

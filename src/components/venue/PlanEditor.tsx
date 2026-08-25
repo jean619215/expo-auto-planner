@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Arrow, Circle, Layer, Line, Rect, Stage, Text } from "react-konva";
 import type Konva from "konva";
 import { ZoomIn, ZoomOut, Maximize } from "lucide-react";
@@ -13,7 +13,7 @@ import {
   GRID_MAJOR_M,
   GRID_MINOR_M,
   MIN_FLOOR_VERTICES,
-  PLAN_AREA_SIZE_M,
+  planAreaFor,
   VENUE_SIZE_M,
   WALL_THICKNESS_M,
   clampColumnCenter,
@@ -47,6 +47,7 @@ import {
   wallLengthM,
   type BoundarySide,
   type Column,
+  type FloorBounds,
   type FloorPolygon,
   type PlanPoint,
   type PlanSnapshot,
@@ -102,8 +103,10 @@ const MAX_SURFACE_UPLOAD_BYTES = 8 * 1024 * 1024;
 
 // 預設視圖 fit 尺寸(= VENUE_SIZE_M,與現行預設視覺逐像素一致的關鍵)。
 const DEFAULT_VIEW_SIZE_M = VENUE_SIZE_M;
-// zoom out 到底恰好完整容納 PLAN_AREA_SIZE_M(200)。
-const MIN_SCALE = DEFAULT_VIEW_SIZE_M / PLAN_AREA_SIZE_M;
+// 縮放下限固定 25%。可編輯範圍現在跟著攤位走(3×3 攤位只有 13×13m),不再
+// 需要為了「看得到整個 200m 平面」而綁定範圍大小 —— 這個下限現在純粹是
+// 使用者能縮多小的體感界線。
+const MIN_SCALE = 0.25;
 const MAX_SCALE = 4;
 const WHEEL_SCALE_FACTOR = 1.06;
 const BUTTON_SCALE_FACTOR = 1.25;
@@ -114,33 +117,71 @@ type SelectedObject = {
 } | null;
 type WizardStep = "edit" | "preview" | "refined";
 
-function buildGridLines(pxPerMeter: number, venueSizeM: number) {
+/**
+ * 可編輯範圍上的 1m 格線。範圍是任意軸對齊矩形(不再是從原點起算的正方形),
+ * 所以直線與橫線要各自照自己那一軸的公尺刻度跑,不能共用一個迴圈變數。
+ *
+ * 刻度對齊世界座標的整數公尺(而不是從 minX 起算),圖上的 5m 粗線才會落在
+ * 5 的倍數上 —— 攤位錨在 20m,邊距 5m,minX 是 15,兩者剛好一致;之後邊距
+ * 若改成非整數,粗線仍然對得上公尺刻度。
+ */
+function buildGridLines(pxPerMeter: number, area: FloorBounds) {
   const lines: {
     key: string;
     points: number[];
     stroke: string;
     strokeWidth: number;
   }[] = [];
-  const sizePx = venueSizeM * pxPerMeter;
 
-  for (let m = 0; m <= venueSizeM; m += GRID_MINOR_M) {
+  const x0 = area.minX * pxPerMeter;
+  const x1 = area.maxX * pxPerMeter;
+  const y0 = area.minY * pxPerMeter;
+  const y1 = area.maxY * pxPerMeter;
+
+  for (
+    let m = Math.ceil(area.minX / GRID_MINOR_M) * GRID_MINOR_M;
+    m <= area.maxX;
+    m += GRID_MINOR_M
+  ) {
     const isMajor = m % GRID_MAJOR_M === 0;
     const pos = m * pxPerMeter;
     lines.push({
       key: `v-${m}`,
-      points: [pos, 0, pos, sizePx],
+      points: [pos, y0, pos, y1],
       stroke: isMajor ? "#d6d3d1" : "#e7e5e4",
       strokeWidth: isMajor ? 1.5 : 1,
     });
+  }
+
+  for (
+    let m = Math.ceil(area.minY / GRID_MINOR_M) * GRID_MINOR_M;
+    m <= area.maxY;
+    m += GRID_MINOR_M
+  ) {
+    const isMajor = m % GRID_MAJOR_M === 0;
+    const pos = m * pxPerMeter;
     lines.push({
       key: `h-${m}`,
-      points: [0, pos, sizePx, pos],
+      points: [x0, pos, x1, pos],
       stroke: isMajor ? "#d6d3d1" : "#e7e5e4",
       strokeWidth: isMajor ? 1.5 : 1,
     });
   }
 
   return lines;
+}
+
+/** 座標尺上的 5m 標籤刻度(世界座標整數公尺)。 */
+function majorTicks(min: number, max: number): number[] {
+  const ticks: number[] = [];
+  for (
+    let m = Math.ceil(min / GRID_MAJOR_M) * GRID_MAJOR_M;
+    m <= max;
+    m += GRID_MAJOR_M
+  ) {
+    ticks.push(m);
+  }
+  return ticks;
 }
 
 const WIZARD_STEPS: { step: WizardStep; no: string; label: string }[] = [
@@ -207,6 +248,16 @@ export default function PlanEditor() {
   // 判斷是否放行 Stage 的 pan drag。
   const panBlockedRef = useRef(false);
   const [polygon, setPolygon] = useState<FloorPolygon>(DEFAULT_FLOOR);
+  /**
+   * 攤位本身的外接矩形 —— 可編輯範圍的錨。
+   *
+   * **刻意不從 `polygon` 即時推導。** 推導過的版本會在拖曳頂點時失控:範圍
+   * 跟著地板長大,長大的範圍又允許把地板拖得更遠,一次 8 步的拖曳就從 3m
+   * 攤位跑到 40m 外。範圍必須錨在「使用者選定的攤位尺寸」這個穩定的東西上,
+   * 只在真正重新定義攤位時才更新(換 preset / 自訂尺寸 / 讀檔 / AI 產生),
+   * 頂點的自由編輯則在那圈邊距內活動。
+   */
+  const [boothBounds, setBoothBounds] = useState(() => floorBoundsM(DEFAULT_FLOOR));
   const [selectedVertex, setSelectedVertex] = useState<number | null>(null);
 
   const [mode, setMode] = useState<EditorMode>("select");
@@ -302,7 +353,24 @@ export default function PlanEditor() {
   // 數值同現行預設(DEFAULT_VIEW_SIZE_M = VENUE_SIZE_M)— 預設視覺不變的
   // 關鍵:zoom/pan 是後面 Stage transform 這一層,與此無關。
   const pxPerMeter = computePxPerMeter(stagePx, DEFAULT_VIEW_SIZE_M);
-  const gridLines = buildGridLines(pxPerMeter, PLAN_AREA_SIZE_M);
+  /**
+   * 可編輯範圍 —— 由目前地板反推(攤位外擴一圈邊距),前端所有 clamp 的依據。
+   *
+   * 跟著地板走而不是存一份獨立 state:地板就是攤位,兩份會不同步。改攤位尺寸
+   * (`applyBoothSize`)換的是地板,範圍自然跟著換,不需要額外同步一次。
+   */
+  const planArea = useMemo(
+    () =>
+      planAreaFor(boothBounds.widthM, boothBounds.heightM, {
+        x: boothBounds.minX,
+        y: boothBounds.minY,
+      }),
+    [boothBounds],
+  );
+  const gridLines = useMemo(
+    () => buildGridLines(pxPerMeter, planArea),
+    [pxPerMeter, planArea],
+  );
 
   // Konva 官方滾輪錨點縮放食譜:以 anchor(螢幕座標系下的一點)為中心縮放,
   // 該點縮放前後的螢幕位置不變。newScale 靜默 clamp 到 [MIN_SCALE,
@@ -360,7 +428,7 @@ export default function PlanEditor() {
       walls,
       columns,
       furniture,
-      venueSizeM: PLAN_AREA_SIZE_M,
+      venueSizeM: planArea.widthM,
       wallHeightM,
       surfaces,
     };
@@ -376,8 +444,8 @@ export default function PlanEditor() {
   // GET /api/plans/[slot] 200 之後;非 200 情境該元件不會呼叫此函式,原地
   // 狀態不丟。
   function applyLoadedPlan(data: LoadedPlan) {
-    // rawPlan.venueSizeM(舊存檔任意值:40/50/>200/缺欄位)一律忽略 — 前端
-    // 固定以 PLAN_AREA_SIZE_M(200)為運算上限,天然涵蓋「舊檔相容 +
+    // rawPlan.venueSizeM(舊存檔任意值:40/50/200/缺欄位)一律忽略 — 可編輯
+    // 範圍由讀進來的 polygon 重新錨定攤位,天然涵蓋「舊檔相容 +
     // 缺欄位 fallback 不崩潰」,無需 fallback 分支。
     const rawPlan = data.plan as {
       polygon?: FloorPolygon;
@@ -402,6 +470,7 @@ export default function PlanEditor() {
     };
 
     setPolygon(loadedPolygon);
+    setBoothBounds(floorBoundsM(loadedPolygon));
     setWalls(loadedWalls);
     setColumns(loadedColumns);
     setFurniture(loadedFurniture);
@@ -422,7 +491,7 @@ export default function PlanEditor() {
         walls: loadedWalls,
         columns: loadedColumns,
         furniture: loadedFurniture,
-        venueSizeM: PLAN_AREA_SIZE_M,
+        venueSizeM: planArea.widthM,
         wallHeightM: loadedWallHeightM,
         surfaces: loadedSurfaces,
       }),
@@ -450,7 +519,7 @@ export default function PlanEditor() {
   ) {
     const node = e.target;
     const meterPoint = pxToMeters({ x: node.x(), y: node.y() }, pxPerMeter);
-    const next = moveVertex(polygon, index, meterPoint, PLAN_AREA_SIZE_M);
+    const next = moveVertex(polygon, index, meterPoint, planArea);
     setPolygon(next);
     const snappedPx = metersToPx(next[index], pxPerMeter);
     node.position(snappedPx);
@@ -462,7 +531,7 @@ export default function PlanEditor() {
   ) {
     const node = e.target;
     const meterPoint = pxToMeters({ x: node.x(), y: node.y() }, pxPerMeter);
-    const next = moveVertex(polygon, index, meterPoint, PLAN_AREA_SIZE_M);
+    const next = moveVertex(polygon, index, meterPoint, planArea);
     setPolygon(next);
     const snappedPx = metersToPx(next[index], pxPerMeter);
     node.position(snappedPx);
@@ -477,7 +546,7 @@ export default function PlanEditor() {
     const { edgeIndex, distance } = findClosestEdge(polygon, meterPoint);
     // 只有點在邊附近 (0.5m 內) 才插入頂點 — 點在多邊形內部深處不動作。
     if (distance > 0.5) return;
-    const next = insertVertexOnEdge(polygon, edgeIndex, meterPoint, PLAN_AREA_SIZE_M);
+    const next = insertVertexOnEdge(polygon, edgeIndex, meterPoint, planArea);
     setPolygon(next);
   }
 
@@ -605,7 +674,7 @@ export default function PlanEditor() {
     const meterPoint = pxToMeters(pointer, pxPerMeter);
 
     if (mode === "wall") {
-      const snapped = snapPoint(meterPoint, PLAN_AREA_SIZE_M);
+      const snapped = snapPoint(meterPoint, planArea);
       setDraftWall({ start: snapped, end: snapped });
       return;
     }
@@ -623,7 +692,7 @@ export default function PlanEditor() {
     const pointer = stage?.getRelativePointerPosition();
     if (!pointer) return;
     const meterPoint = pxToMeters(pointer, pxPerMeter);
-    const snapped = snapPoint(meterPoint, PLAN_AREA_SIZE_M);
+    const snapped = snapPoint(meterPoint, planArea);
     setDraftWall({ start: draftWall.start, end: snapped });
   }
 
@@ -632,7 +701,7 @@ export default function PlanEditor() {
   ) {
     if (mode === "wall") {
       if (draftWall) {
-        const wall = createWall(draftWall.start, draftWall.end, PLAN_AREA_SIZE_M);
+        const wall = createWall(draftWall.start, draftWall.end, planArea);
         if (wall) {
           setWalls((prev) => [...prev, wall]);
           setSelectedObject({ type: "wall", id: wall.id });
@@ -650,7 +719,7 @@ export default function PlanEditor() {
       const pointer = stage?.getRelativePointerPosition();
       if (!pointer) return;
       const meterPoint = pxToMeters(pointer, pxPerMeter);
-      const column = createColumn(meterPoint, PLAN_AREA_SIZE_M);
+      const column = createColumn(meterPoint, planArea);
       setColumns((prev) => [...prev, column]);
       setSelectedObject({ type: "column", id: column.id });
       setSelectedVertex(null);
@@ -667,7 +736,7 @@ export default function PlanEditor() {
     const originPx = metersToPx(wall.start, pxPerMeter);
     const deltaPx = { x: node.x() - originPx.x, y: node.y() - originPx.y };
     const deltaM = pxToMeters(deltaPx, pxPerMeter);
-    const updated = translateWall(wall, deltaM, PLAN_AREA_SIZE_M);
+    const updated = translateWall(wall, deltaM, planArea);
     setWalls((prev) => prev.map((w) => (w.id === wall.id ? updated : w)));
     const snappedPx = metersToPx(updated.start, pxPerMeter);
     node.position(snappedPx);
@@ -681,7 +750,7 @@ export default function PlanEditor() {
     const originPx = metersToPx(column.center, pxPerMeter);
     const deltaPx = { x: node.x() - originPx.x, y: node.y() - originPx.y };
     const deltaM = pxToMeters(deltaPx, pxPerMeter);
-    const updated = translateColumn(column, deltaM, PLAN_AREA_SIZE_M);
+    const updated = translateColumn(column, deltaM, planArea);
     setColumns((prev) => prev.map((c) => (c.id === column.id ? updated : c)));
     const snappedPx = metersToPx(updated.center, pxPerMeter);
     node.position(snappedPx);
@@ -694,7 +763,7 @@ export default function PlanEditor() {
   ) {
     const node = e.target;
     const meterPoint = pxToMeters({ x: node.x(), y: node.y() }, pxPerMeter);
-    const updated = moveWallEndpoint(wall, which, meterPoint, PLAN_AREA_SIZE_M);
+    const updated = moveWallEndpoint(wall, which, meterPoint, planArea);
     setWalls((prev) => prev.map((w) => (w.id === wall.id ? updated : w)));
     const snappedPx = metersToPx(updated[which], pxPerMeter);
     node.position(snappedPx);
@@ -707,7 +776,7 @@ export default function PlanEditor() {
   ) {
     const node = e.target;
     const meterPoint = pxToMeters({ x: node.x(), y: node.y() }, pxPerMeter);
-    const updated = resizeColumnCorner(column, corner, meterPoint, PLAN_AREA_SIZE_M);
+    const updated = resizeColumnCorner(column, corner, meterPoint, planArea);
     setColumns((prev) => prev.map((c) => (c.id === column.id ? updated : c)));
     const cornerMeter = {
       x: updated.center.x + (corner.x * updated.w) / 2,
@@ -749,7 +818,7 @@ export default function PlanEditor() {
       switch (action.type) {
         case "generate_plan": {
           const floorPoints = action.input.floor.map((p) =>
-            snapPoint(p, PLAN_AREA_SIZE_M),
+            snapPoint(p, planArea),
           );
           if (floorPoints.length < MIN_FLOOR_VERTICES) {
             results.push({
@@ -760,15 +829,15 @@ export default function PlanEditor() {
             break;
           }
           const generatedWalls = action.input.walls
-            .map((w) => createWall(w.start, w.end, PLAN_AREA_SIZE_M))
+            .map((w) => createWall(w.start, w.end, planArea))
             .filter((w): w is WallSegment => w !== null);
           const generatedColumns: Column[] = action.input.columns.map((c) => ({
             id: createObjectId(),
             center: clampColumnCenter(
-              snapPoint(c.center, PLAN_AREA_SIZE_M),
+              snapPoint(c.center, planArea),
               c.w,
               c.h,
-              PLAN_AREA_SIZE_M,
+              planArea,
             ),
             w: c.w,
             h: c.h,
@@ -780,10 +849,10 @@ export default function PlanEditor() {
                 id: createObjectId(),
                 kind: f.kind,
                 center: clampColumnCenter(
-                  snapPoint(f.center, PLAN_AREA_SIZE_M),
+                  snapPoint(f.center, planArea),
                   defaults.w,
                   defaults.h,
-                  PLAN_AREA_SIZE_M,
+                  planArea,
                 ),
                 w: defaults.w,
                 h: defaults.h,
@@ -817,10 +886,10 @@ export default function PlanEditor() {
             id: createObjectId(),
             kind: action.input.kind,
             center: clampColumnCenter(
-              snapPoint(action.input.center, PLAN_AREA_SIZE_M),
+              snapPoint(action.input.center, planArea),
               defaults.w,
               defaults.h,
-              PLAN_AREA_SIZE_M,
+              planArea,
             ),
             w: defaults.w,
             h: defaults.h,
@@ -853,7 +922,7 @@ export default function PlanEditor() {
             const updated = translateWall(
               wall,
               { x: center.x - mid.x, y: center.y - mid.y },
-              PLAN_AREA_SIZE_M,
+              planArea,
             );
             nextWalls = nextWalls.map((w, i) => (i === index ? updated : w));
           } else if (itemType === "column") {
@@ -869,7 +938,7 @@ export default function PlanEditor() {
             const updated = translateColumn(
               col,
               { x: center.x - col.center.x, y: center.y - col.center.y },
-              PLAN_AREA_SIZE_M,
+              planArea,
             );
             nextColumns = nextColumns.map((c, i) =>
               i === index ? updated : c,
@@ -887,7 +956,7 @@ export default function PlanEditor() {
             const updated = translateFurniture(
               item,
               { x: center.x - item.center.x, y: center.y - item.center.y },
-              PLAN_AREA_SIZE_M,
+              planArea,
             );
             nextFurniture = nextFurniture.map((f, i) =>
               i === index ? updated : f,
@@ -942,7 +1011,7 @@ export default function PlanEditor() {
         }
         case "resize_floor": {
           const points = action.input.points.map((p) =>
-            snapPoint(p, PLAN_AREA_SIZE_M),
+            snapPoint(p, planArea),
           );
           if (points.length < MIN_FLOOR_VERTICES) {
             results.push({
@@ -969,6 +1038,8 @@ export default function PlanEditor() {
     // 第一次呼叫剛寫入的結果,而不是等到 effect 才同步的舊值。
     if (nextPolygon !== polygonRef.current) {
       setPolygon(nextPolygon);
+      // AI 換掉整塊地板 = 重新定義攤位,範圍跟著重錨。
+      setBoothBounds(floorBoundsM(nextPolygon));
       polygonRef.current = nextPolygon;
     }
     if (nextWalls !== wallsRef.current) {
@@ -1036,27 +1107,37 @@ export default function PlanEditor() {
   // 換尺寸會把地板換成以 BOOTH_ORIGIN 為左上角的矩形。原本擺在外圍的柱子/
   // 家具/牆會落到新場地外,所以先數出件數;有東西會被搬動就先問過使用者,
   // 沒有就直接套用(不為了「一致」而多一個沒有資訊量的對話框)。
+  /**
+   * 換攤位尺寸後會落在**可編輯範圍**外的物件數。
+   *
+   * 量的是可編輯範圍而不是攤位本身:攤位外那圈邊距是合法的暫存區(見
+   * `PLAN_AREA_MARGIN_M`),擺在那裡的東西沒有「超出」。攤位縮小時範圍跟著
+   * 縮,原本在邊距裡的東西才可能真的被擠出去 —— 那才是要提示的情況。
+   */
   function outsideCountFor(widthM: number, heightM: number): number {
-    const nextBounds = floorBoundsM(createBoothFloor(widthM, heightM));
+    const nextArea = planAreaFor(widthM, heightM);
     return (
-      columns.filter((c) => isRectOutsideBounds(c, nextBounds)).length +
-      furniture.filter((f) => isRectOutsideBounds(f, nextBounds)).length +
-      walls.filter((w) => isWallOutsideBounds(w, nextBounds)).length
+      columns.filter((c) => isRectOutsideBounds(c, nextArea)).length +
+      furniture.filter((f) => isRectOutsideBounds(f, nextArea)).length +
+      walls.filter((w) => isWallOutsideBounds(w, nextArea)).length
     );
   }
 
   function applyBoothSize(widthM: number, heightM: number) {
     const nextPolygon = createBoothFloor(widthM, heightM);
-    const nextBounds = floorBoundsM(nextPolygon);
+    // 夾進新的可編輯範圍(攤位 + 邊距),不是夾進攤位 —— 否則本來刻意放在
+    // 邊距暫存區的家具會在改尺寸時被一起吸回攤位裡。
+    const nextArea = planAreaFor(widthM, heightM);
 
     setPolygon(nextPolygon);
+    setBoothBounds(floorBoundsM(nextPolygon));
     setColumns((prev) =>
-      prev.map((c) => ({ ...c, center: clampRectCenterToBounds(c, nextBounds) })),
+      prev.map((c) => ({ ...c, center: clampRectCenterToBounds(c, nextArea) })),
     );
     setFurniture((prev) =>
-      prev.map((f) => ({ ...f, center: clampRectCenterToBounds(f, nextBounds) })),
+      prev.map((f) => ({ ...f, center: clampRectCenterToBounds(f, nextArea) })),
     );
-    setWalls((prev) => prev.map((w) => clampWallToBounds(w, nextBounds)));
+    setWalls((prev) => prev.map((w) => clampWallToBounds(w, nextArea)));
     setSelectedVertex(null);
     fitViewTo(widthM, heightM);
   }
@@ -1175,6 +1256,10 @@ export default function PlanEditor() {
       data-wall-label={wallLabelText}
       data-edge-labels={JSON.stringify(edgeLabelTexts)}
       data-venue-size-cm={JSON.stringify(venueSizeCm)}
+      data-plan-area-w-m={planArea.widthM}
+      data-plan-area-h-m={planArea.heightM}
+      data-plan-area={JSON.stringify(planArea)}
+      data-grid-line-count={gridLines.length}
       data-plan-surfaces={JSON.stringify(surfaces)}
       data-column-offsets-cm={
         columnOffsetsCm ? JSON.stringify(columnOffsetsCm) : undefined
@@ -1404,10 +1489,10 @@ export default function PlanEditor() {
                 >
                   <Layer listening={false}>
                     <Rect
-                      x={0}
-                      y={0}
-                      width={PLAN_AREA_SIZE_M * pxPerMeter}
-                      height={PLAN_AREA_SIZE_M * pxPerMeter}
+                      x={planArea.minX * pxPerMeter}
+                      y={planArea.minY * pxPerMeter}
+                      width={planArea.widthM * pxPerMeter}
+                      height={planArea.heightM * pxPerMeter}
                       fill="#fafaf9"
                       stroke="#a8a29e"
                       strokeWidth={1}
@@ -1422,10 +1507,7 @@ export default function PlanEditor() {
                     ))}
                   </Layer>
                   <Layer listening={false}>
-                    {Array.from(
-                      { length: PLAN_AREA_SIZE_M / GRID_MAJOR_M + 1 },
-                      (_, i) => i * GRID_MAJOR_M,
-                    ).map((m) => (
+                    {majorTicks(planArea.minX, planArea.maxX).map((m) => (
                       <Text
                         key={`label-top-${m}`}
                         x={m * pxPerMeter + 2}
@@ -1435,10 +1517,7 @@ export default function PlanEditor() {
                         fill="#78716c"
                       />
                     ))}
-                    {Array.from(
-                      { length: PLAN_AREA_SIZE_M / GRID_MAJOR_M + 1 },
-                      (_, i) => i * GRID_MAJOR_M,
-                    ).map((m) => (
+                    {majorTicks(planArea.minY, planArea.maxY).map((m) => (
                       <Text
                         key={`label-left-${m}`}
                         x={2}
@@ -2047,7 +2126,8 @@ export default function PlanEditor() {
                 walls={walls}
                 columns={columns}
                 furniture={furniture}
-                venueSizeM={PLAN_AREA_SIZE_M}
+                venueSizeM={planArea.widthM}
+                planArea={planArea}
                 viewFitSizeM={sceneFit.sizeM}
                 viewCenterM={sceneFit.center}
                 wallHeightM={wallHeightM}
@@ -2150,7 +2230,7 @@ export default function PlanEditor() {
                 walls={walls}
                 columns={columns}
                 furniture={furniture}
-                venueSizeM={PLAN_AREA_SIZE_M}
+                venueSizeM={planArea.widthM}
                 viewFitSizeM={sceneFit.sizeM}
                 viewCenterM={sceneFit.center}
                 surfaces={surfaces}

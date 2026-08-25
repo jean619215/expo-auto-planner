@@ -305,7 +305,7 @@ test.describe("存檔面板 - AC4/AC5 dirty 判定", () => {
 
     // 使工作區 dirty:新增一根柱子。
     await editor.columnTool();
-    await editor.placeColumn({ x: 10, y: 10 });
+    await editor.placeColumn({ x: 21, y: 21 });
     expect(await editor.columnCount()).toBe(1);
 
     await slots.open();

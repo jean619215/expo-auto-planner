@@ -4,7 +4,7 @@
 // AGENTS.md layering ("src/lib/venue/ 維持零 React / DOM / Konva / Three
 // import"). Consumed by RefinedScene (architect-plan.md D2) to size the
 // step-03 shadow camera frustum to the actual scene content rather than the
-// fixed PLAN_AREA_SIZE_M upper bound.
+// editable plan area's upper bound.
 
 import { WALL_THICKNESS_M, type Column, type FloorPolygon, type WallSegment } from "./plan";
 import type { FurnitureItem } from "./furniture";
@@ -68,8 +68,9 @@ export function planBoundsM(
     expand(acc, wall.end.x, wall.end.y, wallHalfThickness);
   }
 
-  // Columns/furniture are clamped to venueSizeM at creation, not to the
-  // floor polygon — they can legitimately sit outside the floor, so both
+  // Columns/furniture are clamped to the editable plan area at creation, not
+  // to the floor polygon — the 5m margin around the booth is a legitimate
+  // place for them to sit, so both
   // must be folded into the bounds (not just the polygon). Circumscribing
   // radius (not w/2, h/2) is used because rotationDeg can be any angle, so
   // the unrotated w x h footprint would undercount a rotated item's extent.

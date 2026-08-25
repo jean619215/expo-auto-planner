@@ -200,7 +200,7 @@ test.describe("AiPanel 跨步驟常駐 - AC5 preview 下指令即時反映 3D", 
     const ai = new AiPanelPage(page);
     await editor.navigate();
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.clickNextStep();
     await expect(editor.stepPreview).toBeVisible();
     await ai.open();
@@ -312,7 +312,7 @@ test.describe("AiPanel 跨步驟常駐 - Edge case: preview pending 中切回 ed
 
     // 等待期間使用者在 edit 手動畫一面牆。
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     expect(await editor.wallCount()).toBe(1);
 
     // 回應到達後,applyActions 仍套用到正確(最新)的幾何 state:AI 新增

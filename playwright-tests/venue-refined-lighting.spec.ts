@@ -31,10 +31,17 @@ async function waitForRefinedCanvas(page: Page) {
   });
 }
 
-/** Waits for the scene probe's first report (`data-lighting-ready="true"`). */
+/**
+ * Waits for the scene probe's first report (`data-lighting-ready="true"`).
+ *
+ * 30s 不是隨手放大的:沒有 GPU 的環境(CI 容器走 SwiftShader 軟體算圖)掛一次
+ * 步驟 03 的場景要十幾秒,整批連跑時更久。原本的 10s 在單跑時剛好夠、連跑時
+ * 就不夠 —— 失敗會呈現成「lightingReady 一直是 false」,看起來像場景壞掉,
+ * 其實只是還沒畫完。見 AGENTS.md「重量級 3D 測試要明確編列 timeout 預算」。
+ */
 async function waitForLightingReady(editor: PlanEditorPage) {
   await expect
-    .poll(() => editor.refinedLightingReady(), { timeout: 10_000 })
+    .poll(() => editor.refinedLightingReady(), { timeout: 30_000 })
     .toBe(true);
 }
 
@@ -260,8 +267,14 @@ test.describe("精密 3D 場景 (步驟 03) - Task 2: 打光與陰影", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
 
-    // 縮小到底(25%),讓 200x200 的可規劃範圍完整落在可視區域內,才能對
-    // 遠端座標下達滑鼠拖曳/繪製指令(venue-zoom-pan.spec.ts 案4 慣例)。
+    // 第三輪 T1 之後可編輯範圍是「攤位 + 5m 邊距」,預設 3×3 攤位只有 13m
+    // 見方 —— 撐不出 span > 60 的場地。這一項要驗的是「極大場地」,所以先
+    // 真的開一塊大攤位(60×60,範圍 [15,75]),再照原本的方式畫長牆。
+    await editor.applyCustomBoothSize(60, 60);
+    await editor.clickZoomReset();
+
+    // 縮小到底(25%),讓可編輯範圍完整落在可視區域內,才能對遠端座標下達
+    // 滑鼠拖曳/繪製指令(venue-zoom-pan.spec.ts 案4 慣例)。
     for (let i = 0; i < 30; i++) {
       await editor.clickZoomOut();
     }
@@ -286,11 +299,11 @@ test.describe("精密 3D 場景 (步驟 03) - Task 2: 打光與陰影", () => {
     // 牆體要撐大到讓場地 AABB 遠超預設 10m 地板(span 需 > 60),取「畫布可
     // 視範圍內能到達的最遠端點」與「案例8基準的安全上界(65m,QA 已驗證得
     // span=73)」中較保守(較短)的一個,兩者都遠大於門檻,不會弱化斷言。
-    const targetMeterX = Math.min(maxReachableMeterX, 65);
-    expect(targetMeterX).toBeGreaterThan(15); // sanity: wall must still be long
+    const targetMeterX = Math.min(maxReachableMeterX, 70);
+    expect(targetMeterX).toBeGreaterThan(30); // sanity: wall must still be long
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: targetMeterX, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: targetMeterX, y: 20 });
     // 端點必須落在畫布內才會被 Konva 建立,否則牆體數量停在 0(見 Bug 1
     // root cause)—— 在推進到下一步前先確認牆體確實建立,而非等到最後才靠
     // span 斷言間接推測。
