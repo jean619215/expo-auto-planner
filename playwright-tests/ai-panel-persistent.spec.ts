@@ -94,7 +94,12 @@ const ADD_CHAIR_FIXTURE: MockResponse = {
         type: "tool_use",
         id: "toolu_add_chair_1",
         name: "add_furniture",
-        input: { code: "CHR-45-90", center: { x: 24, y: 24 }, rotationDeg: 0 },
+        // AI 的 tool schema 到 T4 才改吃目錄代碼(src/lib/ai/tools.ts 的
+        // add_furniture 目前仍是 kind enum),所以 fixture 必須照現況送 kind。
+        // T3 一度把這裡改成 code —— 那讓 handler 的 codeForKind(undefined)
+        // 查不到品項而丟例外,整個 applyActions 掛掉、ai-action-summary 根本
+        // 不會渲染,三個案例一起紅。改 fixture 之前先改 schema。
+        input: { kind: "chair", center: { x: 24, y: 24 }, rotationDeg: 0 },
       },
     ],
     stopReason: "tool_use",

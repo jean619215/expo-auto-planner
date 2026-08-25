@@ -106,7 +106,7 @@ interface CatalogItem {
 |---|---|---|
 | ✅ **T1** | 可編輯範圍改成「攤位 + 5m 邊距」,取代 `PLAN_AREA_SIZE_M` | 與目錄無關的獨立技術債,先清掉。動到頂點/柱子/家具的夾制與 `MIN_SCALE`,晚做會跟目錄改動糾纏 |
 | ✅ **T2** | 建 `catalog.ts` 資料層,9 個 kind 遷移成 9 個品項 | 純資料與型別,不動 UI。地基 |
-| 🚧 **T3** | 繪製路徑改吃目錄:2D、白模輪廓、GLB、程序化、探針、快取 | `code` 取代 `kind` 當快取鍵與探針分組鍵 |
+| ✅ **T3** | 繪製路徑改吃目錄:2D、白模輪廓、GLB、程序化、探針、快取 | `code` 取代 `kind` 當快取鍵與探針分組鍵 |
 | **T4** | AI schema 改用 `code` + 不存在代碼的錯誤回饋 | schema 用自由字串 + 伺服器端驗證,不用 enum(目錄會長大,enum 會破壞 prompt cache) |
 | **T5** | 方正規格件改程序化參數化幾何 | 讓「同款不同尺寸」真的可行 |
 | **T6** | 擴充目錄:三層分類 + 品項與價格 | 資料工作為主 |
@@ -183,7 +183,7 @@ GLB、程序化、探針、快取)仍以 kind 當索引鍵,T3 換成 `code` 之�
 是 300**,只有 3D 是空的。使用者若讀進舊存檔,會看到 2D 有東西、3D 空無一物。
 
 
-### T3 進度(2026-08-25,未結案)
+### T3 完成紀錄(2026-08-25)
 
 實作完成,`tsc` 與 `eslint` 乾淨,新 spec `venue-catalog-drawing.spec.ts` 8 項
 **單獨跑全綠**;合跑時隨機有 1–2 支紅,原因在下面第 4 點。
@@ -231,13 +231,25 @@ GLB、程序化、探針、快取)仍以 kind 當索引鍵,T3 換成 `code` 之�
    破壞驗證(上面第一條),套件裡留的是它的靜態面:繪製路徑不得引用
    `FURNITURE_DEFAULTS` 或 `kindForCode`。
 
-**未完成:合跑穩定度**
+**結案(2026-08-25)**
 
-8 項單獨跑全綠,合跑隨機 1–2 支紅,全部紅在同一個地方 —— 步驟 02 的地板點擊
-raycast 打空,家具沒放上去(不是量測失敗)。已排除覆蓋層攔截:`elementFromPoint`
-在中心點回報的是 `CANVAS`。本機無 GPU(SwiftShader,AGENTS.md 記過慢 3–4 倍),
-推測是首次進場景時相機/OrbitControls 尚未安定。目前 spec 有 5 次重試 + 放置模式
-守衛(`data-placing-code`),還不夠。下一步是放寬重試預算並連跑數輪量穩定度。
+上面留的「合跑穩定度」問題**沒有重現**。`venue-catalog-drawing.spec.ts` 在
+6 輪不同組合下全綠:單獨跑 3 輪、與 7 支 3D 重量級 spec 合跑 1 輪、全套連跑
+2 輪。spec 現有的 8 次重試 + `data-placing-code` 放置模式守衛已經夠用,沒有
+再放寬預算。
+
+**真正擋著 T3 結案的是另一件事,而且不是 flake:`ai-panel-persistent` 有 3 支
+穩定紅。** T3 把 AI tool-call 的 fixture 從 `{ kind: "chair" }` 改成
+`{ code: "CHR-45-90" }`,但 `src/lib/ai/tools.ts` 的 `add_furniture` schema 到
+**T4** 才會換 —— handler 仍讀 `action.input.kind`。fixture 一改,
+`codeForKind(undefined)` 查不到品項而丟例外,整個 `applyActions` 掛掉,
+`ai-action-summary` 根本不會渲染,三個案例一起紅。
+
+fixture 已改回 `kind` 並在該處註明「改 fixture 之前先改 schema」。T3 對該檔的
+其餘三處改動(放置 testid、存檔欄位 `code`)是對的,保留。
+
+免登入的 28 支 spec 最後結果:**256 通過、0 失敗**。`npm run lint` 與
+`npx tsc --noEmit` 乾淨。
 
 
 ---

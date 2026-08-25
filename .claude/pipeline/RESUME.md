@@ -1,6 +1,6 @@
 # 接續執行備忘 — story `stories/venue-catalog-and-quote-draft.md`(第三輪:家具目錄與報價)
 
-> 最後更新:2026-08-24(T1 完成,T2 待開工)。
+> 最後更新:2026-08-25(T1–T3 完成,T4 待開工)。
 > 這份是「隔一陣子回來、或換一個 agent 接手要怎麼繼續」的入口。
 > 逐階段細節在 `.claude/pipeline/task-log.md`,決策與驗收條件在 story 檔本身。
 
@@ -11,18 +11,18 @@
 | 項目 | 狀態 |
 |---|---|
 | 第一輪(白模產生器)、第二輪(使用者回饋)| ✅ 已合併進 `master`(PR #12 / #13) |
-| 第三輪 T1(可編輯範圍)| ✅ 完成,已推上 `claude/work-status-review-wg0mmu` |
-| 第三輪 T2–T9 | ⬜ 待開工,決策與驗收條件都已寫定 |
-| 免登入 26 支 spec | ✅ 241 通過、0 失敗 |
+| 第三輪 T1(可編輯範圍)/ T2(目錄資料層)/ T3(繪製路徑改吃目錄)| ✅ 完成 |
+| 第三輪 T4–T9 | ⬜ 待開工,決策與驗收條件都已寫定 |
+| 免登入 28 支 spec | ✅ 256 通過、0 失敗 |
 | `npm run lint` / `npx tsc --noEmit` | ✅ 乾淨 |
 
-**分支關係**:`claude/work-status-review-wg0mmu` 的基底是 `origin/docs/venue-catalog-and-quote`
-(第三輪的規劃文件在那支上,且它已 merge 了完整的 master)。開 PR 時
-**base 要選 `docs/venue-catalog-and-quote`**,選 master 會把規劃那 6 個 commit 一起帶進來。
+**分支關係**:第三輪的所有工作都落在 `docs/venue-catalog-and-quote` 上(它已 merge 了
+完整的 master,T1 的 PR #14 也合進這裡)。開 PR 時 **base 選 `docs/venue-catalog-and-quote`**;
+整輪做完再一次合回 `master`。
 
 ---
 
-## T1 做了什麼(以及接手 T2 前一定要知道的三件事)
+## T1 做了什麼(動到座標/夾制之前必讀的三件事)
 
 把固定的 `PLAN_AREA_SIZE_M = 200`(200m 見方)換成「攤位 + 5m 邊距」的可編輯範圍。
 攤位錨在 `BOOTH_ORIGIN = (20,20)`,所以預設 3×3 攤位的範圍是 `[15,28]²`。
@@ -56,7 +56,7 @@
 
 ---
 
-## 動座標系時會踩到的地雷(T2/T3 高機率遇到)
+## 動座標系時會踩到的地雷
 
 ### 九支 spec 共用的牆會「安靜地不存在」
 
@@ -79,19 +79,28 @@ T1 已經全部改成 `(20,20) → (25,20)`。**下次再動座標系,先 grep �
 
 story 第六節只點名 `venue-objects` / `venue-zoom-pan`。T1 實際還動到
 `venue-dimensions`、`venue-plan-editor`、`venue-booth-preset`、`venue-3d-scene`、
-`venue-column-offsets`、`venue-refined-lighting`。T2/T3 的 `kind → code` 影響面更大,
+`venue-column-offsets`、`venue-refined-lighting`。T3 的 `kind → code` 又動了十餘支,
 排時間時把這塊算進去。
 
 ---
 
-## 下一步:T2
+## 下一步:T4
 
-> 建 `src/lib/venue/catalog.ts` 資料層,9 個 kind 遷移成 9 個品項。純資料與型別,不動 UI。
+> AI schema 改用 `code` + 不存在代碼的錯誤回饋。schema 用自由字串 + 伺服器端驗證,
+> 不用 enum(目錄會長大,enum 會破壞 prompt cache)。
 
-驗收條件在 story 第五節。開工前必讀 story 的 D1（為什麼 `FurnitureItem` 只存 `code`）
-與 D5（欄位形狀照廠商資料設計）。
+驗收條件在 story 第五節。**這一步是 T3 唯一還欠的那半塊**,兩邊要一起換:
 
-T2 之後的 T3 會把 `kind` 換成快取鍵與探針分組鍵,那才是真正會讓一批測試轉紅的一步。
+- `src/lib/ai/tools.ts` 的 `add_furniture` input schema(目前是 `kind` enum)
+- `PlanEditor.tsx` 的 handler(目前是 `codeForKind(action.input.kind)`)
+- `playwright-tests/ai-panel-persistent.spec.ts` 的 tool-call fixture
+
+**三者必須同一次改完。** T3 只改了 fixture 那一個,結果 `codeForKind(undefined)`
+丟例外、`applyActions` 整個掛掉、`ai-action-summary` 不渲染,三個案例一起紅 ——
+而錯誤訊息只說「找不到 ai-action-summary」,看不出真正原因。
+
+改完之後 `FurnitureKind` 與 `KIND_TO_CODE` 就沒有使用者了,一併刪掉
+(`src/lib/venue/furniture.ts`)。
 
 ---
 
