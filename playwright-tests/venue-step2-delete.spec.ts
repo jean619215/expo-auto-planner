@@ -38,7 +38,7 @@ async function placeTableInPreview(page: Page, editor: PlanEditorPage) {
   await editor.clickNextStep();
   await expect(editor.stepPreview).toBeVisible();
 
-  await page.getByTestId("furniture-place-table").click();
+  await page.getByTestId("furniture-place-TBL-120-75").click();
 
   // 重試三次:clickFloor 的時序問題偶爾會讓第一次點擊打不到地板 mesh
   // (見上面的註解)。這裡不是在容忍缺陷 —— 放置成功與否仍然要被斷言,

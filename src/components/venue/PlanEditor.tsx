@@ -54,13 +54,16 @@ import {
   type WallSegment,
 } from "@/lib/venue/plan";
 import {
-  FURNITURE_DEFAULTS,
   codeForKind,
   furnitureFootprintM,
   translateFurniture,
   type FurnitureItem,
 } from "@/lib/venue/furniture";
-import { catalogItem, subCategoryLabel } from "@/lib/venue/catalog";
+import {
+  catalogItem,
+  requireCatalogItem,
+  subCategoryLabel,
+} from "@/lib/venue/catalog";
 import type {
   AiAction,
   AiActionResult,
@@ -853,14 +856,15 @@ export default function PlanEditor() {
           const generatedFurniture: FurnitureItem[] =
             action.input.furniture.map((f) => {
               // AI 的 schema 到 T4 才換成目錄代碼;在那之前這裡把 kind 轉過去。
-              const defaults = FURNITURE_DEFAULTS[f.kind];
+              const code = codeForKind(f.kind);
+              const entry = requireCatalogItem(code);
               return {
                 id: createObjectId(),
-                code: codeForKind(f.kind),
+                code,
                 center: clampColumnCenter(
                   snapPoint(f.center, planArea),
-                  defaults.w,
-                  defaults.h,
+                  entry.w,
+                  entry.d,
                   planArea,
                 ),
                 rotationDeg: normalizeRotationDeg(f.rotationDeg),
@@ -888,14 +892,15 @@ export default function PlanEditor() {
           break;
         }
         case "add_furniture": {
-          const defaults = FURNITURE_DEFAULTS[action.input.kind];
+          const code = codeForKind(action.input.kind);
+          const entry = requireCatalogItem(code);
           const item: FurnitureItem = {
             id: createObjectId(),
-            code: codeForKind(action.input.kind),
+            code,
             center: clampColumnCenter(
               snapPoint(action.input.center, planArea),
-              defaults.w,
-              defaults.h,
+              entry.w,
+              entry.d,
               planArea,
             ),
             rotationDeg: normalizeRotationDeg(action.input.rotationDeg),
@@ -904,7 +909,7 @@ export default function PlanEditor() {
           results.push({
             toolUseId: action.toolUseId,
             ok: true,
-            message: `已新增${defaults.label}`,
+            message: `已新增${subCategoryLabel(entry.subCategory)}`,
           });
           break;
         }
@@ -1120,6 +1125,19 @@ export default function PlanEditor() {
    * 縮,原本在邊距裡的東西才可能真的被擠出去 —— 那才是要提示的情況。
    */
   /**
+   * 每件家具的平面矩形(公尺)。**繪製與探針共用同一份**——分開算就會有一份
+   * 「回報的尺寸」與一份「畫出來的尺寸」,而那正是這一輪要消滅的東西。
+   */
+  const furnitureRects = useMemo(
+    () =>
+      furniture.map((item) => ({
+        id: item.id,
+        ...furnitureFootprintM(item),
+      })),
+    [furniture],
+  );
+
+  /**
    * 家具的矩形視圖(`center` + 目錄查來的 `w`/`h`)。
    *
    * `isRectOutsideBounds` / `clampRectCenterToBounds` 吃的是「有寬高的矩形」,
@@ -1272,6 +1290,7 @@ export default function PlanEditor() {
       data-selected-type={selectedObject?.type ?? ""}
       data-objects={JSON.stringify({ walls, columns })}
       data-furniture={JSON.stringify(furniture)}
+      data-furniture-rects={JSON.stringify(furnitureRects)}
       data-column-label={columnLabelText}
       data-wall-label={wallLabelText}
       data-edge-labels={JSON.stringify(edgeLabelTexts)}
@@ -1756,12 +1775,13 @@ export default function PlanEditor() {
                         </Fragment>
                       );
                     })}
-                    {furniture.map((item) => {
+                    {furniture.map((item, index) => {
                       const isSelected =
                         selectedObject?.type === "furniture" &&
                         selectedObject.id === item.id;
                       const centerPx = metersToPx(item.center, pxPerMeter);
-                      const footprint = furnitureFootprintM(item);
+                      // 與 data-furniture-rects 同一份 —— 見 furnitureRects。
+                      const footprint = furnitureRects[index];
                       const widthPx = footprint.w * pxPerMeter;
                       const heightPx = footprint.h * pxPerMeter;
                       const entry = catalogItem(item.code);

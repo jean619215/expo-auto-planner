@@ -25,10 +25,10 @@ import { PlanEditorPage } from "./pages/PlanEditorPage";
 // 命中一種解釋。
 
 /** 有 GLB 的六種。對應 src/lib/venue/models.ts。 */
-const MODEL_KINDS = ["table", "chair", "cabinet", "sofa", "display", "plant"];
+const MODEL_KINDS = ["TBL-120-75", "CHR-45-90", "CAB-60-180", "SOF-180-80", "DSP-100-160", "PLT-50-120"];
 
 /** 沒有 CC0 資產、走程序化幾何的三種。對應 src/lib/venue/proceduralFurniture.ts。 */
-const PROCEDURAL_KINDS = ["counter", "bannerStand", "podium"];
+const PROCEDURAL_KINDS = ["CNT-100-110", "BNR-80-200", "POD-60-110"];
 
 /** 等比縮放的容許誤差 —— 浮點與 bounding box 計算的雜訊,不是給變形留空間的。 */
 const UNIFORM_SCALE_EPSILON = 1e-4;
@@ -65,11 +65,11 @@ async function step2CanvasCenter(page: Page) {
 async function placeFurnitureOnStep2(
   page: Page,
   editor: PlanEditorPage,
-  kind: string,
+  code: string,
   offsetPx: { x: number; y: number } = { x: 0, y: 0 },
 ) {
   const before = await editor.furnitureCount();
-  await page.getByTestId(`furniture-place-${kind}`).click();
+  await page.getByTestId(`furniture-place-${code}`).click();
   const center = await step2CanvasCenter(page);
   await page.mouse.move(center.x + offsetPx.x, center.y + offsetPx.y);
   await page.waitForTimeout(100);
@@ -79,7 +79,7 @@ async function placeFurnitureOnStep2(
   await expect
     .poll(() => editor.furnitureCount(), {
       timeout: 5_000,
-      message: `${kind} 沒有放上去 — 偏移 (${offsetPx.x}, ${offsetPx.y}) 可能點在地板之外`,
+      message: `${code} 沒有放上去 — 偏移 (${offsetPx.x}, ${offsetPx.y}) 可能點在地板之外`,
     })
     .toBe(before + 1);
 }
@@ -112,13 +112,13 @@ async function toStep2(editor: PlanEditorPage) {
   await editor.clickNextStep();
 }
 
-/** 九種家具各一件。 */
+/** 九個品項各一件。 */
 async function placeAllNine(page: Page, editor: PlanEditorPage) {
-  const kinds = [...MODEL_KINDS, ...PROCEDURAL_KINDS];
-  for (const [index, kind] of kinds.entries()) {
-    await placeFurnitureOnStep2(page, editor, kind, NINE_SPOTS[index]);
+  const codes = [...MODEL_KINDS, ...PROCEDURAL_KINDS];
+  for (const [index, code] of codes.entries()) {
+    await placeFurnitureOnStep2(page, editor, code, NINE_SPOTS[index]);
   }
-  expect(await editor.furnitureCount()).toBe(kinds.length);
+  expect(await editor.furnitureCount()).toBe(codes.length);
 }
 
 // 這一支比其他 venue spec 重得多:B/D/E 要一件一件擺滿九種家具(每件都要等
@@ -184,10 +184,10 @@ test.describe("精密 3D 場景 (步驟 03) - Task 7: 效能與驗收", () => {
       .toBe(MODEL_KINDS.length);
 
     const modelKinds = (await editor.refinedFurnitureModelReports())
-      .map((r) => r.kind)
+      .map((r) => r.code)
       .sort();
     const proceduralKinds = (await editor.refinedProceduralFurnitureReports())
-      .map((r) => r.kind)
+      .map((r) => r.code)
       .sort();
 
     expect(modelKinds).toEqual([...MODEL_KINDS].sort());
@@ -195,12 +195,12 @@ test.describe("精密 3D 場景 (步驟 03) - Task 7: 效能與驗收", () => {
 
     // 互斥 —— 同一件家具被兩條路各畫一次的話,畫面上是兩個物件疊在一起,
     // 光看截圖分不出來,只有這個交集斷言抓得到。
-    const overlap = modelKinds.filter((kind) => proceduralKinds.includes(kind));
+    const overlap = modelKinds.filter((code) => proceduralKinds.includes(code));
     expect(overlap, "同一個 kind 不得同時走模型與程序化兩條路").toEqual([]);
 
     // 每一種都不是單一方塊:模型至少一個 mesh,程序化至少兩個零件。
     for (const report of await editor.refinedFurnitureModelReports()) {
-      expect(report.partCount, `${report.kind} 沒有任何 mesh`).toBeGreaterThan(0);
+      expect(report.partCount, `${report.code} 沒有任何 mesh`).toBeGreaterThan(0);
       expect(report.instanceCount).toBe(1);
     }
   });
@@ -210,8 +210,8 @@ test.describe("精密 3D 場景 (步驟 03) - Task 7: 效能與驗收", () => {
   }) => {
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
-    for (const [index, kind] of MODEL_KINDS.entries()) {
-      await placeFurnitureOnStep2(page, editor, kind, NINE_SPOTS[index]);
+    for (const [index, code] of MODEL_KINDS.entries()) {
+      await placeFurnitureOnStep2(page, editor, code, NINE_SPOTS[index]);
     }
 
     await editor.goToRefined();
@@ -232,13 +232,13 @@ test.describe("精密 3D 場景 (步驟 03) - Task 7: 效能與驗收", () => {
       const [fw, fh, fd] = report.fittedM;
       const [tw, th, td] = report.targetM;
 
-      expect(fw, `${report.kind} 寬度超出標稱尺寸`).toBeLessThanOrEqual(
+      expect(fw, `${report.code} 寬度超出標稱尺寸`).toBeLessThanOrEqual(
         tw + UNIFORM_SCALE_EPSILON,
       );
-      expect(fh, `${report.kind} 高度超出標稱尺寸`).toBeLessThanOrEqual(
+      expect(fh, `${report.code} 高度超出標稱尺寸`).toBeLessThanOrEqual(
         th + UNIFORM_SCALE_EPSILON,
       );
-      expect(fd, `${report.kind} 深度超出標稱尺寸`).toBeLessThanOrEqual(
+      expect(fd, `${report.code} 深度超出標稱尺寸`).toBeLessThanOrEqual(
         td + UNIFORM_SCALE_EPSILON,
       );
 
@@ -249,7 +249,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 7: 效能與驗收", () => {
         Math.abs(fh - th),
         Math.abs(fd - td),
       ].some((delta) => delta < 1e-3);
-      expect(touching, `${report.kind} 沒有任何一軸貼齊標稱尺寸`).toBe(true);
+      expect(touching, `${report.code} 沒有任何一軸貼齊標稱尺寸`).toBe(true);
     }
   });
 
@@ -258,7 +258,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 7: 效能與驗收", () => {
   }) => {
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
-    await placeFurnitureOnStep2(page, editor, "table");
+    await placeFurnitureOnStep2(page, editor, "TBL-120-75");
 
     await editor.goToRefined();
     await waitForRefinedReady(editor);
@@ -270,7 +270,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 7: 效能與驗收", () => {
     // 編輯用的側欄/工具在 03 根本不存在 —— 唯讀不是靠「點了沒反應」達成的,
     // 而是那些入口壓根沒掛上去。
     await expect(
-      page.locator('[data-testid="furniture-place-table"]'),
+      page.locator('[data-testid="furniture-place-TBL-120-75"]'),
     ).toHaveCount(0);
     await expect(page.locator('[data-testid="venue-sidebar"]')).toHaveCount(0);
 

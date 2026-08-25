@@ -43,14 +43,12 @@ import {
   type WallSegment,
 } from "@/lib/venue/plan";
 import {
-  FURNITURE_DEFAULTS,
-  codeForKind,
   createFurniture,
   rotateFurniture,
   translateFurniture,
   type FurnitureItem,
-  type FurnitureKind,
 } from "@/lib/venue/furniture";
+import { CATALOG, subCategoryLabel } from "@/lib/venue/catalog";
 import { Button } from "@/components/ui/button";
 import { segmentClassName } from "./PlanToolbar";
 import { useFloorGeometry } from "./floorGeometry";
@@ -65,16 +63,25 @@ type SelectedId =
   | { type: "wall" | "column" | "furniture"; id: string }
   | null;
 
-const FURNITURE_ICONS: Record<FurnitureKind, typeof Table2> = {
-  table: Table2,
-  chair: Armchair,
-  cabinet: Archive,
-  counter: Store,
-  bannerStand: Flag,
-  sofa: Sofa,
-  podium: Presentation,
-  plant: Flower2,
-  display: Package,
+/**
+ * 面板圖示,以**子類**為鍵而不是品項代碼。
+ *
+ * 目錄長大之後同一個子類會有多個尺寸變體(「桌子 120」「桌子 180」),它們共用
+ * 一個圖示 —— 以代碼為鍵會變成每加一個變體就要補一張圖。查不到的子類退回
+ * `Package`,新子類不會讓面板整個掛掉。
+ *
+ * T7 會用目錄頁取代這個面板,屆時這張表跟著搬。
+ */
+const SUBCATEGORY_ICONS: Record<string, typeof Table2> = {
+  B1: Table2,
+  B2: Armchair,
+  C3: Archive,
+  C1: Store,
+  A2: Flag,
+  B3: Sofa,
+  C2: Presentation,
+  D1: Flower2,
+  A1: Package,
 };
 
 interface VenueSceneProps {
@@ -145,7 +152,7 @@ export default function VenueScene({
   const [transformMode, setTransformMode] = useState<"translate" | "rotate">(
     "translate",
   );
-  const [placingKind, setPlacingKind] = useState<FurnitureKind | null>(null);
+  const [placingCode, setPlacingCode] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const selectedMeshRef = useRef<THREE.Object3D | null>(null);
   const dragStartRef = useRef<{ x: number; z: number } | null>(null);
@@ -263,18 +270,14 @@ export default function VenueScene({
   }
 
   function handleFloorClick(e: ThreeEvent<MouseEvent>) {
-    if (placingKind) {
-      // 面板到 T7 才改成目錄導覽,在那之前仍以 kind 選件 —— 這裡轉成代碼。
-      // 注意 `FurnitureKind` 是字串聯集,直接傳給吃 `code: string` 的
-      // `createFurniture` 型別上是合法的,但執行期查不到那個代碼,所以這層
-      // 轉換不能省。
+    if (placingCode) {
       const item = createFurniture(
-        codeForKind(placingKind),
+        placingCode,
         { x: e.point.x, y: e.point.z },
         planArea,
       );
       const nextFurniture = [...furniture, item];
-      setPlacingKind(null);
+      setPlacingCode(null);
       selectObject({ type: "furniture", id: item.id });
       onSceneChange?.({ walls, columns, furniture: nextFurniture });
       return;
@@ -301,6 +304,8 @@ export default function VenueScene({
       data-testid="venue-scene"
       data-generated="true"
       data-orbit-controls="true"
+      /* 放置模式對外可見:放置失敗時要能分辨「沒進入放置模式」與「raycast 打空」。 */
+      data-placing-code={placingCode ?? ""}
       data-wall-mesh-count={walls.length}
       data-column-mesh-count={columns.length}
       data-furniture-mesh-count={furniture.length}
@@ -370,27 +375,28 @@ export default function VenueScene({
                 <span className="px-0.5 text-xs font-bold text-muted-foreground">
                   家具
                 </span>
-                {(Object.keys(FURNITURE_DEFAULTS) as FurnitureKind[]).map(
-                  (kind) => {
-                    const Icon = FURNITURE_ICONS[kind];
-                    return (
-                      <Button
-                        key={kind}
-                        type="button"
-                        size="sm"
-                        variant={placingKind === kind ? "default" : "outline"}
-                        data-testid={`furniture-place-${kind}`}
-                        onClick={() =>
-                          setPlacingKind((prev) => (prev === kind ? null : kind))
-                        }
-                        className="w-full justify-start"
-                      >
-                        <Icon />
-                        {FURNITURE_DEFAULTS[kind].label}
-                      </Button>
-                    );
-                  },
-                )}
+                {CATALOG.map((entry) => {
+                  const Icon = SUBCATEGORY_ICONS[entry.subCategory] ?? Package;
+                  return (
+                    <Button
+                      key={entry.code}
+                      type="button"
+                      size="sm"
+                      variant={placingCode === entry.code ? "default" : "outline"}
+                      data-testid={`furniture-place-${entry.code}`}
+                      title={entry.name}
+                      onClick={() =>
+                        setPlacingCode((prev) =>
+                          prev === entry.code ? null : entry.code,
+                        )
+                      }
+                      className="w-full justify-start"
+                    >
+                      <Icon />
+                      {subCategoryLabel(entry.subCategory)}
+                    </Button>
+                  );
+                })}
               </div>
               <div className="flex flex-col gap-1.5">
                 <span className="px-0.5 text-xs font-bold text-muted-foreground">

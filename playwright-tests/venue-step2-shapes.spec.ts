@@ -19,11 +19,11 @@ async function toStep2WithRoom(editor: PlanEditorPage) {
 async function place(
   page: Page,
   editor: PlanEditorPage,
-  kind: string,
+  code: string,
   offsetPx: { x: number; y: number } = { x: 0, y: 0 },
 ) {
   const before = await editor.furnitureCount();
-  await page.getByTestId(`furniture-place-${kind}`).click();
+  await page.getByTestId(`furniture-place-${code}`).click();
   const canvas = page.locator('[data-testid="venue-scene"] canvas');
   const box = await canvas.boundingBox();
   if (!box) throw new Error("venue-scene canvas not visible");
@@ -39,7 +39,7 @@ async function place(
   await expect
     .poll(() => editor.furnitureCount(), {
       timeout: 5_000,
-      message: `${kind} 沒有放上去 — 偏移可能點在地板之外`,
+      message: `${code} 沒有放上去 — 偏移可能點在地板之外`,
     })
     .toBe(before + 1);
 }
@@ -49,13 +49,13 @@ test.describe("Step 02 furniture silhouettes (T7)", () => {
     const editor = new PlanEditorPage(page);
     await toStep2WithRoom(editor);
 
-    await place(page, editor, "table");
+    await place(page, editor, "TBL-120-75");
 
     // GLB 是非同步解碼的,探針要等它進場景圖才量得到。
     await expect
       .poll(
         async () =>
-          (await editor.sceneFurnitureShapes()).find((s) => s.kind === "table")
+          (await editor.sceneFurnitureShapes()).find((s) => s.code === "TBL-120-75")
             ?.triangles ?? 0,
         { timeout: 30_000 },
       )
@@ -66,8 +66,8 @@ test.describe("Step 02 furniture silhouettes (T7)", () => {
     const editor = new PlanEditorPage(page);
     await toStep2WithRoom(editor);
 
-    await place(page, editor, "table");
-    await place(page, editor, "chair", { x: 40, y: 0 });
+    await place(page, editor, "TBL-120-75");
+    await place(page, editor, "CHR-45-90", { x: 40, y: 0 });
 
     await expect
       .poll(async () => (await editor.sceneFurnitureShapes()).length, {
@@ -76,8 +76,8 @@ test.describe("Step 02 furniture silhouettes (T7)", () => {
       .toBe(2);
     const shapes = await editor.sceneFurnitureShapes();
     for (const shape of shapes) {
-      expect(shape.hasMap, `${shape.kind} 掛了貼圖`).toBe(false);
-      expect(shape.hasNormalMap, `${shape.kind} 掛了法線貼圖`).toBe(false);
+      expect(shape.hasMap, `${shape.code} 掛了貼圖`).toBe(false);
+      expect(shape.hasNormalMap, `${shape.code} 掛了法線貼圖`).toBe(false);
     }
   });
 
@@ -87,7 +87,7 @@ test.describe("Step 02 furniture silhouettes (T7)", () => {
     const editor = new PlanEditorPage(page);
     await toStep2WithRoom(editor);
 
-    await place(page, editor, "table");
+    await place(page, editor, "TBL-120-75");
 
     expect(await editor.sceneSurfaceBakes()).toBe(0);
   });
@@ -98,19 +98,19 @@ test.describe("Step 02 furniture silhouettes (T7)", () => {
     const editor = new PlanEditorPage(page);
     await toStep2WithRoom(editor);
 
-    await place(page, editor, "counter");
+    await place(page, editor, "CNT-100-110");
 
     await expect
       .poll(
         async () =>
           (await editor.sceneFurnitureShapes()).some(
-            (s) => s.kind === "counter",
+            (s) => s.code === "CNT-100-110",
           ),
         { timeout: 30_000 },
       )
       .toBe(true);
     const counter = (await editor.sceneFurnitureShapes()).find(
-      (s) => s.kind === "counter",
+      (s) => s.code === "CNT-100-110",
     );
     expect(counter).toBeTruthy();
     expect(counter!.triangles).toBeGreaterThan(12);
@@ -123,7 +123,7 @@ test.describe("Step 02 furniture silhouettes (T7)", () => {
     const editor = new PlanEditorPage(page);
     await toStep2WithRoom(editor);
 
-    await place(page, editor, "table");
+    await place(page, editor, "TBL-120-75");
     expect(await editor.sceneSelectedType()).toBe("furniture");
 
     await editor.clickSceneDelete();
@@ -139,7 +139,7 @@ test.describe("Step 02 furniture silhouettes (T7)", () => {
     const editor = new PlanEditorPage(page);
     await toStep2WithRoom(editor);
 
-    await place(page, editor, "table");
+    await place(page, editor, "TBL-120-75");
 
     await editor.goToRefined();
     await expect

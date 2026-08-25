@@ -90,10 +90,10 @@ async function clickFloor(page: Page, point: { x: number; y: number }) {
  */
 async function placeFurnitureOnStep2(
   page: Page,
-  kind: string,
+  code: string,
   offsetPx: { x: number; y: number } = { x: 0, y: 0 },
 ) {
-  await page.getByTestId(`furniture-place-${kind}`).click();
+  await page.getByTestId(`furniture-place-${code}`).click();
   const center = await step2CanvasCenter(page);
   await clickFloor(page, { x: center.x + offsetPx.x, y: center.y + offsetPx.y });
 }
@@ -165,8 +165,8 @@ test.describe("精密 3D 場景 (步驟 03) - Task 2: 打光與陰影", () => {
     await editor.placeColumn({ x: 40, y: 40 });
     await editor.clickNextStep();
 
-    await placeFurnitureOnStep2(page, "table");
-    await placeFurnitureOnStep2(page, "chair", { x: 40, y: 0 });
+    await placeFurnitureOnStep2(page, "TBL-120-75");
+    await placeFurnitureOnStep2(page, "CHR-45-90", { x: 40, y: 0 });
 
     await editor.goToRefined();
     await waitForLightingReady(editor);
@@ -323,8 +323,8 @@ test.describe("精密 3D 場景 (步驟 03) - Task 2: 打光與陰影", () => {
     await editor.navigate();
     await editor.clickNextStep();
 
-    await placeFurnitureOnStep2(page, "bannerStand");
-    await placeFurnitureOnStep2(page, "cabinet", { x: 40, y: 0 });
+    await placeFurnitureOnStep2(page, "BNR-80-200");
+    await placeFurnitureOnStep2(page, "CAB-60-180", { x: 40, y: 0 });
 
     await editor.goToRefined();
     await waitForLightingReady(editor);
@@ -404,7 +404,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 2: 打光與陰影", () => {
   test("案例13 AC8: 唯讀行為未因打光變更而退化", async ({ page }) => {
     const editor = new PlanEditorPage(page);
     await toStep2WithWall(editor);
-    await placeFurnitureOnStep2(page, "table");
+    await placeFurnitureOnStep2(page, "TBL-120-75");
     const furnitureBefore = await editor.editor.getAttribute("data-furniture");
 
     await editor.goToRefined();
@@ -420,7 +420,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 2: 打光與陰影", () => {
     expect(furnitureAfter).toBe(furnitureBefore);
     await expect(page.locator('[data-testid="venue-sidebar"]')).toHaveCount(0);
     await expect(
-      page.locator('[data-testid="furniture-place-table"]'),
+      page.locator('[data-testid="furniture-place-TBL-120-75"]'),
     ).toHaveCount(0);
     await expect(
       page.locator('[data-testid="reset-view-button"]'),
@@ -441,9 +441,9 @@ test.describe("精密 3D 場景 (步驟 03) - Task 2: 打光與陰影", () => {
     await editor.placeColumn({ x: 40, y: 40 });
     await editor.clickNextStep();
 
-    await placeFurnitureOnStep2(page, "table");
-    await placeFurnitureOnStep2(page, "cabinet", { x: 40, y: 0 });
-    await placeFurnitureOnStep2(page, "plant", { x: -40, y: 20 });
+    await placeFurnitureOnStep2(page, "TBL-120-75");
+    await placeFurnitureOnStep2(page, "CAB-60-180", { x: 40, y: 0 });
+    await placeFurnitureOnStep2(page, "PLT-50-120", { x: -40, y: 20 });
 
     await editor.goToRefined();
     await waitForLightingReady(editor);

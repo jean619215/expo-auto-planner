@@ -12,15 +12,9 @@ import {
   type FloorPolygon,
   type WallSegment,
 } from "@/lib/venue/plan";
-import {
-  kindForCode,
-  type FurnitureItem,
-  type FurnitureKind,
-} from "@/lib/venue/furniture";
+import type { FurnitureItem } from "@/lib/venue/furniture";
 import { catalogItem } from "@/lib/venue/catalog";
-import { hasFurnitureModel } from "@/lib/venue/models";
 import type { SurfaceSelection } from "@/lib/venue/surfacePresets";
-import { hasProceduralFurniture } from "@/lib/venue/proceduralFurniture";
 import { planBoundsM } from "@/lib/venue/bounds";
 import type { PlanBounds } from "@/lib/venue/bounds";
 import { useFloorGeometry } from "./floorGeometry";
@@ -346,12 +340,12 @@ function RefinedSceneContent({
         // 保底路徑:既沒有模型、也還沒給程序化造型的 kind(目前九種家具都有
         // 造型,所以正常情況下這裡不會產出任何東西)。留著是為了讓日後新增
         // 的 kind 至少畫得出來,而不是無聲消失。
-        const kind = kindForCode(item.code);
-        if (kind && (hasFurnitureModel(kind) || hasProceduralFurniture(kind))) {
-          return null;
-        }
+        // 保底 box 只畫「目錄裡有、但幾何種類不是 model 也不是 procedural」
+        // 的品項 —— 那兩條路各自有專屬元件,重畫會讓同一件家具出現兩次。
         const entry = catalogItem(item.code);
         if (!entry) return null;
+        if (entry.geometry.kind === "model") return null;
+        if (entry.geometry.kind === "procedural") return null;
         return (
           <mesh
             key={item.id}
@@ -440,26 +434,26 @@ export default function RefinedScene({
   const [materialsReady, setMaterialsReady] = useState(false);
   const [eagerLoaded, setEagerLoaded] = useState(false);
   const [modelReports, setModelReports] = useState<
-    Partial<Record<FurnitureKind, FurnitureModelReport>>
+    Record<string, FurnitureModelReport>
   >({});
   const [proceduralReports, setProceduralReports] = useState<
-    Partial<Record<FurnitureKind, ProceduralFurnitureReport>>
+    Record<string, ProceduralFurnitureReport>
   >({});
 
   const handleEagerLoaded = useCallback(() => setEagerLoaded(true), []);
   const handleModelReport = useCallback((report: FurnitureModelReport) => {
     setModelReports((prev) => {
-      const existing = prev[report.kind];
+      const existing = prev[report.code];
       // 每幀都 setState 會讓 R3F 進無窮 render 迴圈 — 內容相同就原封不動
       // 回傳同一個物件,讓 React 跳過這次更新。
       if (existing && JSON.stringify(existing) === JSON.stringify(report)) {
         return prev;
       }
-      return { ...prev, [report.kind]: report };
+      return { ...prev, [report.code]: report };
     });
   }, []);
 
-  // 對外只吐「場上真的還有這個 kind」的量測 —— 家具被刪掉後,上一份報告會
+  // 對外只吐「場上真的還有這個品項」的量測 —— 家具被刪掉後,上一份報告會
   // 留在 modelReports 裡(元件卸載不會反向清),直接吐出去測試會讀到過期資料。
   //
   // 刻意不在 revision 變動時整批清空:eagerLoaded 一旦被重設,植栽就會
@@ -467,32 +461,28 @@ export default function RefinedScene({
   const handleProceduralReport = useCallback(
     (report: ProceduralFurnitureReport) => {
       setProceduralReports((prev) => {
-        const existing = prev[report.kind];
+        const existing = prev[report.code];
         if (existing && JSON.stringify(existing) === JSON.stringify(report)) {
           return prev;
         }
-        return { ...prev, [report.kind]: report };
+        return { ...prev, [report.code]: report };
       });
     },
     [],
   );
 
   const activeModelReports = useMemo(() => {
-    const kinds = new Set(
-      furniture.map((item) => kindForCode(item.code)).filter(Boolean),
-    );
+    const codes = new Set(furniture.map((item) => item.code));
     return Object.values(modelReports).filter((report) =>
-      kinds.has(report.kind)
+      codes.has(report.code)
     );
   }, [modelReports, furniture]);
 
   // 與 activeModelReports 同理:家具被刪掉後,上一份報告會留在 state 裡。
   const activeProceduralReports = useMemo(() => {
-    const kinds = new Set(
-      furniture.map((item) => kindForCode(item.code)).filter(Boolean),
-    );
+    const codes = new Set(furniture.map((item) => item.code));
     return Object.values(proceduralReports).filter((report) =>
-      kinds.has(report.kind)
+      codes.has(report.code)
     );
   }, [proceduralReports, furniture]);
 
@@ -500,7 +490,7 @@ export default function RefinedScene({
   // 後者是必要的:GLB 解碼是非同步的,家具的 InstancedMesh 往往在 revision
   // 那一次武裝(PROBE_ACTIVE_FRAMES 幀)之後才進場景圖,少了它探針會停在一份
   // 還沒有家具的過期快照(RefinedSceneProbe.tsx 的 resetKey 註解)。
-  // 用 kind + partCount 而非 instanceCount:後者每動一次家具都變,但那種
+  // 用代碼 + partCount 而非 instanceCount:後者每動一次家具都變,但那種
   // 變動本來就已經 bump 了 revision。
   //
   // 材質選擇也要進來:探針的材質診斷是一次性計算後就快取住的,換材質後
@@ -508,7 +498,7 @@ export default function RefinedScene({
   // 像是「換材質沒有生效」。
   const probeResetKey = useMemo(() => {
     const signature = activeModelReports
-      .map((report) => `${report.kind}:${report.partCount}`)
+      .map((report) => `${report.code}:${report.partCount}`)
       .sort()
       .join(",");
     return `${revision}|${signature}|${surfaces.floor}:${surfaces.wall}|${surfaceUploads.floor ?? ""}:${surfaceUploads.wall ?? ""}`;

@@ -16,29 +16,15 @@
 
 import { useEffect, useMemo } from "react";
 import * as THREE from "three";
-import {
-  furnitureFootprintM,
-  kindForCode,
-  type FurnitureItem,
-  type FurnitureKind,
-} from "@/lib/venue/furniture";
-import { catalogItem } from "@/lib/venue/catalog";
-import {
-  hasProceduralFurniture,
-  proceduralFurnitureParts,
-} from "@/lib/venue/proceduralFurniture";
-import { furnitureModel } from "@/lib/venue/models";
+import { type FurnitureItem } from "@/lib/venue/furniture";
+import { catalogItem, type CatalogItem } from "@/lib/venue/catalog";
+import { proceduralPartsForItem } from "@/lib/venue/proceduralFurniture";
 import { useNormalizedFurnitureModel } from "./furnitureModels";
 import { buildPartGeometry } from "./proceduralFurniture";
 
-/**
- * 探針靠這個名字找場上的家具 mesh。
- *
- * 分組鍵在 T3 會從 kind 換成目錄代碼;在那之前傳的是 kind,只有目錄裡沒有
- * 對應 kind 的新品項才會拿代碼當鍵。
- */
-export function whiteboxFurnitureName(key: string): string {
-  return `venue-furniture-${key}`;
+/** 探針靠這個名字找場上的家具 mesh。鍵是目錄代碼。 */
+export function whiteboxFurnitureName(code: string): string {
+  return `venue-furniture-${code}`;
 }
 
 /** 白模材質:單色、不吃貼圖。依顏色快取一份,由呼叫端負責卸載時 dispose。 */
@@ -56,31 +42,32 @@ function useWhiteboxMaterial(color: string): THREE.MeshStandardMaterial {
   return material;
 }
 
-interface KindGeometriesProps {
-  kind: FurnitureKind;
+interface ItemGeometriesProps {
+  item: CatalogItem;
   children: (geometries: THREE.BufferGeometry[]) => React.ReactNode;
 }
 
-/** 有 GLB 的 kind:幾何來自步驟 03 的同一份快取。 */
-function ModelGeometries({ kind, children }: KindGeometriesProps) {
-  // furnitureModel(kind) 已由呼叫端確認存在。
-  const model = furnitureModel(kind)!;
+/** 有 GLB 的品項:幾何來自步驟 03 的同一份快取(鍵是目錄代碼)。 */
+function ModelGeometries({ item, children }: ItemGeometriesProps) {
+  // 幾何來源已由呼叫端確認是 model。
+  const geometry = item.geometry as Extract<
+    CatalogItem["geometry"],
+    { kind: "model" }
+  >;
   const { parts } = useNormalizedFurnitureModel(
-    kind,
-    model.url,
-    model.rotationY,
+    item,
+    geometry.url,
+    geometry.rotationY,
   );
   return <>{children(parts.map((part) => part.geometry))}</>;
 }
 
-/** 程序化 kind:幾何由零件規格即時建,卸載時自行 dispose。 */
-function ProceduralGeometries({ kind, children }: KindGeometriesProps) {
+/** 程序化品項:幾何由零件規格即時建,卸載時自行 dispose。 */
+function ProceduralGeometries({ item, children }: ItemGeometriesProps) {
   const geometries = useMemo(
     () =>
-      (proceduralFurnitureParts(kind) ?? []).map((part) =>
-        buildPartGeometry(part),
-      ),
-    [kind],
+      (proceduralPartsForItem(item) ?? []).map((part) => buildPartGeometry(part)),
+    [item],
   );
   useEffect(
     () => () => {
@@ -108,12 +95,9 @@ export default function WhiteboxFurnitureItem({
   meshRef,
   onSelect,
 }: WhiteboxFurnitureItemProps) {
-  // T3 之前,mesh 命名與幾何查表仍以 kind 為鍵(見 `kindForCode`);尺寸與
-  // 顏色已經改吃目錄。目錄裡查不到的代碼(存檔中已下架的品項)一律畫不出來,
-  // 不猜尺寸 —— 見下方 `entry` 為 undefined 的分支。
-  const kind = kindForCode(item.code);
+  // 幾何、尺寸、顏色、mesh 命名全部以目錄代碼為鍵。查不到的代碼(存檔中已
+  // 下架的品項)一律畫不出來,不猜尺寸 —— 見下方 `entry` 為 undefined 的分支。
   const entry = catalogItem(item.code);
-  const footprint = furnitureFootprintM(item);
   const material = useWhiteboxMaterial(entry?.color ?? "#808080");
   const selectedMaterial = useMemo(
     () =>
@@ -131,7 +115,7 @@ export default function WhiteboxFurnitureItem({
       {geometries.map((geometry, index) => (
         <mesh
           key={index}
-          name={whiteboxFurnitureName(kind ?? item.code)}
+          name={whiteboxFurnitureName(item.code)}
           geometry={geometry}
           material={selected ? selectedMaterial : material}
         />
@@ -139,21 +123,20 @@ export default function WhiteboxFurnitureItem({
     </>
   );
 
-  const body = kind && furnitureModel(kind) ? (
-    <ModelGeometries kind={kind}>{renderParts}</ModelGeometries>
-  ) : kind && hasProceduralFurniture(kind) ? (
-    <ProceduralGeometries kind={kind}>{renderParts}</ProceduralGeometries>
-  ) : entry ? (
-    // 保底:目錄裡有這個品項、但還沒給它模型或程序化造型時,至少畫得出來,
-    // 而不是無聲消失。
+  const body = !entry ? null : entry.geometry.kind === "model" ? (
+    <ModelGeometries item={entry}>{renderParts}</ModelGeometries>
+  ) : entry.geometry.kind === "procedural" ? (
+    <ProceduralGeometries item={entry}>{renderParts}</ProceduralGeometries>
+  ) : (
+    // 保底:目錄新增了這裡還不認得的幾何種類時,至少畫得出來,而不是無聲消失。
     <mesh
-      name={whiteboxFurnitureName(kind ?? item.code)}
+      name={whiteboxFurnitureName(item.code)}
       position={[0, entry.height3d / 2, 0]}
       material={selected ? selectedMaterial : material}
     >
-      <boxGeometry args={[footprint.w, entry.height3d, footprint.h]} />
+      <boxGeometry args={[entry.w, entry.height3d, entry.d]} />
     </mesh>
-  ) : null;
+  );
 
   return (
     <group

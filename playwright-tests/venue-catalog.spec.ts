@@ -153,7 +153,7 @@ test.describe("Furniture catalogue (T2)", () => {
     await editor.clickNextStep();
     await expect(editor.stepPreview).toBeVisible();
 
-    await page.getByTestId("furniture-place-table").click();
+    await page.getByTestId("furniture-place-TBL-120-75").click();
 
     // 重試放置:clickFloor 的時序問題偶爾讓第一次點擊打不到地板 mesh(見
     // clickFloor 的註解)。整套一起跑時機器較忙,三次不夠 —— 這一項要驗的是

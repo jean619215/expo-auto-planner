@@ -94,7 +94,7 @@ const ADD_CHAIR_FIXTURE: MockResponse = {
         type: "tool_use",
         id: "toolu_add_chair_1",
         name: "add_furniture",
-        input: { kind: "chair", center: { x: 24, y: 24 }, rotationDeg: 0 },
+        input: { code: "CHR-45-90", center: { x: 24, y: 24 }, rotationDeg: 0 },
       },
     ],
     stopReason: "tool_use",
@@ -243,7 +243,7 @@ test.describe("AiPanel 跨步驟常駐 - AC7/AC6 手動 3D + AI 互不覆蓋、c
     await expect(editor.stepPreview).toBeVisible();
 
     // 手動在 3D 內放置一件家具(桌子)。
-    await page.getByTestId("furniture-place-table").click();
+    await page.getByTestId("furniture-place-TBL-120-75").click();
     const center = await canvasCenter(page);
     await clickFloor(page, center);
     await expect(editor.scene).toHaveAttribute(
@@ -270,9 +270,9 @@ test.describe("AiPanel 跨步驟常駐 - AC7/AC6 手動 3D + AI 互不覆蓋、c
     expect(latestUserText).toContain("[目前配置]");
     const appendixJson = JSON.parse(
       latestUserText.slice(latestUserText.indexOf("{")),
-    ) as { furniture: { kind: string }[] };
+    ) as { furniture: { code: string }[] };
     expect(appendixJson.furniture).toHaveLength(1);
-    expect(appendixJson.furniture[0].kind).toBe("table");
+    expect(appendixJson.furniture[0].code).toBe("TBL-120-75");
 
     // AI 回應套用後,手動放置的桌子仍在,AI 新增的椅子也在 — 互不覆蓋。
     await expect(ai.actionSummary).toContainText("已新增椅子");
@@ -286,8 +286,8 @@ test.describe("AiPanel 跨步驟常駐 - AC7/AC6 手動 3D + AI 互不覆蓋、c
     await expect(editor.stepEdit).toBeVisible();
     expect(await editor.editor.getAttribute("data-furniture-count")).toBe("2");
     const furnitureRaw = await editor.editor.getAttribute("data-furniture");
-    const furniture = JSON.parse(furnitureRaw ?? "[]") as { kind: string }[];
-    expect(furniture.map((f) => f.kind).sort()).toEqual(["chair", "table"]);
+    const furniture = JSON.parse(furnitureRaw ?? "[]") as { code: string }[];
+    expect(furniture.map((f) => f.code).sort()).toEqual(["CHR-45-90", "TBL-120-75"]);
   });
 });
 

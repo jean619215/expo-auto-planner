@@ -53,34 +53,42 @@ export const REFINED_WALL_NAME = "refined-wall";
 export const REFINED_COLUMN_NAME = "refined-column";
 
 /**
- * 白模 box 的保底路徑。task 6 之後九種家具已經全部有造型(六種匯入模型、
- * 三種程序化),所以正常情況下場上不會有這種 mesh —— 它只在「有人往
- * FURNITURE_DEFAULTS 加了新 kind、卻還沒給它模型或程序化造型」時出現,
- * 讓那件家具至少畫得出來、也仍然被算進投影件數,而不是無聲消失。
+ * 白模 box 的保底路徑。目錄裡九個品項全部有造型(六個匯入模型、三個程序化),
+ * 所以正常情況下場上不會有這種 mesh —— 它只在「目錄長出了這裡還不認得的幾何
+ * 種類」時出現,讓那件家具至少畫得出來、也仍然被算進投影件數,而不是無聲消失。
  */
 export const REFINED_FURNITURE_BOX_NAME = "refined-furniture-box";
 
 /**
- * 用 `<Instances>` 畫出來的家具。名稱帶 kind 與 part 序號 ——
- * `refined-furniture-instance:cabinet:3`。
+ * 用 `<Instances>` 畫出來的家具。名稱帶**目錄代碼**與 part 序號 ——
+ * `refined-furniture-instance:CAB-60-180:3`。
  *
- * 匯入模型(task 5)與程序化造型(task 6)**共用**這個命名,探針因此不需要
- * 分辨一件家具是哪一種來源 —— 兩邊的座標約定與 instancing 方式本來就一樣。
+ * 匯入模型與程序化造型**共用**這個命名,探針因此不需要分辨一件家具是哪一種
+ * 來源 —— 兩邊的座標約定與 instancing 方式本來就一樣。
  *
- * 為什麼要把 kind 編進名字:一件家具可能由多個零件組成(cabinet 的 GLB 有 5
- * 個 mesh,櫃檯/講台/展示架各 3 個零件),每個零件各自是一個 `<Instances>`
+ * 為什麼要把代碼編進名字:一件家具可能由多個零件組成(櫃子的 GLB 有 5 個
+ * mesh,櫃檯/講台/展示架各 3 個零件),每個零件各自是一個 `<Instances>`
  * → 一個 `InstancedMesh`。所以「castShadow 的 mesh 數」跟「投影的家具件數」
- * 已經不是同一回事,探針必須先照 kind 分組、每組只取一個代表讀它的 instance
+ * 已經不是同一回事,探針必須先照代碼分組、每組只取一個代表讀它的 instance
  * 數,才能還原真正的家具件數。
+ *
+ * 分組鍵是代碼而不是子類:同一子類的兩個尺寸變體是兩份幾何、兩個
+ * `InstancedMesh`,合併計數會讓其中一個的件數被另一個蓋掉。
+ *
+ * 代碼本身含連字號但不含冒號,所以下面用 `lastIndexOf(":")` 切 part 序號是
+ * 安全的 —— 若日後代碼可能帶冒號,這裡要跟著改。
  */
 export const REFINED_FURNITURE_INSTANCE_PREFIX = "refined-furniture-instance:";
 
-export function refinedFurnitureInstanceName(kind: string, partIndex: number): string {
-  return `${REFINED_FURNITURE_INSTANCE_PREFIX}${kind}:${partIndex}`;
+export function refinedFurnitureInstanceName(
+  code: string,
+  partIndex: number,
+): string {
+  return `${REFINED_FURNITURE_INSTANCE_PREFIX}${code}:${partIndex}`;
 }
 
-/** 從 `refined-furniture-instance:cabinet:3` 取回 `cabinet`。 */
-function furnitureInstanceKindFromName(name: string): string | null {
+/** 從 `refined-furniture-instance:CAB-60-180:3` 取回 `CAB-60-180`。 */
+function furnitureInstanceCodeFromName(name: string): string | null {
   if (!name.startsWith(REFINED_FURNITURE_INSTANCE_PREFIX)) return null;
   const rest = name.slice(REFINED_FURNITURE_INSTANCE_PREFIX.length);
   const separator = rest.lastIndexOf(":");
@@ -113,7 +121,7 @@ export interface RefinedDiagnostics {
   // AC2(地板受影但不投影,牆/柱/家具投影)按類別拆開的投影計數。
   //
   // 為什麼不繼續只看 `shadowCasterMeshCount`:task 5 匯入真實模型後,那個
-  // 數字同時被兩件事扭曲 —— 一個 kind 的 N 件家具共用一個 `InstancedMesh`
+  // 數字同時被兩件事扭曲 —— 一個品項的 N 件家具共用一個 `InstancedMesh`
   // (N 件只算 1),而一個多 mesh 的 GLB 又會拆成 partCount 個
   // `InstancedMesh`(1 件算 partCount)。cabinet 是 5 個 part,所以
   // 「2 件家具」在 mesh 數上會是 6。下面三個計數各自還原成**件數**,才是
@@ -694,9 +702,9 @@ export default function RefinedSceneProbe({
     let shadowCasterWallCount = 0;
     let shadowCasterColumnCount = 0;
     let shadowCasterFurnitureBoxCount = 0;
-    // kind -> 該 kind 的 instance 數。用 Map 而非累加:同一個 kind 的每個
-    // part 都是獨立的 InstancedMesh 但共用同一份 instance 清單,累加會把
-    // 件數乘上 partCount。
+    // 代碼 -> 該品項的 instance 數。用 Map 而非累加:同一個品項的每個 part
+    // 都是獨立的 InstancedMesh 但共用同一份 instance 清單,累加會把件數乘上
+    // partCount。
     const furnitureInstances = new Map<string, number>();
     // Held on an object rather than in `let` bindings: TypeScript's control
     // flow analysis cannot see assignments made inside the traverse callback
@@ -732,7 +740,7 @@ export default function RefinedSceneProbe({
           if (object.name === REFINED_FURNITURE_BOX_NAME) {
             shadowCasterFurnitureBoxCount += 1;
           }
-          const instancedKind = furnitureInstanceKindFromName(object.name);
+          const instancedKind = furnitureInstanceCodeFromName(object.name);
           if (instancedKind) {
             // `InstancedMesh.count` is drei <Instances>'s own per-frame
             // bookkeeping (`min(limit, range, instances.length)`), so it is

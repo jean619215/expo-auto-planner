@@ -60,7 +60,7 @@ export interface SurfaceTextureDiagnostics {
 // FurnitureModelReport shape. Kept independent of the app source (same
 // convention as the material types below).
 export interface FurnitureModelReport {
-  kind: string;
+  code: string;
   /**
    * 等比縮放倍率。**單一數字**這件事本身就是「三軸同倍率、沒有非等比拉伸」
    * 的證據 —— 非等比縮放無法用一個純量表示(AGENTS.md 的家具尺寸規則)。
@@ -68,25 +68,25 @@ export interface FurnitureModelReport {
   scale: number;
   /** 縮放後的實際包圍盒尺寸(公尺,已套用模型方位修正 rotationY)。 */
   fittedM: [number, number, number];
-  /** `FURNITURE_DEFAULTS` 的目標尺寸(公尺)。 */
+  /** 目錄宣告的目標尺寸(公尺)。 */
   targetM: [number, number, number];
-  /** 這個 kind 被拆成幾個 instanced mesh(GLB 內的 mesh 數)。 */
+  /** 這個品項被拆成幾個 instanced mesh(GLB 內的 mesh 數)。 */
   partCount: number;
-  /** 目前場上這個 kind 有幾件。 */
+  /** 目前場上這個品項有幾件。 */
   instanceCount: number;
 }
 
 // task 6 (procedural exhibition furniture) — mirrors proceduralFurniture.tsx's
 // ProceduralFurnitureReport shape.
 export interface ProceduralFurnitureReport {
-  kind: string;
+  code: string;
   /** 程序化零件拼出來的實際外廓(公尺)。 */
   sizeM: [number, number, number];
-  /** `FURNITURE_DEFAULTS` 的標稱尺寸(公尺)。 */
+  /** 目錄宣告的標稱尺寸(公尺)。 */
   targetM: [number, number, number];
   /** 這件家具由幾個零件組成。 */
   partCount: number;
-  /** 目前場上這個 kind 有幾件。 */
+  /** 目前場上這個品項有幾件。 */
   instanceCount: number;
 }
 
@@ -342,6 +342,24 @@ export class PlanEditorPage {
   > {
     const raw = await this.editor.getAttribute("data-furniture");
     return JSON.parse(raw ?? "[]");
+  }
+
+  /**
+   * 平面圖上每件家具的矩形尺寸(公尺)。
+   *
+   * 這是 Konva `<Rect>` 實際吃到的那一份寬高(`data-furniture-rects` 與繪製
+   * 共用同一個 memo),不是品項身上另存的欄位 —— 品項身上已經沒有尺寸可存。
+   */
+  async furnitureRects(): Promise<{ id: string; w: number; h: number }[]> {
+    const raw = await this.editor.getAttribute("data-furniture-rects");
+    return JSON.parse(raw ?? "[]");
+  }
+
+  /** 指定家具的平面矩形;找不到就丟例外,不要讓呼叫端拿到 undefined 繼續跑。 */
+  async furnitureRectM(id: string): Promise<{ w: number; h: number }> {
+    const rect = (await this.furnitureRects()).find((r) => r.id === id);
+    if (!rect) throw new Error(`data-furniture-rects 裡沒有 id=${id}`);
+    return { w: rect.w, h: rect.h };
   }
 
   async columnCount(): Promise<number> {
@@ -679,12 +697,14 @@ export class PlanEditorPage {
 
   // --- R5 步驟 02 家具外型(feedback round 2, T7)------------------------
 
-  /** 步驟 02 場上各種家具的幾何/材質摘要(探針量的,不是原始碼字面值)。 */
+  /** 步驟 02 場上各品項的幾何/材質摘要(探針量的,不是原始碼字面值)。 */
   async sceneFurnitureShapes(): Promise<
     {
-      kind: string;
+      code: string;
       partCount: number;
       triangles: number;
+      /** 實際幾何外廓(公尺),未套用擺放位置與旋轉。 */
+      sizeM: [number, number, number];
       hasMap: boolean;
       hasNormalMap: boolean;
     }[]
@@ -879,7 +899,7 @@ export class PlanEditorPage {
    *
    * Prefer these over `refinedShadowCasterMeshCount()` for AC2: since task 5
    * imports real GLBs, mesh count and item count diverge — N items of one
-   * kind share a single `InstancedMesh`, and a multi-mesh GLB (cabinet: 5)
+   * catalogue code share a single `InstancedMesh`, and a multi-mesh GLB (cabinet: 5)
    * becomes that many `InstancedMesh`es.
    */
   async refinedShadowCasterWallCount(): Promise<number> {
@@ -1028,7 +1048,7 @@ export class PlanEditorPage {
     return raw === "true";
   }
 
-  /** Parsed `data-furniture-model-reports` — one entry per kind currently on the plan. */
+  /** Parsed `data-furniture-model-reports` — one entry per catalogue code currently on the plan. */
   async refinedFurnitureModelReports(): Promise<FurnitureModelReport[]> {
     const raw = await this.refinedScene.getAttribute(
       "data-furniture-model-reports",
@@ -1036,15 +1056,15 @@ export class PlanEditorPage {
     return JSON.parse(raw ?? "[]") as FurnitureModelReport[];
   }
 
-  /** The single report for `kind`, or `undefined` if that kind isn't drawn from a model. */
+  /** The single report for `code`, or `undefined` if that item isn't drawn from a model. */
   async refinedFurnitureModelReport(
-    kind: string,
+    code: string,
   ): Promise<FurnitureModelReport | undefined> {
     const reports = await this.refinedFurnitureModelReports();
-    return reports.find((report) => report.kind === kind);
+    return reports.find((report) => report.code === code);
   }
 
-  /** Parsed `data-furniture-procedural-reports` — one entry per procedurally-drawn kind on the plan. */
+  /** Parsed `data-furniture-procedural-reports` — one entry per procedurally-drawn catalogue code. */
   async refinedProceduralFurnitureReports(): Promise<ProceduralFurnitureReport[]> {
     const raw = await this.refinedScene.getAttribute(
       "data-furniture-procedural-reports",
@@ -1072,7 +1092,7 @@ export class PlanEditorPage {
    * Cache/build counts for the imported-GLB path (`data-furniture-model-stats`).
    *
    * The counterpart to `refinedProceduralFurnitureStats()`. `totalBuilds` is
-   * what proves the per-kind cache is actually being reused: a flat
+   * what proves the per-code cache is actually being reused: a flat
    * `liveGeometries` across round-trips is also consistent with "nothing was
    * drawn at all", whereas `totalBuilds` staying put while models are visibly
    * on screen is not.
@@ -1084,12 +1104,12 @@ export class PlanEditorPage {
     return JSON.parse(raw ?? "null") as FurnitureModelStats;
   }
 
-  /** The single procedural report for `kind`, or `undefined`. */
+  /** The single procedural report for `code`, or `undefined`. */
   async refinedProceduralFurnitureReport(
-    kind: string,
+    code: string,
   ): Promise<ProceduralFurnitureReport | undefined> {
     const reports = await this.refinedProceduralFurnitureReports();
-    return reports.find((report) => report.kind === kind);
+    return reports.find((report) => report.code === code);
   }
 
   // --- zoom/pan --------------------------------------------------------

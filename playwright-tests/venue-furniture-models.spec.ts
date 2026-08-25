@@ -66,17 +66,17 @@ async function clickFloor(page: Page, point: { x: number; y: number }) {
 async function placeFurnitureOnStep2(
   page: Page,
   editor: PlanEditorPage,
-  kind: string,
+  code: string,
   offsetPx: { x: number; y: number } = { x: 0, y: 0 },
 ) {
   const before = await editor.furnitureCount();
-  await page.getByTestId(`furniture-place-${kind}`).click();
+  await page.getByTestId(`furniture-place-${code}`).click();
   const center = await step2CanvasCenter(page);
   await clickFloor(page, { x: center.x + offsetPx.x, y: center.y + offsetPx.y });
   await expect
     .poll(() => editor.furnitureCount(), {
       timeout: 5_000,
-      message: `${kind} 沒有放上去 — 偏移 (${offsetPx.x}, ${offsetPx.y}) 可能點在地板之外`,
+      message: `${code} 沒有放上去 — 偏移 (${offsetPx.x}, ${offsetPx.y}) 可能點在地板之外`,
     })
     .toBe(before + 1);
 }
@@ -94,19 +94,19 @@ async function toStep2(editor: PlanEditorPage) {
 
 /** kind -> FURNITURE_DEFAULTS 的 (w, height3d, h),與 src/lib/venue/furniture.ts 一致。 */
 const MODEL_KINDS = [
-  { kind: "table", target: [1.2, 0.75, 0.7] },
-  { kind: "chair", target: [0.45, 0.9, 0.45] },
-  { kind: "cabinet", target: [0.6, 1.8, 1.2] },
-  { kind: "sofa", target: [1.8, 0.8, 0.8] },
-  { kind: "plant", target: [0.5, 1.2, 0.5] },
-  { kind: "display", target: [1.0, 1.6, 0.5] },
+  { code: "TBL-120-75", target: [1.2, 0.75, 0.7] },
+  { code: "CHR-45-90", target: [0.45, 0.9, 0.45] },
+  { code: "CAB-60-180", target: [0.6, 1.8, 1.2] },
+  { code: "SOF-180-80", target: [1.8, 0.8, 0.8] },
+  { code: "PLT-50-120", target: [0.5, 1.2, 0.5] },
+  { code: "DSP-100-160", target: [1.0, 1.6, 0.5] },
 ] as const;
 
 /** M8 用來 mock 存檔載入的 API(沿用 venue-zoom-pan.spec.ts 的寫法)。 */
 const PLAN_SLOT_RE = /\/api\/plans\/\d$/;
 
 /** 沒有 Poly Haven 資產的展場專用家具(task 6 起改由程序化幾何繪製)。 */
-const BOX_ONLY_KINDS = ["counter", "bannerStand", "podium"] as const;
+const BOX_ONLY_KINDS = ["CNT-100-110", "BNR-80-200", "POD-60-110"] as const;
 
 /**
  * Records `/models/venue/*.glb` traffic **in order**, tagging requests and
@@ -150,7 +150,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
       { x: 0, y: -15 },
     ];
     for (const [index, entry] of MODEL_KINDS.entries()) {
-      await placeFurnitureOnStep2(page, editor, entry.kind, offsets[index]);
+      await placeFurnitureOnStep2(page, editor, entry.code, offsets[index]);
     }
 
     await editor.goToRefined();
@@ -163,17 +163,17 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
       .toBe(MODEL_KINDS.length);
 
     for (const entry of MODEL_KINDS) {
-      const report = await editor.refinedFurnitureModelReport(entry.kind);
-      expect(report, `${entry.kind} 應該由匯入模型繪製`).toBeDefined();
+      const report = await editor.refinedFurnitureModelReport(entry.code);
+      expect(report, `${entry.code} 應該由匯入模型繪製`).toBeDefined();
       if (!report) continue;
 
       // 契約上 scale 就是一個數字 —— 三軸不可能各縮各的。這是「不得非等比
       // 拉伸變形」(AGENTS.md)最直接的證據。
-      expect(Number.isFinite(report.scale), `${entry.kind} scale 應為有限數`)
+      expect(Number.isFinite(report.scale), `${entry.code} scale 應為有限數`)
         .toBe(true);
-      expect(report.scale, `${entry.kind} scale 應為正數`).toBeGreaterThan(0);
+      expect(report.scale, `${entry.code} scale 應為正數`).toBeGreaterThan(0);
 
-      expect(report.targetM, `${entry.kind} 目標尺寸應取自 FURNITURE_DEFAULTS`)
+      expect(report.targetM, `${entry.code} 目標尺寸應取自 FURNITURE_DEFAULTS`)
         .toEqual([...entry.target]);
 
       // 沒有任何一軸溢出目標框(留 1mm 浮點容差)。
@@ -183,13 +183,13 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
       for (const [axis, ratio] of ratios.entries()) {
         expect(
           ratio,
-          `${entry.kind} 第 ${axis} 軸溢出目標框(${report.fittedM[axis]} > ${report.targetM[axis]})`,
+          `${entry.code} 第 ${axis} 軸溢出目標框(${report.fittedM[axis]} > ${report.targetM[axis]})`,
         ).toBeLessThanOrEqual(1 + 1e-3);
       }
       // 且至少一軸貼齊 —— 否則「等比」也可能是縮得莫名其妙的小。
       expect(
         Math.max(...ratios),
-        `${entry.kind} 沒有任何一軸貼齊目標尺寸(最大佔比 ${Math.max(...ratios)})`,
+        `${entry.code} 沒有任何一軸貼齊目標尺寸(最大佔比 ${Math.max(...ratios)})`,
       ).toBeGreaterThan(1 - 1e-3);
     }
   });
@@ -197,12 +197,12 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
   test("M2: cabinet 的方位修正讓模型長邊對上平面圖長邊", async ({ page }) => {
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
-    await placeFurnitureOnStep2(page, editor, "cabinet");
+    await placeFurnitureOnStep2(page, editor, "CAB-60-180");
 
     await editor.goToRefined();
     await waitForFurnitureModels(editor);
 
-    const report = await editor.refinedFurnitureModelReport("cabinet");
+    const report = await editor.refinedFurnitureModelReport("CAB-60-180");
     expect(report).toBeDefined();
     if (!report) return;
 
@@ -253,8 +253,8 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
 
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
-    await placeFurnitureOnStep2(page, editor, "table", { x: -30, y: 0 });
-    await placeFurnitureOnStep2(page, editor, "plant", { x: 30, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "TBL-120-75", { x: -30, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "PLT-50-120", { x: 30, y: 0 });
 
     await editor.goToRefined();
     await waitForFurnitureModels(editor);
@@ -282,7 +282,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
 
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
-    await placeFurnitureOnStep2(page, editor, "table");
+    await placeFurnitureOnStep2(page, editor, "TBL-120-75");
 
     await editor.goToRefined();
     await waitForFurnitureModels(editor);
@@ -303,8 +303,8 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
     test.slow();
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
-    await placeFurnitureOnStep2(page, editor, "table", { x: -30, y: 0 });
-    await placeFurnitureOnStep2(page, editor, "cabinet", { x: 30, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "TBL-120-75", { x: -30, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "CAB-60-180", { x: 30, y: 0 });
 
     await editor.goToRefined();
     await waitForFurnitureModels(editor);
@@ -343,16 +343,16 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
   }) => {
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
-    await placeFurnitureOnStep2(page, editor, "chair", { x: -40, y: 0 });
-    await placeFurnitureOnStep2(page, editor, "chair", { x: 0, y: 0 });
-    await placeFurnitureOnStep2(page, editor, "chair", { x: 40, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "CHR-45-90", { x: -40, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "CHR-45-90", { x: 0, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "CHR-45-90", { x: 40, y: 0 });
 
     await editor.goToRefined();
     await waitForFurnitureModels(editor);
 
     const reports = await editor.refinedFurnitureModelReports();
     expect(reports, "三張椅子只該有一份 chair 報告(共用同一組 geometry)").toHaveLength(1);
-    expect(reports[0].kind).toBe("chair");
+    expect(reports[0].code).toBe("CHR-45-90");
     expect(reports[0].instanceCount).toBe(3);
 
     // 件數走 InstancedMesh.count,不是 mesh 數 —— 三張椅子仍然只有
@@ -460,7 +460,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
       .poll(() => editor.refinedShadowCasterFurnitureCount(), { timeout: 20_000 })
       .toBe(COUNT);
 
-    const report = await editor.refinedFurnitureModelReport("chair");
+    const report = await editor.refinedFurnitureModelReport("CHR-45-90");
     expect(report?.instanceCount).toBe(COUNT);
   });
 });

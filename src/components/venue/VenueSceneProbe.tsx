@@ -31,11 +31,23 @@ function triangleCount(geometry: THREE.BufferGeometry): number {
 
 /** 場上某一種家具的實際幾何/材質摘要。 */
 export interface WhiteboxFurnitureShape {
-  kind: string;
-  /** 這個 kind 被拆成幾個零件 mesh。 */
+  /** 目錄代碼。 */
+  code: string;
+  /** 這個品項被拆成幾個零件 mesh。 */
   partCount: number;
   /** 零件三角面數總和。單一 box 是 12,所以 >12 就證明不是方塊了。 */
   triangles: number;
+  /**
+   * 這個品項**實際幾何**的外廓(公尺,未套用擺放位置與旋轉)。
+   *
+   * 量的是零件 geometry 的包圍盒聯集,不是世界包圍盒:世界包圍盒會把「場上
+   * 有幾件、各自擺在哪」也算進去,同一個品項放兩件就會量出兩倍寬。geometry
+   * 空間的聯集只描述這個品項本身多大 —— 那才是要拿來跟目錄比對的東西。
+   *
+   * 聯集必須取各軸的 min/max 極值,不能取各零件跨距的最大值:講台由三塊疊起來
+   * 的板子組成,每塊自己只有幾公分厚,取最大跨距會量出「講台高 0.05m」。
+   */
+  sizeM: [number, number, number];
   /** 材質上有沒有掛貼圖 —— 步驟 02 的規定是「有形狀、沒貼圖」。 */
   hasMap: boolean;
   hasNormalMap: boolean;
@@ -46,7 +58,7 @@ export interface VenueSceneMeasurements {
   wallHeightM: number;
   /** 第一根柱子 mesh 的實際世界高度(公尺);場上無柱時為 0。 */
   columnHeightM: number;
-  /** 場上各種家具的幾何/材質摘要,依 kind 排序。 */
+  /** 場上各品項的幾何/材質摘要,依代碼排序。 */
   furnitureShapes: WhiteboxFurnitureShape[];
   /**
    * 步驟 03 專屬的地板/牆程序化材質累計烘焙次數。
@@ -80,24 +92,57 @@ export default function VenueSceneProbe({ onReport }: VenueSceneProbeProps) {
     };
 
     const shapes = new Map<string, WhiteboxFurnitureShape>();
+    // 每個品項的幾何極值(geometry 空間)。與 shapes 分開存是因為外廓要靠
+    // min/max 累積,而 WhiteboxFurnitureShape 對外只吐算好的 sizeM。
+    const extents = new Map<
+      string,
+      { min: [number, number, number]; max: [number, number, number] }
+    >();
     scene.traverse((node) => {
       if (!(node instanceof THREE.Mesh)) return;
       if (!node.name.startsWith(FURNITURE_NAME_PREFIX)) return;
-      const kind = node.name.slice(FURNITURE_NAME_PREFIX.length);
-      const existing = shapes.get(kind) ?? {
-        kind,
+      const code = node.name.slice(FURNITURE_NAME_PREFIX.length);
+      const existing = shapes.get(code) ?? {
+        code,
         partCount: 0,
         triangles: 0,
+        sizeM: [0, 0, 0] as [number, number, number],
         hasMap: false,
         hasNormalMap: false,
       };
-      // 同一個 kind 可能場上有多件,每件都掛同一組零件 —— partCount 只算
+      const extent = extents.get(code) ?? {
+        min: [Infinity, Infinity, Infinity] as [number, number, number],
+        max: [-Infinity, -Infinity, -Infinity] as [number, number, number],
+      };
+      // 同一個品項可能場上有多件,每件都掛同一組零件 —— partCount 只算
       // 一件的零件數,所以用第一件為準(後續件的零件是同樣的幾何)。
       const material = node.material as THREE.MeshStandardMaterial;
-      shapes.set(kind, {
-        kind,
+
+      if (!node.geometry.boundingBox) node.geometry.computeBoundingBox();
+      const partBox = node.geometry.boundingBox;
+      if (partBox) {
+        const lo = [partBox.min.x, partBox.min.y, partBox.min.z];
+        const hi = [partBox.max.x, partBox.max.y, partBox.max.z];
+        for (let axis = 0; axis < 3; axis++) {
+          if (Number.isFinite(lo[axis])) {
+            extent.min[axis] = Math.min(extent.min[axis], lo[axis]);
+          }
+          if (Number.isFinite(hi[axis])) {
+            extent.max[axis] = Math.max(extent.max[axis], hi[axis]);
+          }
+        }
+        extents.set(code, extent);
+      }
+      const sizeM: [number, number, number] = [0, 1, 2].map((axis) => {
+        const span = extent.max[axis] - extent.min[axis];
+        return Number.isFinite(span) ? Math.round(span * 1000) / 1000 : 0;
+      }) as [number, number, number];
+
+      shapes.set(code, {
+        code,
         partCount: existing.partCount + 1,
         triangles: existing.triangles + triangleCount(node.geometry),
+        sizeM,
         hasMap: existing.hasMap || material?.map != null,
         hasNormalMap: existing.hasNormalMap || material?.normalMap != null,
       });
@@ -107,7 +152,7 @@ export default function VenueSceneProbe({ onReport }: VenueSceneProbeProps) {
       wallHeightM: measure(VENUE_WALL_NAME),
       columnHeightM: measure(VENUE_COLUMN_NAME),
       furnitureShapes: [...shapes.values()].sort((a, b) =>
-        a.kind.localeCompare(b.kind),
+        a.code.localeCompare(b.code),
       ),
       surfaceBakes: getSurfaceTextureStats().totalBakes,
     };

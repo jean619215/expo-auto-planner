@@ -2,11 +2,7 @@
 // style of plan.ts. Furniture is a rectangle-with-center like Column, so it
 // reuses clampColumnCenter for boundary clamping.
 
-import {
-  catalogItem,
-  requireCatalogItem,
-  subCategoryLabel,
-} from "./catalog";
+import { catalogItem, requireCatalogItem } from "./catalog";
 import {
   DEFAULT_PLAN_AREA,
   clampColumnCenter,
@@ -17,6 +13,7 @@ import {
   type PlanPoint,
 } from "./plan";
 
+/** AI 工具參數用的舊分類名。除了 `KIND_TO_CODE` 之外不該有新的使用者。 */
 export type FurnitureKind =
   | "table"
   | "chair"
@@ -45,13 +42,14 @@ export interface FurnitureItem {
 }
 
 /**
- * 舊的 `kind` 對到目錄代碼。
+ * AI 工具參數的 `kind` 對到目錄代碼。
  *
- * 這是 T2 的**過渡橋**:繪製路徑(2D、白模、GLB、程序化、探針)目前全部以
- * `kind` 當索引鍵,T3 才會改成吃 `code`。在那之前,這張表讓「品項只存 code」
- * 與「繪製仍認 kind」兩件事同時成立,而不必讓 `FurnitureItem` 兩個欄位都存。
+ * T3 已把所有繪製路徑改成以 `code` 索引,這張表**只剩 AI 這一條進入路徑**在用
+ * (`src/lib/ai-panel/actions.ts` 的 schema 仍是 kind 聯集)。T4 把 schema 換成
+ * 自由字串代碼 + 伺服器端驗證之後,這張表與 `FurnitureKind` 一起刪除。
  *
- * T3 把索引鍵換掉之後,這張表與 `FurnitureKind` 一起刪除。
+ * 注意:這裡回傳 `string`,而 `FurnitureKind` 本身也是字串聯集 —— 把 kind 直接
+ * 傳給吃 `code: string` 的函式,型別完全合法但執行期查不到。轉換不能省。
  */
 export const KIND_TO_CODE: Record<FurnitureKind, string> = {
   table: "TBL-120-75",
@@ -69,50 +67,6 @@ export const KIND_TO_CODE: Record<FurnitureKind, string> = {
 export function codeForKind(kind: FurnitureKind): string {
   return KIND_TO_CODE[kind];
 }
-
-const CODE_TO_KIND = new Map(
-  (Object.keys(KIND_TO_CODE) as FurnitureKind[]).map((k) => [KIND_TO_CODE[k], k]),
-);
-
-/**
- * 目錄代碼對回舊 `kind`,查不到回傳 `undefined`。
- *
- * 只有 T3 之前還以 `kind` 索引的繪製路徑該用它。目錄長出第十個品項時它就會
- * 回 `undefined` —— 那正是「這條路徑還沒改吃目錄」的訊號,不要用預設值蓋掉。
- */
-export function kindForCode(code: string): FurnitureKind | undefined {
-  return CODE_TO_KIND.get(code);
-}
-
-/**
- * 尺寸/顏色/標籤的舊介面,現在**由目錄推導**而不是自己存一份。
- *
- * 方向刻意是這一邊:兩份數字只要並存就會分岔(這正是 D1 要解掉的問題),所以
- * 目錄是來源,這裡只是換一種索引方式的視圖。T3 之後沒有消費端,整份刪除。
- */
-export const FURNITURE_DEFAULTS: Record<
-  FurnitureKind,
-  { w: number; h: number; label: string; color: string; height3d: number }
-> = Object.fromEntries(
-  (Object.keys(KIND_TO_CODE) as FurnitureKind[]).map((kind) => {
-    const item = requireCatalogItem(KIND_TO_CODE[kind]);
-    return [
-      kind,
-      {
-        w: item.w,
-        h: item.d,
-        // 舊的 label 是不含尺寸的短名(「桌子」),目錄的 name 含尺寸
-        // (「桌子 120×70×H75」)。取子類標籤才是同一個東西。
-        label: subCategoryLabel(item.subCategory),
-        color: item.color,
-        height3d: item.height3d,
-      },
-    ];
-  }),
-) as Record<
-  FurnitureKind,
-  { w: number; h: number; label: string; color: string; height3d: number }
->;
 
 function normalizeDeg(deg: number): number {
   const wrapped = deg % 360;
