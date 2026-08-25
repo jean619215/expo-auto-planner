@@ -9,27 +9,23 @@ export interface AiPoint {
   y: number;
 }
 
-export type FurnitureKind =
-  | "table"
-  | "chair"
-  | "cabinet"
-  | "counter"
-  | "bannerStand"
-  | "sofa"
-  | "podium"
-  | "plant"
-  | "display";
 export type AiItemType = "wall" | "column" | "furniture";
 
 export interface GeneratePlanInput {
   floor: AiPoint[];
   walls: { start: AiPoint; end: AiPoint }[];
   columns: { center: AiPoint; w: number; h: number }[];
-  furniture: { kind: FurnitureKind; center: AiPoint; rotationDeg: number }[];
+  /**
+   * `code` 是**未驗證的自由字串** —— tool schema 刻意不用 enum(目錄會長大,
+   * enum 跟著改動會讓 prompt cache 每次失效)。模型可以送出任何字串,
+   * 合法性由套用端(PlanEditor)查目錄決定。
+   */
+  furniture: { code: string; center: AiPoint; rotationDeg: number }[];
 }
 
 export interface AddFurnitureInput {
-  kind: FurnitureKind;
+  /** 未驗證的自由字串,理由同 `GeneratePlanInput.furniture`。 */
+  code: string;
   center: AiPoint;
   rotationDeg: number;
 }

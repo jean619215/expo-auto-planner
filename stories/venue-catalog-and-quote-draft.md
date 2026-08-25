@@ -107,7 +107,7 @@ interface CatalogItem {
 | ✅ **T1** | 可編輯範圍改成「攤位 + 5m 邊距」,取代 `PLAN_AREA_SIZE_M` | 與目錄無關的獨立技術債,先清掉。動到頂點/柱子/家具的夾制與 `MIN_SCALE`,晚做會跟目錄改動糾纏 |
 | ✅ **T2** | 建 `catalog.ts` 資料層,9 個 kind 遷移成 9 個品項 | 純資料與型別,不動 UI。地基 |
 | ✅ **T3** | 繪製路徑改吃目錄:2D、白模輪廓、GLB、程序化、探針、快取 | `code` 取代 `kind` 當快取鍵與探針分組鍵 |
-| **T4** | AI schema 改用 `code` + 不存在代碼的錯誤回饋 | schema 用自由字串 + 伺服器端驗證,不用 enum(目錄會長大,enum 會破壞 prompt cache) |
+| ✅ **T4** | AI schema 改用 `code` + 不存在代碼的錯誤回饋 | schema 用自由字串 + 伺服器端驗證,不用 enum(目錄會長大,enum 會破壞 prompt cache) |
 | **T5** | 方正規格件改程序化參數化幾何 | 讓「同款不同尺寸」真的可行 |
 | **T6** | 擴充目錄:三層分類 + 品項與價格 | 資料工作為主 |
 | **T7** | 家具目錄頁 UI(大類 → 子類 → 品項、搜尋),UIUX 近似競品 | 依賴 T6 的資料 |
@@ -328,6 +328,41 @@ fixture 已改回 `kind` 並在該處註明「改 fixture 之前先改 schema」
 4. tool schema 裡**沒有**品項代碼的 enum(以原始碼檢查)—— 目錄會長大,enum 會隨之改動並破壞 prompt cache
 5. system prompt 仍是凍結字串,未因目錄而插值(比照 AGENTS.md 既有硬規定)
 6. **破壞驗證**:拿掉代碼驗證 → 第 2 項應失敗
+
+### T4 完成紀錄(2026-08-25)
+
+六項驗收條件全數通過。新 spec:`ai-catalog-code.spec.ts`(7 案例)。
+破壞驗證兩處都精準轉紅:拿掉 `add_furniture` 的代碼驗證 → 第 2、3 項紅;
+拿掉 `generate_plan` 的 → 第 4 項紅。
+
+**規劃外的一件事:模型得從某處知道有哪些代碼可用。**
+
+決議只寫了「schema 用自由字串 + 伺服器端驗證,不用 enum」,但 enum 拿掉之後,
+模型就沒有任何管道知道目錄裡有什麼 —— `add_furniture` 會變成只能從既有家具
+複製代碼,等於廢掉。
+
+目錄因此放進**每輪的目前配置附錄**(`AiPanel` 的 `configJson`),不是 system
+prompt、也不是 tool description:那兩者都在 prompt cache 的前綴裡,目錄一長就
+讓快取每次失效 —— 正是不用 enum 的同一個理由。附錄本來就逐輪不同,已在斷點
+之後。
+
+同理,`add_furniture` 的 description 原本列了九種家具的尺寸,已刪除:尺寸的
+唯一來源是目錄,寫在 description 是第二份會過期的數字。schema 的 description
+現在也不舉真實代碼為例(一度寫了 `TBL-120-75`,被自己的檢查項擋下)。
+
+**目錄長到上百項時(T6)要重新考慮這件事。** 九項塞進每一輪很便宜,兩百多項
+就不是了;那時比較合理的是給模型一支查詢工具,而不是繼續加大這份清單。
+
+**三處 fixture 必須與 schema 同時改。** T3 只改了其中一支,handler 拿到
+`undefined` 而丟例外,`applyActions` 整個掛掉、面板不渲染,而測試只說「找不到
+元素」。這一輪改 schema 時一併掃過全部:`ai-panel-persistent`、
+`venue-refined-materials` T14、`ai-panel`(需帳密,**未能執行驗證**)。
+
+`FurnitureKind` / `KIND_TO_CODE` / `codeForKind` 已刪除。`venue-catalog.spec.ts`
+原本用 `KIND_TO_CODE` 檢查「舊九種都遷過來了」,改成寫死的九個代碼清單 ——
+讀實作的表只能證明「表裡的都在目錄裡」,證明不了遷移完整。
+
+---
 
 ### T5 方正規格件改程序化
 

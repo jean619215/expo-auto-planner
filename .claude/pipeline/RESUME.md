@@ -1,6 +1,6 @@
 # 接續執行備忘 — story `stories/venue-catalog-and-quote-draft.md`(第三輪:家具目錄與報價)
 
-> 最後更新:2026-08-25(T1–T3 完成,T4 待開工)。
+> 最後更新:2026-08-25(T1–T4 完成,T5 待開工)。
 > 這份是「隔一陣子回來、或換一個 agent 接手要怎麼繼續」的入口。
 > 逐階段細節在 `.claude/pipeline/task-log.md`,決策與驗收條件在 story 檔本身。
 
@@ -11,9 +11,9 @@
 | 項目 | 狀態 |
 |---|---|
 | 第一輪(白模產生器)、第二輪(使用者回饋)| ✅ 已合併進 `master`(PR #12 / #13) |
-| 第三輪 T1(可編輯範圍)/ T2(目錄資料層)/ T3(繪製路徑改吃目錄)| ✅ 完成 |
-| 第三輪 T4–T9 | ⬜ 待開工,決策與驗收條件都已寫定 |
-| 免登入 28 支 spec | ✅ 256 通過、0 失敗 |
+| 第三輪 T1–T4(可編輯範圍 / 目錄資料層 / 繪製路徑 / AI schema)| ✅ 完成 |
+| 第三輪 T5–T9 | ⬜ 待開工,決策與驗收條件都已寫定 |
+| 免登入 29 支 spec | ✅ 263 通過、0 失敗 |
 | `npm run lint` / `npx tsc --noEmit` | ✅ 乾淨 |
 
 **分支關係**:第三輪的所有工作都落在 `docs/venue-catalog-and-quote` 上(它已 merge 了
@@ -84,23 +84,32 @@ story 第六節只點名 `venue-objects` / `venue-zoom-pan`。T1 實際還動到
 
 ---
 
-## 下一步:T4
+## 下一步:T5
 
-> AI schema 改用 `code` + 不存在代碼的錯誤回饋。schema 用自由字串 + 伺服器端驗證,
-> 不用 enum(目錄會長大,enum 會破壞 prompt cache)。
+> 方正規格件(展台、桌子、櫃子、櫃檯、講台、層板)改程序化參數化幾何,
+> 讓「同款不同尺寸」真的可行。
 
-驗收條件在 story 第五節。**這一步是 T3 唯一還欠的那半塊**,兩邊要一起換:
+驗收條件在 story 第五節。程序化 builder 現在以 `ProceduralShape` 為鍵(T3 做的),
+尺寸變體共用造型 —— T5 要做的是把更多方箱體品項接上這條路,而不是各自寫 builder。
 
-- `src/lib/ai/tools.ts` 的 `add_furniture` input schema(目前是 `kind` enum)
-- `PlanEditor.tsx` 的 handler(目前是 `codeForKind(action.input.kind)`)
-- `playwright-tests/ai-panel-persistent.spec.ts` 的 tool-call fixture
+**注意**:幾何快取仍以 `code` 為鍵。兩個尺寸變體共用 shape 但不共用 mesh,
+快取若改以 shape 為鍵,第二個變體會拿到第一個的幾何(T3 的 commit 記了這件事)。
 
-**三者必須同一次改完。** T3 只改了 fixture 那一個,結果 `codeForKind(undefined)`
-丟例外、`applyActions` 整個掛掉、`ai-action-summary` 不渲染,三個案例一起紅 ——
-而錯誤訊息只說「找不到 ai-action-summary」,看不出真正原因。
+### AI 那條路徑目前的樣子(T4 剛改完,動它之前先看這裡)
 
-改完之後 `FurnitureKind` 與 `KIND_TO_CODE` 就沒有使用者了,一併刪掉
-(`src/lib/venue/furniture.ts`)。
+- tool schema 的 `code` 是**自由字串**,沒有 enum —— 目錄會長大,enum 跟著改動
+  會讓 prompt cache 前綴每次失效。
+- 模型從**每輪的目前配置附錄**(`AiPanel` 的 `configJson` 裡的 `catalogue` 欄位)
+  知道有哪些代碼可用。不要把目錄搬進 system prompt 或 tool description —— 那兩者
+  在快取前綴裡,搬過去等於把 enum 的問題原樣搬回來。
+- 目錄長到上百項時(T6)這份附錄會太貴,屆時應改成給模型一支查詢工具。
+- 代碼合法性由套用端(`PlanEditor` 的 `applyActions`)查目錄決定,查不到就跳過
+  該一件並回報,**不中斷同一批的其他 action**。
+
+**改 schema 時,fixture 要一起改。** 三處在用:`ai-panel-persistent`、
+`venue-refined-materials` T14、`ai-panel`(需帳密)。只改一邊的症狀是 handler
+丟例外、`applyActions` 整個掛掉、面板不渲染,而測試只說「找不到 ai-action-summary」
+—— 指不到真正的原因。T3 踩過一次。
 
 ---
 

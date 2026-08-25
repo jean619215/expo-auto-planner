@@ -1,11 +1,11 @@
 {
   "story_file": "stories/venue-catalog-and-quote-draft.md",
   "story_title": "家具目錄與報價(第三輪)",
-  "task_index": 2,
-  "current_task": "[FRONTEND] T3 繪製路徑改吃目錄:2D、白模輪廓、GLB、程序化、探針、快取",
+  "task_index": 3,
+  "current_task": "[FRONTEND] T4 AI schema 改用 code + 不存在代碼的錯誤回饋",
   "task_type": "FRONTEND",
   "stage": "complete",
-  "next_task": "[FRONTEND] T4 AI schema 改用 code + 不存在代碼的錯誤回饋",
+  "next_task": "[FRONTEND] T5 方正規格件改程序化參數化幾何",
   "iteration": {
     "review": 0,
     "qa": 0
@@ -24,5 +24,5 @@
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "last_updated": "2026-08-25T12:00:00+08:00"
+  "last_updated": "2026-08-25T16:00:00+08:00"
 }

@@ -54,14 +54,12 @@ import {
   type WallSegment,
 } from "@/lib/venue/plan";
 import {
-  codeForKind,
   furnitureFootprintM,
   translateFurniture,
   type FurnitureItem,
 } from "@/lib/venue/furniture";
 import {
   catalogItem,
-  requireCatalogItem,
   subCategoryLabel,
 } from "@/lib/venue/catalog";
 import type {
@@ -853,23 +851,29 @@ export default function PlanEditor() {
             w: c.w,
             h: c.h,
           }));
-          const generatedFurniture: FurnitureItem[] =
-            action.input.furniture.map((f) => {
-              // AI 的 schema 到 T4 才換成目錄代碼;在那之前這裡把 kind 轉過去。
-              const code = codeForKind(f.kind);
-              const entry = requireCatalogItem(code);
-              return {
-                id: createObjectId(),
-                code,
-                center: clampColumnCenter(
-                  snapPoint(f.center, planArea),
-                  entry.w,
-                  entry.d,
-                  planArea,
-                ),
-                rotationDeg: normalizeRotationDeg(f.rotationDeg),
-              };
+          // 目錄代碼是模型送來的自由字串(schema 不用 enum,理由見
+          // src/lib/ai/tools.ts)。查不到的代碼跳過該件、記下來,其餘照放 ——
+          // 一件寫錯不該讓整份配置生不出來。
+          const unknownCodes: string[] = [];
+          const generatedFurniture: FurnitureItem[] = [];
+          for (const f of action.input.furniture) {
+            const entry = catalogItem(f.code);
+            if (!entry) {
+              unknownCodes.push(f.code);
+              continue;
+            }
+            generatedFurniture.push({
+              id: createObjectId(),
+              code: entry.code,
+              center: clampColumnCenter(
+                snapPoint(f.center, planArea),
+                entry.w,
+                entry.d,
+                planArea,
+              ),
+              rotationDeg: normalizeRotationDeg(f.rotationDeg),
             });
+          }
           nextPolygon = floorPoints;
           nextWalls = generatedWalls;
           nextColumns = generatedColumns;
@@ -884,19 +888,32 @@ export default function PlanEditor() {
             parts.push(`${generatedColumns.length} 根柱子`);
           if (generatedFurniture.length > 0)
             parts.push(`${generatedFurniture.length} 件家具`);
+          const skipped =
+            unknownCodes.length > 0
+              ? `;${unknownCodes.length} 件家具的代碼不在目錄裡,已跳過(${unknownCodes.join("、")})`
+              : "";
           results.push({
             toolUseId: action.toolUseId,
             ok: true,
-            message: `已產生配置:${parts.join("、")}`,
+            message: `已產生配置:${parts.join("、")}${skipped}`,
           });
           break;
         }
         case "add_furniture": {
-          const code = codeForKind(action.input.kind);
-          const entry = requireCatalogItem(code);
+          // 代碼查不到就拒絕這一個 action,並繼續處理同一批的其他 action ——
+          // 與 move_item / remove_item 的「已跳過」模式一致。
+          const entry = catalogItem(action.input.code);
+          if (!entry) {
+            results.push({
+              toolUseId: action.toolUseId,
+              ok: false,
+              message: `代碼 ${action.input.code} 不在家具目錄裡,已跳過新增`,
+            });
+            break;
+          }
           const item: FurnitureItem = {
             id: createObjectId(),
-            code,
+            code: entry.code,
             center: clampColumnCenter(
               snapPoint(action.input.center, planArea),
               entry.w,

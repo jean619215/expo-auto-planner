@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import type { Column, FloorPolygon, WallSegment } from "@/lib/venue/plan";
 import type { FurnitureItem } from "@/lib/venue/furniture";
+import { CATALOG } from "@/lib/venue/catalog";
 import {
   parseToolUse,
   type AiAction,
@@ -186,11 +187,26 @@ export default function AiPanel({
     setError(null);
 
     // 每輪 user 訊息自動附帶目前配置 JSON,供模型 index 參照(AC3)。
+    //
+    // 目錄一併附上:tool schema 的 code 是自由字串(不用 enum,見
+    // src/lib/ai/tools.ts),模型得從某處知道有哪些代碼可用。放這裡而不是
+    // system prompt 或 tool description —— 那兩者都在 prompt cache 的前綴裡,
+    // 目錄一長就會讓快取每次失效,而這份附錄本來就逐輪不同,已在斷點之後。
+    //
+    // 目錄長到上百項時(T6)要重新考慮:那時整份塞進每一輪的成本就不划算,
+    // 比較合理的做法是給模型一支查詢工具,而不是繼續加大這份清單。
     const configJson = JSON.stringify({
       floor: plan.polygon,
       walls: plan.walls,
       columns: plan.columns,
       furniture: plan.furniture,
+      catalogue: CATALOG.map((item) => ({
+        code: item.code,
+        name: item.name,
+        w: item.w,
+        d: item.d,
+        height3d: item.height3d,
+      })),
     });
     const textBlock: Anthropic.TextBlockParam = {
       type: "text",

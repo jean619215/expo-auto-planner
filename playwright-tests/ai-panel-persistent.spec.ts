@@ -94,12 +94,11 @@ const ADD_CHAIR_FIXTURE: MockResponse = {
         type: "tool_use",
         id: "toolu_add_chair_1",
         name: "add_furniture",
-        // AI 的 tool schema 到 T4 才改吃目錄代碼(src/lib/ai/tools.ts 的
-        // add_furniture 目前仍是 kind enum),所以 fixture 必須照現況送 kind。
-        // T3 一度把這裡改成 code —— 那讓 handler 的 codeForKind(undefined)
-        // 查不到品項而丟例外,整個 applyActions 掛掉、ai-action-summary 根本
-        // 不會渲染,三個案例一起紅。改 fixture 之前先改 schema。
-        input: { kind: "chair", center: { x: 24, y: 24 }, rotationDeg: 0 },
+        // T4 起 schema 吃目錄代碼。這個 fixture、`src/lib/ai/tools.ts` 的
+        // schema、`PlanEditor` 的 handler 三者必須同時是同一種形狀 —— T3 只改
+        // 了這裡,結果 handler 拿到 undefined、丟例外、整個 applyActions 掛掉,
+        // 而測試只說「找不到 ai-action-summary」,指不到真正的原因。
+        input: { code: "CHR-45-90", center: { x: 24, y: 24 }, rotationDeg: 0 },
       },
     ],
     stopReason: "tool_use",
