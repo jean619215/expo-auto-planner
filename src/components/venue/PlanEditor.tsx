@@ -55,9 +55,12 @@ import {
 } from "@/lib/venue/plan";
 import {
   FURNITURE_DEFAULTS,
+  codeForKind,
+  furnitureFootprintM,
   translateFurniture,
   type FurnitureItem,
 } from "@/lib/venue/furniture";
+import { catalogItem, subCategoryLabel } from "@/lib/venue/catalog";
 import type {
   AiAction,
   AiActionResult,
@@ -849,18 +852,17 @@ export default function PlanEditor() {
           }));
           const generatedFurniture: FurnitureItem[] =
             action.input.furniture.map((f) => {
+              // AI 的 schema 到 T4 才換成目錄代碼;在那之前這裡把 kind 轉過去。
               const defaults = FURNITURE_DEFAULTS[f.kind];
               return {
                 id: createObjectId(),
-                kind: f.kind,
+                code: codeForKind(f.kind),
                 center: clampColumnCenter(
                   snapPoint(f.center, planArea),
                   defaults.w,
                   defaults.h,
                   planArea,
                 ),
-                w: defaults.w,
-                h: defaults.h,
                 rotationDeg: normalizeRotationDeg(f.rotationDeg),
               };
             });
@@ -889,15 +891,13 @@ export default function PlanEditor() {
           const defaults = FURNITURE_DEFAULTS[action.input.kind];
           const item: FurnitureItem = {
             id: createObjectId(),
-            kind: action.input.kind,
+            code: codeForKind(action.input.kind),
             center: clampColumnCenter(
               snapPoint(action.input.center, planArea),
               defaults.w,
               defaults.h,
               planArea,
             ),
-            w: defaults.w,
-            h: defaults.h,
             rotationDeg: normalizeRotationDeg(action.input.rotationDeg),
           };
           nextFurniture = [...nextFurniture, item];
@@ -1119,11 +1119,23 @@ export default function PlanEditor() {
    * `PLAN_AREA_MARGIN_M`),擺在那裡的東西沒有「超出」。攤位縮小時範圍跟著
    * 縮,原本在邊距裡的東西才可能真的被擠出去 —— 那才是要提示的情況。
    */
+  /**
+   * 家具的矩形視圖(`center` + 目錄查來的 `w`/`h`)。
+   *
+   * `isRectOutsideBounds` / `clampRectCenterToBounds` 吃的是「有寬高的矩形」,
+   * 而家具現在只存代碼 —— 這裡把查表收在一處,免得每個呼叫點各自展開一次。
+   */
+  function furnitureRect(item: FurnitureItem) {
+    const { w, h } = furnitureFootprintM(item);
+    return { center: item.center, w, h };
+  }
+
   function outsideCountFor(widthM: number, heightM: number): number {
     const nextArea = planAreaFor(widthM, heightM);
     return (
       columns.filter((c) => isRectOutsideBounds(c, nextArea)).length +
-      furniture.filter((f) => isRectOutsideBounds(f, nextArea)).length +
+      furniture.filter((f) => isRectOutsideBounds(furnitureRect(f), nextArea))
+        .length +
       walls.filter((w) => isWallOutsideBounds(w, nextArea)).length
     );
   }
@@ -1140,7 +1152,10 @@ export default function PlanEditor() {
       prev.map((c) => ({ ...c, center: clampRectCenterToBounds(c, nextArea) })),
     );
     setFurniture((prev) =>
-      prev.map((f) => ({ ...f, center: clampRectCenterToBounds(f, nextArea) })),
+      prev.map((f) => ({
+        ...f,
+        center: clampRectCenterToBounds(furnitureRect(f), nextArea),
+      })),
     );
     setWalls((prev) => prev.map((w) => clampWallToBounds(w, nextArea)));
     setSelectedVertex(null);
@@ -1746,10 +1761,13 @@ export default function PlanEditor() {
                         selectedObject?.type === "furniture" &&
                         selectedObject.id === item.id;
                       const centerPx = metersToPx(item.center, pxPerMeter);
-                      const widthPx = item.w * pxPerMeter;
-                      const heightPx = item.h * pxPerMeter;
-                      const defaults = FURNITURE_DEFAULTS[item.kind];
-                      const itemColor = isSelected ? "#1F4E79" : defaults.color;
+                      const footprint = furnitureFootprintM(item);
+                      const widthPx = footprint.w * pxPerMeter;
+                      const heightPx = footprint.h * pxPerMeter;
+                      const entry = catalogItem(item.code);
+                      const itemColor = isSelected
+                        ? "#1F4E79"
+                        : (entry?.color ?? "#808080");
                       return (
                         <Fragment key={item.id}>
                           <Rect
@@ -1761,7 +1779,7 @@ export default function PlanEditor() {
                             offsetX={widthPx / 2}
                             offsetY={heightPx / 2}
                             rotation={item.rotationDeg}
-                            fill={defaults.color}
+                            fill={entry?.color ?? "#808080"}
                             opacity={0.6}
                             stroke={itemColor}
                             strokeWidth={isSelected ? 3 : 1.5}
@@ -1780,7 +1798,9 @@ export default function PlanEditor() {
                               x={centerPx.x}
                               y={centerPx.y}
                               rotation={item.rotationDeg}
-                              text={defaults.label}
+                              text={
+                                entry ? subCategoryLabel(entry.subCategory) : item.code
+                              }
                               fontSize={11}
                               fill={itemColor}
                               offsetX={11}

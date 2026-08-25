@@ -17,10 +17,12 @@
 import { useEffect, useMemo } from "react";
 import * as THREE from "three";
 import {
-  FURNITURE_DEFAULTS,
+  furnitureFootprintM,
+  kindForCode,
   type FurnitureItem,
   type FurnitureKind,
 } from "@/lib/venue/furniture";
+import { catalogItem } from "@/lib/venue/catalog";
 import {
   hasProceduralFurniture,
   proceduralFurnitureParts,
@@ -29,21 +31,26 @@ import { furnitureModel } from "@/lib/venue/models";
 import { useNormalizedFurnitureModel } from "./furnitureModels";
 import { buildPartGeometry } from "./proceduralFurniture";
 
-/** 探針靠這個名字找場上的家具 mesh。 */
-export function whiteboxFurnitureName(kind: FurnitureKind): string {
-  return `venue-furniture-${kind}`;
+/**
+ * 探針靠這個名字找場上的家具 mesh。
+ *
+ * 分組鍵在 T3 會從 kind 換成目錄代碼;在那之前傳的是 kind,只有目錄裡沒有
+ * 對應 kind 的新品項才會拿代碼當鍵。
+ */
+export function whiteboxFurnitureName(key: string): string {
+  return `venue-furniture-${key}`;
 }
 
-/** 白模材質:單色、不吃貼圖。依 kind 快取一份,由呼叫端負責卸載時 dispose。 */
-function useWhiteboxMaterial(kind: FurnitureKind): THREE.MeshStandardMaterial {
+/** 白模材質:單色、不吃貼圖。依顏色快取一份,由呼叫端負責卸載時 dispose。 */
+function useWhiteboxMaterial(color: string): THREE.MeshStandardMaterial {
   const material = useMemo(
     () =>
       new THREE.MeshStandardMaterial({
-        color: FURNITURE_DEFAULTS[kind].color,
+        color,
         roughness: 0.8,
         metalness: 0,
       }),
-    [kind],
+    [color],
   );
   useEffect(() => () => material.dispose(), [material]);
   return material;
@@ -101,8 +108,13 @@ export default function WhiteboxFurnitureItem({
   meshRef,
   onSelect,
 }: WhiteboxFurnitureItemProps) {
-  const defaults = FURNITURE_DEFAULTS[item.kind];
-  const material = useWhiteboxMaterial(item.kind);
+  // T3 之前,mesh 命名與幾何查表仍以 kind 為鍵(見 `kindForCode`);尺寸與
+  // 顏色已經改吃目錄。目錄裡查不到的代碼(存檔中已下架的品項)一律畫不出來,
+  // 不猜尺寸 —— 見下方 `entry` 為 undefined 的分支。
+  const kind = kindForCode(item.code);
+  const entry = catalogItem(item.code);
+  const footprint = furnitureFootprintM(item);
+  const material = useWhiteboxMaterial(entry?.color ?? "#808080");
   const selectedMaterial = useMemo(
     () =>
       new THREE.MeshStandardMaterial({
@@ -119,7 +131,7 @@ export default function WhiteboxFurnitureItem({
       {geometries.map((geometry, index) => (
         <mesh
           key={index}
-          name={whiteboxFurnitureName(item.kind)}
+          name={whiteboxFurnitureName(kind ?? item.code)}
           geometry={geometry}
           material={selected ? selectedMaterial : material}
         />
@@ -127,21 +139,21 @@ export default function WhiteboxFurnitureItem({
     </>
   );
 
-  const body = furnitureModel(item.kind) ? (
-    <ModelGeometries kind={item.kind}>{renderParts}</ModelGeometries>
-  ) : hasProceduralFurniture(item.kind) ? (
-    <ProceduralGeometries kind={item.kind}>{renderParts}</ProceduralGeometries>
-  ) : (
-    // 保底:有人往 FURNITURE_DEFAULTS 加了新 kind 卻還沒給它造型時,至少
-    // 畫得出來,而不是無聲消失。
+  const body = kind && furnitureModel(kind) ? (
+    <ModelGeometries kind={kind}>{renderParts}</ModelGeometries>
+  ) : kind && hasProceduralFurniture(kind) ? (
+    <ProceduralGeometries kind={kind}>{renderParts}</ProceduralGeometries>
+  ) : entry ? (
+    // 保底:目錄裡有這個品項、但還沒給它模型或程序化造型時,至少畫得出來,
+    // 而不是無聲消失。
     <mesh
-      name={whiteboxFurnitureName(item.kind)}
-      position={[0, defaults.height3d / 2, 0]}
+      name={whiteboxFurnitureName(kind ?? item.code)}
+      position={[0, entry.height3d / 2, 0]}
       material={selected ? selectedMaterial : material}
     >
-      <boxGeometry args={[item.w, defaults.height3d, item.h]} />
+      <boxGeometry args={[footprint.w, entry.height3d, footprint.h]} />
     </mesh>
-  );
+  ) : null;
 
   return (
     <group

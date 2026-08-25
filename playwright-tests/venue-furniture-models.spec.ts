@@ -376,10 +376,9 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
     const COUNT = 300;
     const furniture = Array.from({ length: COUNT }, (_, i) => ({
       id: `chair-${i}`,
-      kind: "chair",
+      // T2 之後存檔存的是目錄代碼;沒有 code 的舊形狀會被繪製端拒畫(D8)。
+      code: "CHR-45-90",
       center: { x: 5 + (i % 50) * 0.5, y: 5 + Math.floor(i / 50) * 0.5 },
-      w: 0.45,
-      h: 0.45,
       rotationDeg: 0,
     }));
 

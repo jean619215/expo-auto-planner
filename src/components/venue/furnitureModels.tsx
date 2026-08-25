@@ -11,6 +11,7 @@ import * as THREE from "three";
 import { useGLTF, Instances, Instance } from "@react-three/drei";
 import {
   FURNITURE_DEFAULTS,
+  kindForCode,
   type FurnitureItem,
   type FurnitureKind,
 } from "@/lib/venue/furniture";
@@ -254,11 +255,15 @@ export default function FurnitureModels({
     const wantDeferred = phase === "deferred";
     const byKind = new Map<FurnitureKind, FurnitureItem[]>();
     for (const item of furniture) {
-      const model = furnitureModel(item.kind);
+      // T3 之前繪製仍以 kind 分組;目錄裡的新品項還沒有 kind,`kindForCode`
+      // 回 undefined 就跳過(與「這個 kind 沒有模型」走同一條路)。
+      const kind = kindForCode(item.code);
+      if (!kind) continue;
+      const model = furnitureModel(kind);
       if (!model || model.deferred !== wantDeferred) continue;
-      const list = byKind.get(item.kind);
+      const list = byKind.get(kind);
       if (list) list.push(item);
-      else byKind.set(item.kind, [item]);
+      else byKind.set(kind, [item]);
     }
     return [...byKind.entries()].map(([kind, items]) => ({
       kind,

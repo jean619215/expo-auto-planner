@@ -13,10 +13,11 @@ import {
   type WallSegment,
 } from "@/lib/venue/plan";
 import {
-  FURNITURE_DEFAULTS,
+  kindForCode,
   type FurnitureItem,
   type FurnitureKind,
 } from "@/lib/venue/furniture";
+import { catalogItem } from "@/lib/venue/catalog";
 import { hasFurnitureModel } from "@/lib/venue/models";
 import type { SurfaceSelection } from "@/lib/venue/surfacePresets";
 import { hasProceduralFurniture } from "@/lib/venue/proceduralFurniture";
@@ -345,22 +346,24 @@ function RefinedSceneContent({
         // 保底路徑:既沒有模型、也還沒給程序化造型的 kind(目前九種家具都有
         // 造型,所以正常情況下這裡不會產出任何東西)。留著是為了讓日後新增
         // 的 kind 至少畫得出來,而不是無聲消失。
-        if (hasFurnitureModel(item.kind) || hasProceduralFurniture(item.kind)) {
+        const kind = kindForCode(item.code);
+        if (kind && (hasFurnitureModel(kind) || hasProceduralFurniture(kind))) {
           return null;
         }
-        const defaults = FURNITURE_DEFAULTS[item.kind];
+        const entry = catalogItem(item.code);
+        if (!entry) return null;
         return (
           <mesh
             key={item.id}
             name={REFINED_FURNITURE_BOX_NAME}
-            position={[item.center.x, defaults.height3d / 2, item.center.y]}
+            position={[item.center.x, entry.height3d / 2, item.center.y]}
             rotation={[0, (-item.rotationDeg * Math.PI) / 180, 0]}
             castShadow
             receiveShadow
           >
-            <boxGeometry args={[defaults.w, defaults.height3d, defaults.h]} />
+            <boxGeometry args={[entry.w, entry.height3d, entry.d]} />
             <meshStandardMaterial
-              color={defaults.color}
+              color={entry.color}
               roughness={REFINED_SURFACE.furniture.roughness}
               metalness={REFINED_SURFACE.furniture.metalness}
             />
@@ -475,7 +478,9 @@ export default function RefinedScene({
   );
 
   const activeModelReports = useMemo(() => {
-    const kinds = new Set(furniture.map((item) => item.kind));
+    const kinds = new Set(
+      furniture.map((item) => kindForCode(item.code)).filter(Boolean),
+    );
     return Object.values(modelReports).filter((report) =>
       kinds.has(report.kind)
     );
@@ -483,7 +488,9 @@ export default function RefinedScene({
 
   // 與 activeModelReports 同理:家具被刪掉後,上一份報告會留在 state 裡。
   const activeProceduralReports = useMemo(() => {
-    const kinds = new Set(furniture.map((item) => item.kind));
+    const kinds = new Set(
+      furniture.map((item) => kindForCode(item.code)).filter(Boolean),
+    );
     return Object.values(proceduralReports).filter((report) =>
       kinds.has(report.kind)
     );

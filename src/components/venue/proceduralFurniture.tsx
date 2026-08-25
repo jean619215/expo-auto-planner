@@ -17,6 +17,7 @@ import * as THREE from "three";
 import { Instances, Instance } from "@react-three/drei";
 import {
   FURNITURE_DEFAULTS,
+  kindForCode,
   type FurnitureItem,
   type FurnitureKind,
 } from "@/lib/venue/furniture";
@@ -243,10 +244,12 @@ export default function ProceduralFurniture({
   const groups = useMemo(() => {
     const byKind = new Map<FurnitureKind, FurnitureItem[]>();
     for (const item of furniture) {
-      if (!hasProceduralFurniture(item.kind)) continue;
-      const list = byKind.get(item.kind);
+      // T3 之前繪製仍以 kind 分組(見 `kindForCode`)。
+      const kind = kindForCode(item.code);
+      if (!kind || !hasProceduralFurniture(kind)) continue;
+      const list = byKind.get(kind);
       if (list) list.push(item);
-      else byKind.set(item.kind, [item]);
+      else byKind.set(kind, [item]);
     }
     return [...byKind.entries()];
   }, [furniture]);

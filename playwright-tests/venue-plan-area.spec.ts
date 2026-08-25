@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { readFileSync, readdirSync, statSync } from "fs";
 import path from "path";
 import { PlanEditorPage } from "./pages/PlanEditorPage";
+import { catalogItem } from "../src/lib/venue/catalog";
 
 // 驗收閘:第三輪 T1 —— 可編輯範圍 = 攤位尺寸 + 5m 邊距,取代固定的 200m 見方。
 //
@@ -110,10 +111,12 @@ test.describe("Plan area follows the booth (T1)", () => {
     const area = await editor.planArea();
     const after = (await editor.furniture())[0];
 
-    expect(after.center.x - after.w / 2).toBeGreaterThanOrEqual(area.minX - 1e-6);
-    expect(after.center.x + after.w / 2).toBeLessThanOrEqual(area.maxX + 1e-6);
-    expect(after.center.y - after.h / 2).toBeGreaterThanOrEqual(area.minY - 1e-6);
-    expect(after.center.y + after.h / 2).toBeLessThanOrEqual(area.maxY + 1e-6);
+    // T2 之後家具身上只有代碼,外廓尺寸查目錄。
+    const spec = catalogItem(after.code)!;
+    expect(after.center.x - spec.w / 2).toBeGreaterThanOrEqual(area.minX - 1e-6);
+    expect(after.center.x + spec.w / 2).toBeLessThanOrEqual(area.maxX + 1e-6);
+    expect(after.center.y - spec.d / 2).toBeGreaterThanOrEqual(area.minY - 1e-6);
+    expect(after.center.y + spec.d / 2).toBeLessThanOrEqual(area.maxY + 1e-6);
     // 真的被移動過,不是本來就在範圍內所以自動通過。
     expect(after.center).not.toEqual(before.center);
   });

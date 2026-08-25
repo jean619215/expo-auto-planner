@@ -7,7 +7,7 @@
 // editable plan area's upper bound.
 
 import { WALL_THICKNESS_M, type Column, type FloorPolygon, type WallSegment } from "./plan";
-import type { FurnitureItem } from "./furniture";
+import { furnitureFootprintM, type FurnitureItem } from "./furniture";
 
 // Floor radius below which the shadow camera frustum would degenerate to a
 // zero (or near-zero) span — guards against NaN/zero-size projection
@@ -78,7 +78,8 @@ export function planBoundsM(
     expand(acc, column.center.x, column.center.y, Math.hypot(column.w, column.h) / 2);
   }
   for (const item of furniture) {
-    expand(acc, item.center.x, item.center.y, Math.hypot(item.w, item.h) / 2);
+    const { w, h } = furnitureFootprintM(item);
+    expand(acc, item.center.x, item.center.y, Math.hypot(w, h) / 2);
   }
 
   if (

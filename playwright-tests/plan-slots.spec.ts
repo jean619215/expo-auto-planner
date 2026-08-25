@@ -137,7 +137,7 @@ const FIXTURE_PLAN = {
   walls: [],
   columns: [],
   furniture: [
-    { id: "f1", kind: "table", center: { x: 10, y: 10 }, w: 1.2, h: 0.7, rotationDeg: 0 },
+    { id: "f1", code: "TBL-120-75", center: { x: 10, y: 10 }, rotationDeg: 0 },
   ],
   venueSizeM: 40,
 };

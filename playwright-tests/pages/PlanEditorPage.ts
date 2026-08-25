@@ -332,9 +332,13 @@ export class PlanEditorPage {
     return Number(raw);
   }
 
-  /** 場上的家具(`data-furniture`),含中心點與外廓尺寸。 */
+  /**
+   * 場上的家具(`data-furniture`)。
+   *
+   * T2 之後品項只存目錄代碼,尺寸要查目錄 —— 這裡不再回傳 `w`/`h`。
+   */
   async furniture(): Promise<
-    { id: string; center: PlanPoint; w: number; h: number }[]
+    { id: string; code: string; center: PlanPoint; rotationDeg: number }[]
   > {
     const raw = await this.editor.getAttribute("data-furniture");
     return JSON.parse(raw ?? "[]");

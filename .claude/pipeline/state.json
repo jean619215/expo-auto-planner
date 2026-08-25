@@ -1,11 +1,11 @@
 {
   "story_file": "stories/venue-catalog-and-quote-draft.md",
   "story_title": "家具目錄與報價(第三輪)",
-  "task_index": 0,
-  "current_task": "[FRONTEND] T1 可編輯範圍改成「攤位 + 5m 邊距」,取代 PLAN_AREA_SIZE_M",
+  "task_index": 1,
+  "current_task": "[FRONTEND] T2 建 src/lib/venue/catalog.ts 資料層,9 個 kind 遷移成 9 個品項",
   "task_type": "FRONTEND",
   "stage": "complete",
-  "next_task": "[FRONTEND] T2 建 src/lib/venue/catalog.ts 資料層,9 個 kind 遷移成 9 個品項",
+  "next_task": "[FRONTEND] T3 繪製路徑改吃目錄:2D、白模輪廓、GLB、程序化、探針、快取",
   "iteration": {
     "review": 0,
     "qa": 0
@@ -24,5 +24,5 @@
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "last_updated": "2026-08-24T23:00:00+08:00"
+  "last_updated": "2026-08-25T00:00:00+08:00"
 }

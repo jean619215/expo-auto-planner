@@ -44,6 +44,7 @@ import {
 } from "@/lib/venue/plan";
 import {
   FURNITURE_DEFAULTS,
+  codeForKind,
   createFurniture,
   rotateFurniture,
   translateFurniture,
@@ -263,8 +264,12 @@ export default function VenueScene({
 
   function handleFloorClick(e: ThreeEvent<MouseEvent>) {
     if (placingKind) {
+      // 面板到 T7 才改成目錄導覽,在那之前仍以 kind 選件 —— 這裡轉成代碼。
+      // 注意 `FurnitureKind` 是字串聯集,直接傳給吃 `code: string` 的
+      // `createFurniture` 型別上是合法的,但執行期查不到那個代碼,所以這層
+      // 轉換不能省。
       const item = createFurniture(
-        placingKind,
+        codeForKind(placingKind),
         { x: e.point.x, y: e.point.z },
         planArea,
       );
