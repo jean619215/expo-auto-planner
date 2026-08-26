@@ -146,22 +146,23 @@ const FINE_TINT_WEIGHT: Record<BakeSurface, number> = {
 // stay neutral (white / 1).
 // 地板 roughnessMap 的基準值。改成跟著 preset 走 —— 地毯與石材的差別
 // 主要就在這裡,只換底色的話兩者在畫面上幾乎一樣。
-function roughBaseFor(selection: SurfaceSelection): number {
-  return floorPreset(selection.floor).roughness;
+function roughBaseFor(floorPresetId: string): number {
+  return floorPreset(floorPresetId).roughness;
 }
 const ROUGH_AMP = 0.12;
 
 function baseColorFor(
   surface: BakeSurface,
-  selection: SurfaceSelection,
+  floorPresetId: string,
+  wallPresetId: string,
 ): THREE.Color {
   switch (surface) {
     case "floor":
-      return new THREE.Color(floorPreset(selection.floor).color);
+      return new THREE.Color(floorPreset(floorPresetId).color);
     case "wall":
-      return new THREE.Color(wallPreset(selection.wall).color);
+      return new THREE.Color(wallPreset(wallPresetId).color);
     case "column":
-      return new THREE.Color(columnPreset(selection.wall).color);
+      return new THREE.Color(columnPreset(wallPresetId).color);
   }
 }
 
@@ -208,12 +209,24 @@ export function getSurfaceTextureStats(): { liveTargets: number; totalBakes: num
  * renderer's own GPU context. Must run inside a `useLayoutEffect` (see
  * SurfaceMaterials.tsx) so it completes before the browser paints.
  */
-export function bakeSurfaceTextures(
-  gl: THREE.WebGLRenderer,
-  selection: SurfaceSelection,
-): SurfaceTextureSet {
-  totalBakes += 1;
+interface Baker {
+  bake(surface: BakeSurface, mode: BakeMode, resolution: number): THREE.WebGLRenderTarget;
+  /** 還原先前的 render target 並釋放暫時幾何。每個 baker 用完都要呼叫。 */
+  finish(): void;
+}
 
+/**
+ * 建立一次烘焙工作階段。抽出來是因為第三輪 T9 之後有**兩種**烘焙需求:整份
+ * (地板 + 預設牆 + 柱子,8 張)與只有牆的那兩張(個別牆的覆寫款式)。
+ *
+ * 兩者共用同一套 render target 設定 —— 下面那串關於 anisotropy 與 colorSpace
+ * 的血淚註解適用於每一張烘焙貼圖,複製一份到第二個函式裡遲早會漂移掉一邊。
+ */
+function createBaker(
+  gl: THREE.WebGLRenderer,
+  floorPresetId: string,
+  wallPresetId: string,
+): Baker {
   const prevTarget = gl.getRenderTarget();
 
   const quadGeometry = new THREE.PlaneGeometry(2, 2);
@@ -254,10 +267,10 @@ export function bakeSurfaceTextures(
       vertexShader: BAKE_VERTEX_SHADER,
       fragmentShader: buildBakeFragmentShader(surface, mode),
       uniforms: {
-        uBaseColor: { value: baseColorFor(surface, selection) },
+        uBaseColor: { value: baseColorFor(surface, floorPresetId, wallPresetId) },
         uResolution: { value: resolution },
         uNormalStrength: { value: NORMAL_BAKE_STRENGTH[surface] },
-        uRoughBase: { value: roughBaseFor(selection) },
+        uRoughBase: { value: roughBaseFor(floorPresetId) },
         uRoughAmp: { value: ROUGH_AMP },
         uTintAmp: { value: TINT_AMP[surface] },
         uFineTintWeight: { value: FINE_TINT_WEIGHT[surface] },
@@ -318,6 +331,33 @@ export function bakeSurfaceTextures(
     return target;
   }
 
+  return {
+    bake,
+    finish() {
+      gl.setRenderTarget(prevTarget);
+      quadGeometry.dispose();
+    },
+  };
+}
+
+/**
+ * Bakes all 8 procedural surface textures (floor albedo/normal/roughness/
+ * macro-ao, wall albedo/normal, column albedo/normal) into
+ * `WebGLRenderTarget`s via a fullscreen-quad shader pass, using the given
+ * renderer's own GPU context. Must run inside a `useLayoutEffect` (see
+ * SurfaceMaterials.tsx) so it completes before the browser paints.
+ *
+ * 牆的那兩張用的是 `selection.wall`(**預設**款式)。第三輪 T9 之後個別牆可以
+ * 覆寫,那些牆的貼圖由 `bakeWallTextures()` 各自烘 —— 柱子仍然跟隨這裡的預設
+ * 款式(逐面牆之後柱子沒有「所屬牆」,見 surfacePresets.ts 的說明)。
+ */
+export function bakeSurfaceTextures(
+  gl: THREE.WebGLRenderer,
+  selection: SurfaceSelection,
+): SurfaceTextureSet {
+  totalBakes += 1;
+  const { bake, finish } = createBaker(gl, selection.floor, selection.wall);
+
   const floorAlbedoTarget = bake("floor", "albedo", FLOOR_RES);
   const floorNormalTarget = bake("floor", "normal", FLOOR_RES);
   const floorRoughnessTarget = bake("floor", "roughness", FLOOR_RES);
@@ -327,8 +367,7 @@ export function bakeSurfaceTextures(
   const columnAlbedoTarget = bake("column", "albedo", COLUMN_RES);
   const columnNormalTarget = bake("column", "normal", COLUMN_RES);
 
-  gl.setRenderTarget(prevTarget);
-  quadGeometry.dispose();
+  finish();
 
   return {
     floor: {
@@ -354,6 +393,47 @@ export function bakeSurfaceTextures(
       columnNormalTarget,
     ],
   };
+}
+
+/**
+ * 單一牆面款式的貼圖(第三輪 T9)。
+ *
+ * 個別牆覆寫成別的款式時烘這一份 —— **按款式烘,不按牆烘**:十面牆全設成木紋
+ * 只需要一份木紋貼圖。兩張 512²,比整份的 8 張(含兩張 1024² 地板)便宜得多,
+ * 而地板與柱子在改一面牆的材質時根本沒有理由重烘。
+ */
+export interface WallTextureSet {
+  presetId: string;
+  wall: { map: THREE.Texture; normalMap: THREE.Texture };
+  /** 供探針 `gl.readRenderTargetPixels()` 讀回實際烘焙結果(T9 條件 2)。 */
+  wallAlbedoTarget: THREE.WebGLRenderTarget;
+  targets: THREE.WebGLRenderTarget[];
+}
+
+export function bakeWallTextures(
+  gl: THREE.WebGLRenderer,
+  wallPresetId: string,
+): WallTextureSet {
+  totalBakes += 1;
+  // 地板款式在這裡用不到(只烘牆的兩張),但 createBaker 的簽章需要一個值 ——
+  // 給空字串會被 floorPreset() 解析成第一款,而那一款不會影響任何一張輸出。
+  const { bake, finish } = createBaker(gl, "", wallPresetId);
+
+  const wallAlbedoTarget = bake("wall", "albedo", WALL_RES);
+  const wallNormalTarget = bake("wall", "normal", WALL_RES);
+
+  finish();
+
+  return {
+    presetId: wallPresetId,
+    wall: { map: wallAlbedoTarget.texture, normalMap: wallNormalTarget.texture },
+    wallAlbedoTarget,
+    targets: [wallAlbedoTarget, wallNormalTarget],
+  };
+}
+
+export function disposeWallTextureSet(set: WallTextureSet): void {
+  for (const target of set.targets) target.dispose();
 }
 
 export function disposeSurfaceTextureSet(set: SurfaceTextureSet): void {

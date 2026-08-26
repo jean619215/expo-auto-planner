@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import type { Column, FloorPolygon, WallSegment } from "@/lib/venue/plan";
 import type { FurnitureItem } from "@/lib/venue/furniture";
 import type { SurfaceSelection } from "@/lib/venue/surfacePresets";
+import type { SurfaceUploads } from "./SurfaceMaterials";
 
 const RefinedScene = dynamic(() => import("./RefinedScene"), {
   ssr: false,
@@ -23,7 +24,7 @@ interface RefinedSceneLoaderProps {
   viewFitSizeM?: number;
   viewCenterM?: { x: number; y: number };
   surfaces: SurfaceSelection;
-  surfaceUploads: { floor: string | null; wall: string | null };
+  surfaceUploads: SurfaceUploads;
   wallHeightM: number;
 }
 

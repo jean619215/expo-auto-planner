@@ -117,6 +117,19 @@ export interface NormalReadback {
   varianceXY: number;
 }
 
+/**
+ * 一面牆實際掛著的材質(T9)。鏡射 RefinedSceneProbe 的 `WallSurfaceReport`。
+ *
+ * `materialUuid` 是場景裡那個材質物件的身分,`albedoMean` 是它的貼圖從 GPU
+ * 讀回來的平均亮度 —— 兩者都不是選單的回音。
+ */
+export interface WallSurfaceReport {
+  wallId: string;
+  materialUuid: string;
+  mapUuid: string;
+  albedoMean: number | null;
+}
+
 export interface MaterialProbeReport {
   ready: boolean;
   maxAnisotropy: number | null;
@@ -129,6 +142,8 @@ export interface MaterialProbeReport {
   columnAlbedo: AlbedoReadback | null;
   floorUvMeterError: number | null;
   wallUvMeterError: number | null;
+  /** 逐面牆的實際材質(T9),依 wallId 排序;沒有牆時是空陣列。 */
+  walls: WallSurfaceReport[];
   liveSurfaceTargets: number | null;
   totalSurfaceBakes: number | null;
 }
@@ -1088,6 +1103,51 @@ export class PlanEditorPage {
   async refinedMaterialDiagnostics(): Promise<MaterialProbeReport> {
     const raw = await this.refinedScene.getAttribute("data-material-diagnostics");
     return JSON.parse(raw ?? "null") as MaterialProbeReport;
+  }
+
+  /**
+   * 逐面牆實際掛著的材質(T9),依 wallId 排序。
+   *
+   * **這是探針從場景圖與 GPU 讀回來的**,不是選單的值 —— 要斷言「兩面牆真的
+   * 不一樣」就比這裡的 `materialUuid` 與 `albedoMean`,不要比 `data-wall-preset`
+   * (那是設定值的回音,實作壞掉時它照樣是對的)。
+   */
+  async refinedWallSurfaces(): Promise<WallSurfaceReport[]> {
+    const diagnostics = await this.refinedMaterialDiagnostics();
+    return diagnostics?.walls ?? [];
+  }
+
+  /** 步驟 03 個別牆面清單有幾列(沒有牆時清單整個不存在,回 0)。 */
+  async wallSurfaceRowCount(): Promise<number> {
+    const list = this.page.getByTestId("wall-surface-list");
+    if ((await list.count()) === 0) return 0;
+    return Number(await list.getAttribute("data-wall-count"));
+  }
+
+  /** 把第 n 面牆(1-based,與畫面上的「牆 N」一致)設成某個款式。 */
+  async setWallSurface(index: number, presetId: string) {
+    await this.page
+      .getByTestId(`wall-surface-select-${index}`)
+      .selectOption(presetId);
+  }
+
+  /** 第 n 面牆那一列對應的 `WallSegment.id` —— 用來與探針的回報對上。 */
+  async wallSurfaceRowId(index: number): Promise<string> {
+    return (
+      (await this.page
+        .getByTestId(`wall-surface-row-${index}`)
+        .getAttribute("data-wall-id")) ?? ""
+    );
+  }
+
+  /** 給第 n 面牆上傳一張自訂圖。 */
+  async uploadWallSurfaceImage(
+    index: number,
+    file: { name: string; mimeType: string; buffer: Buffer },
+  ) {
+    await this.page
+      .getByTestId(`wall-surface-upload-${index}`)
+      .setInputFiles(file);
   }
 
   // --- venue-refined-3d task 5: imported furniture model diagnostics ----

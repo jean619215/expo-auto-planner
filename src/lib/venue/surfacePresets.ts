@@ -86,12 +86,27 @@ export const WALL_PRESETS: SurfacePreset[] = [
 
 export interface SurfaceSelection {
   floor: string;
+  /**
+   * **預設**牆面材質:沒有被個別指定的牆,以及柱子,都用這一款。
+   *
+   * 第三輪 T9 之前這是唯一的牆面設定(所有牆共用)。改成逐面牆之後它沒有消失
+   * —— 一面牆都還沒畫的時候仍然要有東西可設定,新畫出來的牆也要有個起點。
+   */
   wall: string;
+  /**
+   * 個別牆的覆寫,鍵是 `WallSegment.id`。沒有覆寫的牆不會出現在這裡。
+   *
+   * 第三輪 T9 定案「逐面牆各自設定」(備選是依方位分成恆定四組)。設定因此
+   * **跟著那面牆本身走** —— 牆被刪掉重畫,設定跟著消失。那是誠實的行為:
+   * 那面牆真的不存在了,假裝記得只會在下一次畫牆時冒出來歷不明的材質。
+   */
+  wallOverrides: Record<string, string>;
 }
 
 export const DEFAULT_SURFACE_SELECTION: SurfaceSelection = {
   floor: FLOOR_PRESETS[0].id,
   wall: WALL_PRESETS[0].id,
+  wallOverrides: {},
 };
 
 function resolve(presets: SurfacePreset[], id: string): SurfacePreset {
@@ -124,7 +139,93 @@ function darken(hex: string, factor: number): string {
   return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
 }
 
-/** 快取鍵:同一組選擇必須得到同一份烘焙結果。 */
+/**
+ * 快取鍵:同一組選擇必須得到同一份烘焙結果。
+ *
+ * **只含地板與預設牆面** —— 這個鍵管的是 `bakeSurfaceTextures()` 那一份
+ * (地板 4 張 + 預設牆 2 張 + 柱子 2 張),個別牆的覆寫各自以款式為鍵另外烘
+ * (見 `bakeWallTextures`)。把覆寫也塞進來的話,改一面牆的材質會讓地板整份
+ * 重烘 —— 那是 8 張 render target,而地板根本沒變。
+ */
 export function surfaceSelectionKey(selection: SurfaceSelection): string {
   return `${selection.floor}|${selection.wall}`;
+}
+
+/** 這面牆實際採用的款式 id:有覆寫就用覆寫,否則用預設。 */
+export function wallPresetIdFor(
+  selection: SurfaceSelection,
+  wallId: string,
+): string {
+  const override = selection.wallOverrides[wallId];
+  // 走 wallPreset() 解析而不是直接回傳字串:存檔裡可能留著已下架的款式 id,
+  // 那時該退回第一款,而不是讓場景拿著一個查不到的 id 去烘焙。
+  return override ? wallPreset(override).id : wallPreset(selection.wall).id;
+}
+
+/**
+ * 場上實際用得到的牆面款式(去重,含預設)。烘焙的依據 —— 按**款式**烘而不是
+ * 按牆烘:十面牆全設成木紋只需要一份木紋貼圖。
+ */
+export function wallPresetIdsInUse(
+  selection: SurfaceSelection,
+  wallIds: readonly string[],
+): string[] {
+  const ids = new Set<string>([wallPreset(selection.wall).id]);
+  for (const wallId of wallIds) ids.add(wallPresetIdFor(selection, wallId));
+  return [...ids].sort();
+}
+
+/** 設定(或以 null 清除)某一面牆的覆寫,回傳新的 selection。 */
+export function withWallOverride(
+  selection: SurfaceSelection,
+  wallId: string,
+  presetId: string | null,
+): SurfaceSelection {
+  const next = { ...selection.wallOverrides };
+  if (presetId === null) {
+    delete next[wallId];
+  } else {
+    next[wallId] = presetId;
+  }
+  return { ...selection, wallOverrides: next };
+}
+
+/**
+ * 丟掉已經不存在的牆留下的覆寫。
+ *
+ * 牆刪掉之後覆寫如果還留著,存檔會慢慢累積查不到對象的設定;更糟的是新牆萬一
+ * 拿到同一個 id,會突然套上前一面牆的材質。存檔前與讀檔後都要過這一關。
+ */
+export function pruneWallOverrides(
+  selection: SurfaceSelection,
+  wallIds: readonly string[],
+): SurfaceSelection {
+  const live = new Set(wallIds);
+  const next: Record<string, string> = {};
+  for (const [wallId, presetId] of Object.entries(selection.wallOverrides)) {
+    if (live.has(wallId)) next[wallId] = presetId;
+  }
+  return { ...selection, wallOverrides: next };
+}
+
+/**
+ * 讀檔用的正規化:補上缺少的欄位、把查不到的款式退回第一款。
+ *
+ * T9 之前存的檔沒有 `wallOverrides`,而 `Object.entries(undefined)` 會丟例外
+ * —— 舊檔一讀就整頁掛掉。這裡是唯一該處理這件事的地方。
+ */
+export function normalizeSurfaceSelection(raw: {
+  floor?: string;
+  wall?: string;
+  wallOverrides?: Record<string, string>;
+}): SurfaceSelection {
+  const overrides: Record<string, string> = {};
+  for (const [wallId, presetId] of Object.entries(raw.wallOverrides ?? {})) {
+    if (typeof presetId === "string") overrides[wallId] = wallPreset(presetId).id;
+  }
+  return {
+    floor: floorPreset(raw.floor ?? "").id,
+    wall: wallPreset(raw.wall ?? "").id,
+    wallOverrides: overrides,
+  };
 }

@@ -19,7 +19,10 @@ import { planBoundsM } from "@/lib/venue/bounds";
 import type { PlanBounds } from "@/lib/venue/bounds";
 import { useFloorGeometry } from "./floorGeometry";
 import { HallLighting, HallEnvironment, REFINED_GL, REFINED_SURFACE } from "./refinedLighting";
-import SurfaceMaterials, { useSurfaceMaterials } from "./SurfaceMaterials";
+import SurfaceMaterials, {
+  useSurfaceMaterials,
+  type SurfaceUploads,
+} from "./SurfaceMaterials";
 import { hashStringToUnit, useMeterUvBoxGeometries } from "./boxGeometry";
 import { WALL_TILE_M } from "./surfaceTextures";
 import FurnitureModels, {
@@ -50,7 +53,7 @@ interface RefinedSceneProps {
   /** 使用者選的地板/牆面材質(feedback round 2, R6)。 */
   surfaces: SurfaceSelection;
   /** 使用者上傳的材質圖(blob URL);沒有就是 null。 */
-  surfaceUploads: { floor: string | null; wall: string | null };
+  surfaceUploads: SurfaceUploads;
   /**
    * 全域牆高(公尺)。與步驟 02 讀同一份頂層 state —— 這一步是唯讀場景,
    * 不自己持有也不回寫,02↔03 的一致性靠這點保證。
@@ -254,10 +257,17 @@ function RefinedSceneContent({
         );
         const geometry = wallGeometries.get(wall.id);
         if (!geometry) return null;
+        // 逐面牆各自的材質(T9)。沒有個別指定的牆拿到的是同一個物件 ——
+        // 共用是刻意的,見 SurfaceMaterials 的 resolveWallSource()。
+        const wallMaterial = surfaceMaterials.wallMaterialFor(wall.id);
         return (
           <mesh
             key={wall.id}
             name={REFINED_WALL_NAME}
+            // 探針靠 userData 認出「這是哪一面牆」。名字維持 REFINED_WALL_NAME
+            // 不動 —— 既有的牆面量測(高度、UV、陰影投射者)全都以那個名字
+            // 尋找,把 id 編進名字會一次弄壞它們。
+            userData={{ wallId: wall.id }}
             geometry={geometry}
             position={[
               (wall.start.x + wall.end.x) / 2,
@@ -268,8 +278,8 @@ function RefinedSceneContent({
             castShadow
             receiveShadow
           >
-            {surfaceMaterials.wall ? (
-              <primitive object={surfaceMaterials.wall} attach="material" />
+            {wallMaterial ? (
+              <primitive object={wallMaterial} attach="material" />
             ) : (
               <meshStandardMaterial
                 color={REFINED_SURFACE.wall.color}
@@ -430,6 +440,35 @@ export default function RefinedScene({
     }
   }, [polygon, walls, columns, furniture]);
 
+  // 場上牆的 id(穩定字串)。SurfaceMaterials 用它決定要為哪些款式烘貼圖,
+  // 而不是每次 walls 陣列換身分就重烘。
+  const wallIds = useMemo(() => walls.map((wall) => wall.id), [walls]);
+  const wallIdsKey = wallIds.join(",");
+
+  /**
+   * 材質相關輸入的指紋:地板/預設牆的自訂圖、逐面牆的自訂圖、逐面牆的款式
+   * 覆寫。**逐面牆的部分不能漏** —— 探針以這個鍵決定何時重新量測,漏掉就會
+   * 出現「改了某面牆的材質,探針還在報上一次的讀數」,而那正是 T9 條件 2
+   * 要抓的東西。
+   */
+  const uploadsKey = useMemo(() => {
+    const perWall = Object.entries(surfaceUploads.walls)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([wallId, url]) => `${wallId}=${url}`)
+      .join(",");
+    const overrides = Object.entries(surfaces.wallOverrides)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([wallId, presetId]) => `${wallId}=${presetId}`)
+      .join(",");
+    return [
+      surfaceUploads.floor ?? "",
+      surfaceUploads.wall ?? "",
+      perWall,
+      overrides,
+      wallIdsKey,
+    ].join("|");
+  }, [surfaceUploads, surfaces.wallOverrides, wallIdsKey]);
+
   const [diagnostics, setDiagnostics] = useState<RefinedDiagnostics | null>(null);
   const [materialsReady, setMaterialsReady] = useState(false);
   const [eagerLoaded, setEagerLoaded] = useState(false);
@@ -547,6 +586,7 @@ export default function RefinedScene({
         >
           <SurfaceMaterials
             selection={surfaces}
+            wallIds={wallIds}
             uploads={surfaceUploads}
             onReady={setMaterialsReady}
           >
@@ -562,7 +602,7 @@ export default function RefinedScene({
               revision={revision}
               probeResetKey={probeResetKey}
               surfaces={surfaces}
-              uploadsKey={`${surfaceUploads.floor ?? ""}:${surfaceUploads.wall ?? ""}`}
+              uploadsKey={uploadsKey}
               eagerLoaded={eagerLoaded}
               onEagerLoaded={handleEagerLoaded}
               onModelReport={handleModelReport}
