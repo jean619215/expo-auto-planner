@@ -702,6 +702,8 @@ export class PlanEditorPage {
     {
       code: string;
       partCount: number;
+      /** 這個代碼在場上有幾**件**(數場景圖裡的根 group)。 */
+      instances: number;
       triangles: number;
       /** 實際幾何外廓(公尺),未套用擺放位置與旋轉。 */
       sizeM: [number, number, number];
@@ -797,6 +799,41 @@ export class PlanEditorPage {
 
   async cancelBoothSize() {
     await this.page.getByTestId("booth-size-confirm-cancel").click();
+  }
+
+  /**
+   * 報價面板上顯示的合計,解析成數字。
+   *
+   * **讀的是畫面文字**,不是某個 `data-total` 屬性 —— T8 要驗的就是「使用者
+   * 看到的金額對不對」,中間多一層探針屬性只會讓兩者可以各自漂移。
+   */
+  async quoteTotal(): Promise<number> {
+    return parseTwd(await this.page.getByTestId("quote-total").innerText());
+  }
+
+  /** 報價面板自己數的件數(用來與場景探針的件數交叉比對)。 */
+  async quoteItemCount(): Promise<number> {
+    const text = await this.page.getByTestId("quote-item-count").innerText();
+    return Number(text.replace(/[^0-9]/g, ""));
+  }
+
+  /** 某一個品項那一列的明細:名稱、數量、單價、小計。 */
+  async quoteLine(code: string): Promise<{
+    name: string;
+    quantity: number;
+    unitPrice: number;
+    subtotal: number;
+  }> {
+    const text = async (testId: string) =>
+      (await this.page.getByTestId(testId).innerText()).trim();
+    return {
+      name: await text(`quote-line-name-${code}`),
+      quantity: Number(
+        (await text(`quote-line-quantity-${code}`)).replace(/[^0-9]/g, ""),
+      ),
+      unitPrice: parseTwd(await text(`quote-line-unit-${code}`)),
+      subtotal: parseTwd(await text(`quote-line-subtotal-${code}`)),
+    };
   }
 
   // --- R4 步驟 02 刪除(feedback round 2, T2)---------------------------
@@ -1170,4 +1207,11 @@ export class PlanEditorPage {
     await this.page.mouse.move(end.x, end.y, { steps: 8 });
     await this.page.mouse.up();
   }
+}
+
+/** `NT$ 1,370` → `1370`。千分位與貨幣前綴都不進數字。 */
+function parseTwd(text: string): number {
+  const digits = text.replace(/[^0-9]/g, "");
+  if (!digits) throw new Error(`金額字串解析不出數字: ${JSON.stringify(text)}`);
+  return Number(digits);
 }

@@ -27,6 +27,21 @@ export function whiteboxFurnitureName(code: string): string {
   return `venue-furniture-${code}`;
 }
 
+/**
+ * 每一**件**家具的根 group 名字(mesh 名字是每個**零件**一個,同一件會有好幾個,
+ * 同一個代碼放兩件更會混在一起)。
+ *
+ * 存在理由是探針要能數出「場上有幾件」而不是「有幾種」—— 而且要從場景圖數,
+ * 不是把家具陣列的長度印回 DOM。報價的逐件加總就是靠這個數字交叉驗證的:
+ * 場景裡少掛了一件,計出來的金額與畫面就會對不上,而不是兩邊一起錯。
+ *
+ * 前綴刻意不是 `venue-furniture-` 的延伸 —— 那會讓依 mesh 前綴切代碼的探針
+ * 把 `item-TBL-120-75` 當成一個代碼。
+ */
+export function whiteboxFurnitureItemName(code: string): string {
+  return `venue-item-${code}`;
+}
+
 /** 白模材質:單色、不吃貼圖。依顏色快取一份,由呼叫端負責卸載時 dispose。 */
 function useWhiteboxMaterial(color: string): THREE.MeshStandardMaterial {
   const material = useMemo(
@@ -141,6 +156,7 @@ export default function WhiteboxFurnitureItem({
   return (
     <group
       ref={meshRef}
+      name={whiteboxFurnitureItemName(item.code)}
       position={[item.center.x, 0, item.center.y]}
       rotation={[0, (-item.rotationDeg * Math.PI) / 180, 0]}
       onClick={(e) => {

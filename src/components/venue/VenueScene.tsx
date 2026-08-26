@@ -45,6 +45,7 @@ import { segmentClassName } from "./PlanToolbar";
 import { useFloorGeometry } from "./floorGeometry";
 import WhiteboxFurnitureItem from "./whiteboxFurniture";
 import CatalogPanel from "./CatalogPanel";
+import QuotePanel from "./QuotePanel";
 import VenueSceneProbe, {
   VENUE_WALL_NAME,
   VENUE_COLUMN_NAME,
@@ -55,15 +56,6 @@ type SelectedId =
   | { type: "wall" | "column" | "furniture"; id: string }
   | null;
 
-/**
- * 面板圖示,以**子類**為鍵而不是品項代碼。
- *
- * 目錄長大之後同一個子類會有多個尺寸變體(「桌子 120」「桌子 180」),它們共用
- * 一個圖示 —— 以代碼為鍵會變成每加一個變體就要補一張圖。查不到的子類退回
- * `Package`,新子類不會讓面板整個掛掉。
- *
- * T7 會用目錄頁取代這個面板,屆時這張表跟著搬。
- */
 interface VenueSceneProps {
   polygon: FloorPolygon;
   walls: WallSegment[];
@@ -321,6 +313,8 @@ export default function VenueScene({
           </button>
           {sidebarOpen && (
             <div className="mt-2 flex max-h-[460px] flex-col gap-3 overflow-y-auto pr-0.5">
+              {/* 金額擺在側欄最上面:目錄可以捲很長,小計要一直看得到。 */}
+              <QuotePanel furniture={furniture} />
               {onWallHeightChange && (
                 <div className="flex flex-col gap-1.5">
                   <span className="px-0.5 text-xs font-bold text-muted-foreground">
