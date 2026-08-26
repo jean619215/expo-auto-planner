@@ -213,11 +213,17 @@ test.describe("Per-wall surface groups (T9)", () => {
     const slots = new PlanSlotsPage(page);
 
     // 存檔走 route mock(同 plan-slots.spec.ts),不打真後端也不需登入。
-    let savedSurfaces: {
-      floor: string;
-      wall: string;
-      wallOverrides: Record<string, string>;
+    // 存下來的整份 plan 原樣留著,讀檔時再吐回去 —— 那才是真的「存了什麼就
+    // 讀回什麼」,自己另外手寫一份 fixture 只會驗到 fixture 寫得對不對。
+    let savedPlan: {
+      walls: { id: string }[];
+      surfaces: {
+        floor: string;
+        wall: string;
+        wallOverrides: Record<string, string>;
+      };
     } | null = null;
+
     await page.route(/\/api\/plans$/, async (route) => {
       await route.fulfill({
         status: 200,
@@ -225,19 +231,18 @@ test.describe("Per-wall surface groups (T9)", () => {
         body: JSON.stringify({
           slots: [1, 2, 3].map((slot) => ({
             slot,
-            occupied: false,
-            name: null,
-            updatedAt: null,
+            occupied: savedPlan !== null && slot === 1,
+            name: savedPlan !== null && slot === 1 ? "T9" : null,
+            updatedAt: savedPlan !== null && slot === 1 ? "2026-08-26T00:00:00Z" : null,
           })),
         }),
       });
     });
     await page.route(/\/api\/plans\/\d$/, async (route) => {
-      if (route.request().method() === "PUT") {
-        const body = route.request().postDataJSON() as {
-          plan: { surfaces: typeof savedSurfaces };
-        };
-        savedSurfaces = body.plan.surfaces;
+      const method = route.request().method();
+      if (method === "PUT") {
+        savedPlan = (route.request().postDataJSON() as { plan: typeof savedPlan })
+          .plan;
         await route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -245,28 +250,71 @@ test.describe("Per-wall surface groups (T9)", () => {
         });
         return;
       }
-      await route.continue();
+      if (method === "GET") {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            planId: "plan-1",
+            slot: 1,
+            name: "T9",
+            plan: savedPlan,
+            updatedAt: "2026-08-26T00:00:00Z",
+            conversation: [],
+          }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "unhandled in test" }),
+      });
     });
 
     await toRefinedWithWalls(editor, 2);
     const idA = await editor.wallSurfaceRowId(1);
+    const idB = await editor.wallSurfaceRowId(2);
     const initial = await editor.refinedWallSurfaces();
     await editor.setWallSurface(1, DARK);
     await waitForWallMaterialChange(editor, idA, initial[0].materialUuid);
 
+    // 存檔鈕只在步驟 01 —— 材質是在步驟 03 設的,所以要走回去存。
+    await editor.backToPreview();
+    await editor.clickBackToEdit();
     await slots.open();
     await slots.saveToSlot(1, "T9");
-    await expect.poll(() => savedSurfaces !== null).toBe(true);
-    expect(savedSurfaces!.wallOverrides[idA]).toBe(DARK);
+    await expect.poll(() => savedPlan !== null).toBe(true);
+    expect(savedPlan!.surfaces.wallOverrides[idA]).toBe(DARK);
+    expect(savedPlan!.surfaces.wallOverrides[idB]).toBeUndefined();
 
-    // 讀回來:同一份存檔(含 wallOverrides)必須還原成同樣的設定,而且探針
-    // 回報的實際材質要與剛才那面深色板一致。
-    const savedPlan = await page.evaluate(() =>
-      document
-        .querySelector('[data-testid="plan-editor"]')
-        ?.getAttribute("data-plan-surfaces"),
-    );
-    expect(JSON.parse(savedPlan ?? "{}").wallOverrides[idA]).toBe(DARK);
+    // 把設定改掉再讀檔,才知道是「讀回來的」而不是「本來就在畫面上」。
+    await editor.goToRefined();
+    await editor.setWallSurface(1, FABRIC);
+    await editor.backToPreview();
+    await editor.clickBackToEdit();
+
+    await slots.open();
+    await slots.loadSlot(1);
+    await slots.confirmLoad();
+
+    await expect
+      .poll(async () => {
+        const raw = await editor.editor.getAttribute("data-plan-surfaces");
+        return JSON.parse(raw ?? "{}").wallOverrides?.[idA] ?? "";
+      })
+      .toBe(DARK);
+
+    // 光是狀態對還不夠 —— 回到步驟 03 確認場景真的照著讀回來的設定掛材質。
+    await editor.clickNextStep();
+    await editor.goToRefined();
+    await waitForLightingReady(editor);
+    await waitForMaterialDiagnostics(editor);
+    const restored = await editor.refinedWallSurfaces();
+    expect(restored).toHaveLength(2);
+    const a = restored.find((w) => w.wallId === idA)!;
+    const b = restored.find((w) => w.wallId === idB)!;
+    expect(a.materialUuid).not.toBe(b.materialUuid);
   });
 
   test("沒有牆時不崩潰,也不出現空的分組清單", async ({ page }) => {
