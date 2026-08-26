@@ -289,6 +289,8 @@ test.describe("Per-wall surface groups (T9)", () => {
     expect(savedPlan!.surfaces.wallOverrides[idB]).toBeUndefined();
 
     // 把設定改掉再讀檔,才知道是「讀回來的」而不是「本來就在畫面上」。
+    // 個別牆的選單只在步驟 03,而現在人在步驟 01 —— 要一步一步走回去。
+    await editor.clickNextStep();
     await editor.goToRefined();
     await editor.setWallSurface(1, FABRIC);
     await editor.backToPreview();
