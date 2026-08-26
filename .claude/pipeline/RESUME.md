@@ -13,7 +13,7 @@
 | 第一輪(白模產生器)、第二輪(使用者回饋)| ✅ 已合併進 `master`(PR #12 / #13) |
 | 第三輪 T1–T9(全部)| ✅ 完成 |
 | 第三輪收尾 | ⬜ PR #15 合進 `docs/venue-catalog-and-quote`,整輪再一次合回 `master`(使用者定案)|
-| 免登入 34 支 spec | ✅ 293 通過、0 失敗 |
+| 免登入 35 支 spec | ✅ 301 通過、0 失敗 |
 | `npm run lint` / `npx tsc --noEmit` | ✅ 乾淨 |
 
 **分支關係**:第三輪的所有工作都落在 `docs/venue-catalog-and-quote` 上(它已 merge 了
