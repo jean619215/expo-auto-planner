@@ -81,7 +81,7 @@ async function placeFurnitureOnStep2(
   offsetPx: { x: number; y: number } = { x: 0, y: 0 },
 ) {
   const before = await editor.furnitureCount();
-  await page.getByTestId(`furniture-place-${code}`).click();
+  await editor.pickCatalogItem(code);
   const center = await step2CanvasCenter(page);
   await page.mouse.move(center.x + offsetPx.x, center.y + offsetPx.y);
   await page.waitForTimeout(100);

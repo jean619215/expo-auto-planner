@@ -745,6 +745,25 @@ export class PlanEditorPage {
     await this.page.getByTestId("booth-custom-apply").click();
   }
 
+  /**
+   * 在步驟 02 的家具目錄裡選一個品項(進入放置模式)。
+   *
+   * T7 之後目錄是三層收合式的,品項卡預設藏在收合的分支底下 —— 直接
+   * `getByTestId("furniture-place-XXX").click()` 會找不到元素。這裡走搜尋:
+   * 代碼是唯一的,填進搜尋框就一定只剩那張卡,不必知道它屬於哪個大類/子類。
+   *
+   * 選完把搜尋清掉,讓面板回到三層導覽 —— 否則下一次呼叫會疊在上一次的
+   * 搜尋結果上,而那是一種很難看出來的耦合。
+   */
+  async pickCatalogItem(code: string) {
+    const search = this.page.getByTestId("catalog-search");
+    await search.fill(code);
+    const card = this.page.getByTestId(`furniture-place-${code}`);
+    await card.waitFor({ state: "visible" });
+    await card.click();
+    await this.page.getByTestId("catalog-search-clear").click();
+  }
+
   /** 可編輯範圍(攤位 + 邊距)。探針讀的是實作算出來的矩形,不是回音。 */
   async planArea(): Promise<{
     minX: number;

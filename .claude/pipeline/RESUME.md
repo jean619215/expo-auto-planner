@@ -1,6 +1,6 @@
 # 接續執行備忘 — story `stories/venue-catalog-and-quote-draft.md`(第三輪:家具目錄與報價)
 
-> 最後更新:2026-08-25(T1–T6 完成,T7 待開工)。
+> 最後更新:2026-08-26(T1–T7 完成,T8 待開工)。
 > 這份是「隔一陣子回來、或換一個 agent 接手要怎麼繼續」的入口。
 > 逐階段細節在 `.claude/pipeline/task-log.md`,決策與驗收條件在 story 檔本身。
 
@@ -11,9 +11,9 @@
 | 項目 | 狀態 |
 |---|---|
 | 第一輪(白模產生器)、第二輪(使用者回饋)| ✅ 已合併進 `master`(PR #12 / #13) |
-| 第三輪 T1–T6(可編輯範圍 / 目錄 / 繪製 / AI schema / 程序化幾何 / 目錄擴充)| ✅ 完成 |
-| 第三輪 T7–T9 | ⬜ 待開工,決策與驗收條件都已寫定 |
-| 免登入 32 支 spec | ✅ 277 通過、0 失敗 |
+| 第三輪 T1–T7(範圍 / 目錄 / 繪製 / AI / 程序化幾何 / 目錄擴充 / 目錄頁 UI)| ✅ 完成 |
+| 第三輪 T8–T9 | ⬜ 待開工(T9 範圍未定,story 寫明要先細談)|
+| 免登入 33 支 spec | ✅ 285 通過、0 失敗 |
 | `npm run lint` / `npx tsc --noEmit` | ✅ 乾淨 |
 
 **分支關係**:第三輪的所有工作都落在 `docs/venue-catalog-and-quote` 上(它已 merge 了
@@ -84,19 +84,33 @@ story 第六節只點名 `venue-objects` / `venue-zoom-pan`。T1 實際還動到
 
 ---
 
-## 下一步:T7
+## 下一步:T8
 
-> 家具目錄頁 UI:大類 → 子類 → 品項的三層導覽 + 搜尋,UIUX 近似競品。
+> 報價小計面板:品項單價 × 數量 → 小計。稅率與人員時薪之後再說(D6)。
 
-驗收條件在 story 第五節。**資料層已經備好,不要在 UI 裡重算**:
+驗收條件在 story 第五節。**資料都已經在了**:
 
-- `catalogStats()` 回傳三層統計(每個大類/子類的件數、孤兒品項、空子類),
-  **就是為了 UI 與測試共用同一份**而存在的。
-- `subCategoriesIn(category)` / `itemsInSubCategory(sub)` 給第二、三層列表。
-- `catalogItem(code)` / `requireCatalogItem(code)` 單筆查詢。
-- 目前 23 個品項 / 4 大類 / 10 子類,沒有空子類、沒有孤兒(有測試守著)。
+- `catalogItem(code).price` 是單價,`currency` 恆為 `"TWD"`(有測試守著,
+  也有「價格必為正數」的檢查 —— 0 元會讓「金額有跟著變」驗不出來)。
+- 場上的家具是 `FurnitureItem[]`,每件只有 `code`,數量就是同 code 的件數。
+- 顯示格式沿用目錄卡片的 `NT$ 1,234`(千分位,`toLocaleString("en-US")`)。
 
-### 目錄現況與「加一個品項」怎麼做
+**尺寸單位的老規矩仍然適用**:標註一律公分(顯示層),內部運算維持公尺。
+金額沒有這個問題,但同一個面板裡若要一起顯示尺寸,別讓公尺外洩。
+
+## 測試裡怎麼放家具(T7 之後變了,一定要看)
+
+目錄是三層收合式的,品項卡預設藏在收合的分支底下 ——
+`getByTestId("furniture-place-XXX").click()` **會找不到元素**。
+
+一律用 `PlanEditorPage.pickCatalogItem(code)`:填代碼進搜尋框 → 點卡片 →
+清掉搜尋。最後那一步不能省,不清的話下一次呼叫會疊在上一次的搜尋結果上。
+
+十二支既有 spec 已經改過去了。新寫的測試照用,不要自己再兜一次點擊。
+
+## 目錄現況與「加一個品項」怎麼做
+
+23 個品項 / 4 大類 / 10 子類,沒有空子類、沒有孤兒(有測試守著)。
 
 七種程序化造型:`table` / `cabinet` / `displayCase` / `platform` / `counter` /
 `bannerStand` / `podium`;仍走 GLB 的只有椅子、沙發、植栽。
@@ -104,7 +118,8 @@ story 第六節只點名 `venue-objects` / `venue-zoom-pan`。T1 實際還動到
 **加尺寸變體只要加一筆目錄資料**,不必碰 `proceduralFurniture.ts` —— builder 以
 造型為鍵,尺寸是參數。需要新造型時才加 builder 並在 `ProceduralShape` 加名字,
 而且**造型要有識別特徵**:白模下只有一個盒子的話,櫃子與展示櫃分不出來(所以
-櫃子有把手橫料、展示櫃有層板、展台沒有腳)。
+櫃子有把手橫料、展示櫃有層板、展台沒有腳)。新子類記得順手配一個圖示
+(`CatalogPanel` 的 `SUBCATEGORY_ICONS`),漏了只會少一個線索,不會壞。
 
 **注意**:幾何快取以 `code` 為鍵。兩個尺寸變體共用造型但不共用 mesh,快取若改
 以造型為鍵,第二個變體會拿到第一個的幾何。
@@ -116,9 +131,8 @@ story 第六節只點名 `venue-objects` / `venue-zoom-pan`。T1 實際還動到
 - 模型從**每輪的目前配置附錄**知道有哪些代碼。不要把目錄搬進 system prompt 或
   tool description —— 那兩者在快取前綴裡,搬過去等於把 enum 的問題原樣搬回來。
 - **附錄成本已量測**:23 項 = 1,770 bytes(約 550 tokens/輪),還很便宜;
-  233 項推估約 18KB(約 5,600 tokens/輪)。`venue-catalog-structure` 有一道 8KB
-  的門檻檢查,超過就會紅並提示「該改成給模型一支查詢工具了」。**在那之前不要
-  先做查詢工具。**
+  233 項推估約 18KB。`venue-catalog-structure` 有一道 8KB 的門檻檢查,超過就會紅
+  並提示「該改成給模型一支查詢工具了」。**在那之前不要先做查詢工具。**
 - 代碼合法性由套用端(`PlanEditor` 的 `applyActions`)查目錄,查不到就跳過該一件
   並回報,**不中斷同一批的其他 action**。
 

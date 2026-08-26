@@ -23,7 +23,7 @@ async function place(
   offsetPx: { x: number; y: number } = { x: 0, y: 0 },
 ) {
   const before = await editor.furnitureCount();
-  await page.getByTestId(`furniture-place-${code}`).click();
+  await editor.pickCatalogItem(code);
   const canvas = page.locator('[data-testid="venue-scene"] canvas');
   const box = await canvas.boundingBox();
   if (!box) throw new Error("venue-scene canvas not visible");

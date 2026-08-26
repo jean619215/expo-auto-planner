@@ -84,7 +84,7 @@ async function placeFurnitureOnStep2(
   page: Page,
   offsetPx: { x: number; y: number } = { x: 0, y: 0 },
 ) {
-  await page.getByTestId("furniture-place-TBL-120-75").click();
+  await new PlanEditorPage(page).pickCatalogItem("TBL-120-75");
   const center = await canvasCenter(page);
   await clickFloor(page, { x: center.x + offsetPx.x, y: center.y + offsetPx.y });
 }

@@ -30,7 +30,7 @@ async function place(
   offsetPx: { x: number; y: number } = { x: 0, y: 0 },
 ) {
   const before = await editor.furnitureCount();
-  await page.getByTestId(`furniture-place-${code}`).click();
+  await editor.pickCatalogItem(code);
   await expect(editor.scene).toHaveAttribute("data-placing-code", code);
 
   const canvas = page.locator('[data-testid="venue-scene"] canvas');

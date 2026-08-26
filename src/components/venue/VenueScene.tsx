@@ -13,15 +13,6 @@ import * as THREE from "three";
 import { Canvas, type ThreeEvent } from "@react-three/fiber";
 import { OrbitControls, TransformControls } from "@react-three/drei";
 import {
-  Table2,
-  Armchair,
-  Archive,
-  Store,
-  Flag,
-  Sofa,
-  Presentation,
-  Flower2,
-  Package,
   RotateCcw,
   PanelLeftClose,
   PanelLeftOpen,
@@ -48,11 +39,12 @@ import {
   translateFurniture,
   type FurnitureItem,
 } from "@/lib/venue/furniture";
-import { CATALOG, subCategoryLabel } from "@/lib/venue/catalog";
+
 import { Button } from "@/components/ui/button";
 import { segmentClassName } from "./PlanToolbar";
 import { useFloorGeometry } from "./floorGeometry";
 import WhiteboxFurnitureItem from "./whiteboxFurniture";
+import CatalogPanel from "./CatalogPanel";
 import VenueSceneProbe, {
   VENUE_WALL_NAME,
   VENUE_COLUMN_NAME,
@@ -72,18 +64,6 @@ type SelectedId =
  *
  * T7 會用目錄頁取代這個面板,屆時這張表跟著搬。
  */
-const SUBCATEGORY_ICONS: Record<string, typeof Table2> = {
-  B1: Table2,
-  B2: Armchair,
-  C3: Archive,
-  C1: Store,
-  A2: Flag,
-  B3: Sofa,
-  C2: Presentation,
-  D1: Flower2,
-  A1: Package,
-};
-
 interface VenueSceneProps {
   polygon: FloorPolygon;
   walls: WallSegment[];
@@ -325,7 +305,7 @@ export default function VenueScene({
           data-testid="venue-sidebar"
           data-open={sidebarOpen}
           className={
-            (sidebarOpen ? "w-48" : "w-11") +
+            (sidebarOpen ? "w-64" : "w-11") +
             " shrink-0 rounded-md border border-stone-300 bg-card p-2"
           }
         >
@@ -340,7 +320,7 @@ export default function VenueScene({
             {sidebarOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
           </button>
           {sidebarOpen && (
-            <div className="mt-2 flex flex-col gap-3">
+            <div className="mt-2 flex max-h-[460px] flex-col gap-3 overflow-y-auto pr-0.5">
               {onWallHeightChange && (
                 <div className="flex flex-col gap-1.5">
                   <span className="px-0.5 text-xs font-bold text-muted-foreground">
@@ -371,33 +351,12 @@ export default function VenueScene({
                   </label>
                 </div>
               )}
-              <div className="flex flex-col gap-1.5">
-                <span className="px-0.5 text-xs font-bold text-muted-foreground">
-                  家具
-                </span>
-                {CATALOG.map((entry) => {
-                  const Icon = SUBCATEGORY_ICONS[entry.subCategory] ?? Package;
-                  return (
-                    <Button
-                      key={entry.code}
-                      type="button"
-                      size="sm"
-                      variant={placingCode === entry.code ? "default" : "outline"}
-                      data-testid={`furniture-place-${entry.code}`}
-                      title={entry.name}
-                      onClick={() =>
-                        setPlacingCode((prev) =>
-                          prev === entry.code ? null : entry.code,
-                        )
-                      }
-                      className="w-full justify-start"
-                    >
-                      <Icon />
-                      {subCategoryLabel(entry.subCategory)}
-                    </Button>
-                  );
-                })}
-              </div>
+              <CatalogPanel
+                placingCode={placingCode}
+                onPick={(code) =>
+                  setPlacingCode((prev) => (prev === code ? null : code))
+                }
+              />
               <div className="flex flex-col gap-1.5">
                 <span className="px-0.5 text-xs font-bold text-muted-foreground">
                   調整

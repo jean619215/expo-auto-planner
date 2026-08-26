@@ -247,7 +247,7 @@ test.describe("AiPanel 跨步驟常駐 - AC7/AC6 手動 3D + AI 互不覆蓋、c
     await expect(editor.stepPreview).toBeVisible();
 
     // 手動在 3D 內放置一件家具(桌子)。
-    await page.getByTestId("furniture-place-TBL-120-75").click();
+    await editor.pickCatalogItem("TBL-120-75");
     const center = await canvasCenter(page);
     await clickFloor(page, center);
     await expect(editor.scene).toHaveAttribute(

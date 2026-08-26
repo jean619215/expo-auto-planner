@@ -86,7 +86,7 @@ test.describe("Plan area follows the booth (T1)", () => {
     await editor.applyCustomBoothSize(20, 20);
     await editor.clickNextStep();
 
-    await page.getByTestId("furniture-place-TBL-120-75").click();
+    await editor.pickCatalogItem("TBL-120-75");
     const canvas = page.locator('[data-testid="venue-scene"] canvas');
     const box = await canvas.boundingBox();
     if (!box) throw new Error("venue-scene canvas not visible");
