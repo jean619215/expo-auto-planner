@@ -30,7 +30,8 @@ export type ProceduralShape =
   | "podium"
   | "table"
   | "cabinet"
-  | "displayCase";
+  | "displayCase"
+  | "platform";
 
 /**
  * 品項的幾何來源。
@@ -91,6 +92,7 @@ export const CATEGORIES: readonly CatalogCategory[] = [
 export const SUB_CATEGORIES: readonly CatalogSubCategory[] = [
   { code: "A1", category: "A", label: "展示櫃" },
   { code: "A2", category: "A", label: "展示架" },
+  { code: "A3", category: "A", label: "展台" },
   { code: "B1", category: "B", label: "桌子" },
   { code: "B2", category: "B", label: "椅子" },
   { code: "B3", category: "B", label: "沙發" },
@@ -279,6 +281,201 @@ export const CATALOG: readonly CatalogItem[] = [
     height3d: 1.2,
     color: "#4f8a3d",
   },
+  {
+    code: "TBL-180-75",
+    name: "長桌 180×70×H75",
+    spec: "Long Table",
+    category: "B",
+    subCategory: "B1",
+    price: 880,
+    currency: "TWD",
+    supplier: null,
+    geometry: { kind: "procedural", shape: "table" },
+    w: 1.8,
+    d: 0.7,
+    height3d: 0.75,
+    color: "#8a6d3b",
+  },
+  {
+    code: "TBL-90-75",
+    name: "方桌 90×90×H75",
+    spec: "Square Table",
+    category: "B",
+    subCategory: "B1",
+    price: 620,
+    currency: "TWD",
+    supplier: null,
+    geometry: { kind: "procedural", shape: "table" },
+    w: 0.9,
+    d: 0.9,
+    height3d: 0.75,
+    color: "#8a6d3b",
+  },
+  {
+    code: "TBL-60-110",
+    name: "洽談高桌 60×60×H110",
+    spec: "Cocktail Table",
+    category: "B",
+    subCategory: "B1",
+    price: 560,
+    currency: "TWD",
+    supplier: null,
+    geometry: { kind: "procedural", shape: "table" },
+    w: 0.6,
+    d: 0.6,
+    height3d: 1.1,
+    color: "#8a6d3b",
+  },
+  {
+    code: "DSP-50-160",
+    name: "窄展示櫃 50×50×H160",
+    spec: "Slim Display Case",
+    category: "A",
+    subCategory: "A1",
+    price: 1450,
+    currency: "TWD",
+    supplier: null,
+    geometry: { kind: "procedural", shape: "displayCase" },
+    w: 0.5,
+    d: 0.5,
+    height3d: 1.6,
+    color: "#5b7c99",
+  },
+  {
+    code: "DSP-100-200",
+    name: "高展示櫃 100×50×H200",
+    spec: "Tall Display Case",
+    category: "A",
+    subCategory: "A1",
+    price: 2200,
+    currency: "TWD",
+    supplier: null,
+    geometry: { kind: "procedural", shape: "displayCase" },
+    w: 1.0,
+    d: 0.5,
+    height3d: 2.0,
+    color: "#5b7c99",
+  },
+  {
+    code: "PLF-100-40",
+    name: "方形展台 100×100×H40",
+    spec: "Square Platform",
+    category: "A",
+    subCategory: "A3",
+    price: 720,
+    currency: "TWD",
+    supplier: null,
+    geometry: { kind: "procedural", shape: "platform" },
+    w: 1.0,
+    d: 1.0,
+    height3d: 0.4,
+    color: "#8d8477",
+  },
+  {
+    code: "PLF-150-40",
+    name: "長形展台 150×80×H40",
+    spec: "Rectangular Platform",
+    category: "A",
+    subCategory: "A3",
+    price: 850,
+    currency: "TWD",
+    supplier: null,
+    geometry: { kind: "procedural", shape: "platform" },
+    w: 1.5,
+    d: 0.8,
+    height3d: 0.4,
+    color: "#8d8477",
+  },
+  {
+    code: "BNR-60-160",
+    name: "小型展示架 60×30×H160",
+    spec: "Compact Banner Stand",
+    category: "A",
+    subCategory: "A2",
+    price: 980,
+    currency: "TWD",
+    supplier: null,
+    geometry: { kind: "procedural", shape: "bannerStand" },
+    w: 0.6,
+    d: 0.3,
+    height3d: 1.6,
+    color: "#a4462f",
+  },
+  {
+    code: "CNT-150-110",
+    name: "加寬櫃檯 150×50×H110",
+    spec: "Wide Info Counter",
+    category: "C",
+    subCategory: "C1",
+    price: 2400,
+    currency: "TWD",
+    supplier: null,
+    geometry: { kind: "procedural", shape: "counter" },
+    w: 1.5,
+    d: 0.5,
+    height3d: 1.1,
+    color: "#40556b",
+  },
+  {
+    code: "CNT-200-110",
+    name: "雙人櫃檯 200×50×H110",
+    spec: "Double Info Counter",
+    category: "C",
+    subCategory: "C1",
+    price: 3100,
+    currency: "TWD",
+    supplier: null,
+    geometry: { kind: "procedural", shape: "counter" },
+    w: 2.0,
+    d: 0.5,
+    height3d: 1.1,
+    color: "#40556b",
+  },
+  {
+    code: "CAB-90-180",
+    name: "寬櫃 90×45×H180",
+    spec: "Wide Cabinet",
+    category: "C",
+    subCategory: "C3",
+    price: 1900,
+    currency: "TWD",
+    supplier: null,
+    geometry: { kind: "procedural", shape: "cabinet" },
+    w: 0.9,
+    d: 0.45,
+    height3d: 1.8,
+    color: "#6b5b95",
+  },
+  {
+    code: "CAB-60-90",
+    name: "矮櫃 60×45×H90",
+    spec: "Low Cabinet",
+    category: "C",
+    subCategory: "C3",
+    price: 1100,
+    currency: "TWD",
+    supplier: null,
+    geometry: { kind: "procedural", shape: "cabinet" },
+    w: 0.6,
+    d: 0.45,
+    height3d: 0.9,
+    color: "#6b5b95",
+  },
+  {
+    code: "POD-45-110",
+    name: "窄講台 45×45×H110",
+    spec: "Slim Lectern",
+    category: "C",
+    subCategory: "C2",
+    price: 1350,
+    currency: "TWD",
+    supplier: null,
+    geometry: { kind: "procedural", shape: "podium" },
+    w: 0.45,
+    d: 0.45,
+    height3d: 1.1,
+    color: "#4b5563",
+  },
 ];
 
 /**
@@ -317,6 +514,78 @@ export function subCategoryLabel(subCategory: string): string {
 /** 目錄裡是否有這個代碼。AI 工具呼叫的參數驗證用(T4)。 */
 export function isCatalogCode(code: string): boolean {
   return BY_CODE.has(code);
+}
+
+/** 一個子類的統計。 */
+export interface SubCategoryStats {
+  code: string;
+  label: string;
+  itemCount: number;
+}
+
+/** 一個大類的統計,含底下各子類。 */
+export interface CategoryStats {
+  code: string;
+  label: string;
+  itemCount: number;
+  subCategories: SubCategoryStats[];
+}
+
+export interface CatalogStats {
+  totalItems: number;
+  /** 目錄裡出現過的幣別。目前恆為 `["TWD"]`。 */
+  currencies: string[];
+  categories: CategoryStats[];
+  /** `subCategory` 指向不存在大類、或 `category` 不存在的品項代碼。應為空。 */
+  orphanItems: string[];
+  /** 沒有任何品項的子類代碼。應為空 —— 空子類在目錄頁會是一個點不進去的節點。 */
+  emptySubCategories: string[];
+}
+
+/**
+ * 目錄的三層統計。**UI 的目錄頁與測試共用同一份**(T6 驗收條件 4)。
+ *
+ * `orphanItems` 與 `emptySubCategories` 刻意回傳「哪幾個」而不是布林:目錄長到
+ * 上百項之後,「結構有問題」這種答案沒有用,要能直接指到是哪一筆。
+ */
+export function catalogStats(): CatalogStats {
+  const categoryByCode = new Map(CATEGORIES.map((c) => [c.code, c]));
+  const subByCode = new Map(SUB_CATEGORIES.map((s) => [s.code, s]));
+
+  const orphanItems = CATALOG.filter((item) => {
+    const sub = subByCode.get(item.subCategory);
+    if (!sub) return true;
+    if (!categoryByCode.has(item.category)) return true;
+    // 品項自己記的大類必須與子類所屬的大類一致 —— 兩處各記一份就可能分岔。
+    return sub.category !== item.category;
+  }).map((item) => item.code);
+
+  const categories: CategoryStats[] = CATEGORIES.map((category) => {
+    const subs = SUB_CATEGORIES.filter((s) => s.category === category.code);
+    return {
+      code: category.code,
+      label: category.label,
+      itemCount: CATALOG.filter((i) => i.category === category.code).length,
+      subCategories: subs.map((sub) => ({
+        code: sub.code,
+        label: sub.label,
+        itemCount: CATALOG.filter((i) => i.subCategory === sub.code).length,
+      })),
+    };
+  });
+
+  const emptySubCategories = categories
+    .flatMap((c) => c.subCategories)
+    .filter((s) => s.itemCount === 0)
+    .map((s) => s.code);
+
+  return {
+    totalItems: CATALOG.length,
+    currencies: [...new Set(CATALOG.map((i) => i.currency))].sort(),
+    categories,
+    orphanItems,
+    emptySubCategories,
+  };
 }
 
 /** 該子類底下的品項。目錄頁的第三層列表用(T7)。 */

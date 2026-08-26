@@ -306,6 +306,38 @@ function displayCaseParts(
 }
 
 /**
+ * 展台:略微內縮的踢腳座 + 實心台面。
+ *
+ * 與桌子的差別是「沒有腳」—— 展台是實心量體,商品放在頂面。內縮的踢腳座讓它
+ * 不會讀成一個貼地的方塊,也是它在白模下與純色地板分得開的原因。
+ */
+function platformParts(w: number, h: number, height3d: number): FurniturePart[] {
+  const plinthH = Math.min(BASE_M, height3d * 0.2);
+  const bodyH = height3d - plinthH - SLAB_M;
+  return [
+    {
+      id: "plinth",
+      shape: { kind: "box", w: w * 0.88, h: plinthH, d: h * 0.88 },
+      position: [0, plinthH / 2, 0],
+      finish: "accent",
+    },
+    {
+      id: "body",
+      shape: { kind: "box", w: w * 0.96, h: bodyH, d: h * 0.96 },
+      position: [0, plinthH + bodyH / 2, 0],
+      finish: "body",
+    },
+    {
+      // 台面吃滿標稱尺寸 —— 整件的最大水平外廓。
+      id: "top",
+      shape: { kind: "box", w, h: SLAB_M, d: h },
+      position: [0, height3d - SLAB_M / 2, 0],
+      finish: "panel",
+    },
+  ];
+}
+
+/**
  * 造型名對到零件建構函式。
  *
  * 索引鍵是**造型**而不是品項:同一個造型會被多個品項共用(目錄長大之後,
@@ -322,6 +354,7 @@ const BUILDERS: Record<
   table: tableParts,
   cabinet: cabinetParts,
   displayCase: displayCaseParts,
+  platform: platformParts,
 };
 
 /** 這個代碼是否由程序化幾何繪製(而非匯入模型或白模 box)。 */

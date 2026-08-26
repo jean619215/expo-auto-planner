@@ -1,6 +1,6 @@
 # 接續執行備忘 — story `stories/venue-catalog-and-quote-draft.md`(第三輪:家具目錄與報價)
 
-> 最後更新:2026-08-25(T1–T5 完成,T6 待開工)。
+> 最後更新:2026-08-25(T1–T6 完成,T7 待開工)。
 > 這份是「隔一陣子回來、或換一個 agent 接手要怎麼繼續」的入口。
 > 逐階段細節在 `.claude/pipeline/task-log.md`,決策與驗收條件在 story 檔本身。
 
@@ -11,9 +11,9 @@
 | 項目 | 狀態 |
 |---|---|
 | 第一輪(白模產生器)、第二輪(使用者回饋)| ✅ 已合併進 `master`(PR #12 / #13) |
-| 第三輪 T1–T5(可編輯範圍 / 目錄 / 繪製路徑 / AI schema / 程序化幾何)| ✅ 完成 |
-| 第三輪 T6–T9 | ⬜ 待開工,決策與驗收條件都已寫定 |
-| 免登入 30 支 spec | ✅ 269 通過、0 失敗 |
+| 第三輪 T1–T6(可編輯範圍 / 目錄 / 繪製 / AI schema / 程序化幾何 / 目錄擴充)| ✅ 完成 |
+| 第三輪 T7–T9 | ⬜ 待開工,決策與驗收條件都已寫定 |
+| 免登入 32 支 spec | ✅ 277 通過、0 失敗 |
 | `npm run lint` / `npx tsc --noEmit` | ✅ 乾淨 |
 
 **分支關係**:第三輪的所有工作都落在 `docs/venue-catalog-and-quote` 上(它已 merge 了
@@ -84,56 +84,55 @@ story 第六節只點名 `venue-objects` / `venue-zoom-pan`。T1 實際還動到
 
 ---
 
-## 下一步:T6
+## 下一步:T7
 
-> 擴充目錄:三層分類 + 品項與價格。資料工作為主。
+> 家具目錄頁 UI:大類 → 子類 → 品項的三層導覽 + 搜尋,UIUX 近似競品。
 
-驗收條件在 story 第五節。目前目錄有 10 個品項(9 個原始 + T5 加的高桌),
-競品是 233 項。
+驗收條件在 story 第五節。**資料層已經備好,不要在 UI 裡重算**:
 
-### 開工前必須先決定的三件事
+- `catalogStats()` 回傳三層統計(每個大類/子類的件數、孤兒品項、空子類),
+  **就是為了 UI 與測試共用同一份**而存在的。
+- `subCategoriesIn(category)` / `itemsInSubCategory(sub)` 給第二、三層列表。
+- `catalogItem(code)` / `requireCatalogItem(code)` 單筆查詢。
+- 目前 23 個品項 / 4 大類 / 10 子類,沒有空子類、沒有孤兒(有測試守著)。
 
-**1. AI 附錄會變太貴。** 模型現在從每輪的目前配置附錄(`AiPanel` 的
-`configJson.catalogue`)知道有哪些代碼。十項很便宜,兩百多項不是 —— 每一輪都
-送一次。T4 的紀錄寫明:屆時應改成**給模型一支查詢工具**,而不是繼續加大清單。
-這件事要在目錄變大的同時處理,不能拖。
+### 目錄現況與「加一個品項」怎麼做
 
-**2. `CatalogGeometry.rotationY` 目前沒有任何使用者。** 原本只有 cabinet 用到
-(模型長邊在 X、平面圖長邊在 Z),cabinet 改程序化之後就空了,守著它的
-`venue-furniture-models` M2 已移除。T6 匯入新模型時若用得上,補一支同型的測試;
-若確定用不上,把欄位一起拿掉。**不要放著不管。**
+七種程序化造型:`table` / `cabinet` / `displayCase` / `platform` / `counter` /
+`bannerStand` / `podium`;仍走 GLB 的只有椅子、沙發、植栽。
 
-**3. 三個不再使用的 GLB。** `table.glb` / `cabinet.glb` / `display.glb` 仍在
-`public/models/venue/`,`venue-furniture-assets` 的 A1/A2/B 仍在守它們,但沒有
-品項會請求。要清的話會牽動 `ATTRIBUTION.md` 與 `build-venue-models.mjs`,與
-目錄擴充一起做比較省事。
+**加尺寸變體只要加一筆目錄資料**,不必碰 `proceduralFurniture.ts` —— builder 以
+造型為鍵,尺寸是參數。需要新造型時才加 builder 並在 `ProceduralShape` 加名字,
+而且**造型要有識別特徵**:白模下只有一個盒子的話,櫃子與展示櫃分不出來(所以
+櫃子有把手橫料、展示櫃有層板、展台沒有腳)。
 
-### 新增方正品項的做法(T5 建立的路)
-
-程序化 builder 以 `ProceduralShape` 為鍵,**尺寸變體共用造型**:
-`TBL-120-75` 與 `TBL-120-100` 都是 `shape: "table"`,差別只在 `height3d`。
-新增一個尺寸變體只要加一筆目錄資料,不必碰 `proceduralFurniture.ts`。
-需要新造型時才加 builder,並在 `ProceduralShape` 聯集加名字。
-
-**注意**:幾何快取仍以 `code` 為鍵。兩個尺寸變體共用 shape 但不共用 mesh,
-快取若改以 shape 為鍵,第二個變體會拿到第一個的幾何(T3 的 commit 記了)。
-
-**造型要有識別特徵。** 白模下只有一個盒子的話,櫃子與展示櫃完全分不出來 ——
-T5 給櫃子加了把手橫料、給展示櫃加了層板,就是為了這個。
+**注意**:幾何快取以 `code` 為鍵。兩個尺寸變體共用造型但不共用 mesh,快取若改
+以造型為鍵,第二個變體會拿到第一個的幾何。
 
 ### AI 那條路徑目前的樣子(動它之前先看這裡)
 
 - tool schema 的 `code` 是**自由字串**,沒有 enum —— 目錄會長大,enum 跟著改動
   會讓 prompt cache 前綴每次失效。
-- 模型從**每輪的目前配置附錄**知道有哪些代碼可用。不要把目錄搬進 system prompt
-  或 tool description —— 那兩者在快取前綴裡,搬過去等於把 enum 的問題原樣搬回來。
-- 代碼合法性由套用端(`PlanEditor` 的 `applyActions`)查目錄決定,查不到就跳過
-  該一件並回報,**不中斷同一批的其他 action**。
+- 模型從**每輪的目前配置附錄**知道有哪些代碼。不要把目錄搬進 system prompt 或
+  tool description —— 那兩者在快取前綴裡,搬過去等於把 enum 的問題原樣搬回來。
+- **附錄成本已量測**:23 項 = 1,770 bytes(約 550 tokens/輪),還很便宜;
+  233 項推估約 18KB(約 5,600 tokens/輪)。`venue-catalog-structure` 有一道 8KB
+  的門檻檢查,超過就會紅並提示「該改成給模型一支查詢工具了」。**在那之前不要
+  先做查詢工具。**
+- 代碼合法性由套用端(`PlanEditor` 的 `applyActions`)查目錄,查不到就跳過該一件
+  並回報,**不中斷同一批的其他 action**。
 
 **改 schema 時,fixture 要一起改。** 三處在用:`ai-panel-persistent`、
 `venue-refined-materials` T14、`ai-panel`(需帳密)。只改一邊的症狀是 handler
 丟例外、`applyActions` 整個掛掉、面板不渲染,而測試只說「找不到 ai-action-summary」
 —— 指不到真正的原因。T3 踩過一次,T4 改 schema 時又驗證了一次。
+
+### `CatalogGeometry.rotationY`:目前沒人用,但有測試看著
+
+原本只有 cabinet 用到,T5 把它改成程序化之後就空了。**欄位沒有刪**(模型本來就
+可能以任意方位匯出),改成由 `venue-catalog-structure` 的一道檢查明說「目前沒有
+任何 model 品項需要方位修正」。哪天有品項用上非零值,那裡會紅 —— 那是在提醒
+**補一支驗方位的測試**,不是叫你把數字改回 0。
 
 ---
 
@@ -181,6 +180,11 @@ $SP/pw-browsers/chromium_headless_shell-1228/chrome-headless-shell-linux64/
 - **`node scripts/build-venue-models.mjs` 的下載階段未重跑**。`api.polyhaven.com` 被
   egress policy 擋(CONNECT 403,已多次確認),依代理規範不得繞路。下載/轉檔那段自
   上次成功執行後未曾改動,在有對外網路的機器補跑一次即可。
+- **三個不再使用的 GLB 未刪**(`table.glb` / `cabinet.glb` / `display.glb`)。
+  T5 之後沒有品項會請求它們,但要刪得動該腳本的 `MODELS` 表並**重跑腳本重新產生
+  `ATTRIBUTION.md`**(該檔開頭明寫「由腳本產生,請勿手改」)—— 與上一點是同一個
+  被擋住的路徑。手改一份標明不可手改的產出物只會留下更難查的不一致,所以沒有做
+  半套。連同下載階段一起在有對外網路的機器補跑。
 - 上傳材質的持久化未做(第二輪決議如此,另立 story)。
 
 ---
