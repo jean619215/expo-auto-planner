@@ -86,6 +86,12 @@ async function waitForWallMaterialChange(
     .not.toBe(previousUuid);
 }
 
+/** 關掉存檔對話框(同 plan-slots.spec.ts 的做法:點 Dialog 自己的關閉鈕)。 */
+async function closeSlotsDialog(page: import("@playwright/test").Page) {
+  await page.locator('[data-slot="dialog-close"]').first().click();
+  await expect(page.getByTestId("plan-slots-dialog")).toHaveCount(0);
+}
+
 async function wallReport(editor: PlanEditorPage, wallId: string) {
   const walls = await editor.refinedWallSurfaces();
   const report = walls.find((w) => w.wallId === wallId);
@@ -285,6 +291,9 @@ test.describe("Per-wall surface groups (T9)", () => {
     await slots.open();
     await slots.saveToSlot(1, "T9");
     await expect.poll(() => savedPlan !== null).toBe(true);
+    // 存完對話框不會自己關,而它蓋著整個畫面 —— 不關的話下一個動作會等到
+    // 逾時,錯誤訊息還會說「找不到下一步按鈕」,看起來像 wizard 壞了。
+    await closeSlotsDialog(page);
     expect(savedPlan!.surfaces.wallOverrides[idA]).toBe(DARK);
     expect(savedPlan!.surfaces.wallOverrides[idB]).toBeUndefined();
 
@@ -299,6 +308,7 @@ test.describe("Per-wall surface groups (T9)", () => {
     await slots.open();
     await slots.loadSlot(1);
     await slots.confirmLoad();
+    await expect(page.getByTestId("plan-slots-dialog")).toHaveCount(0);
 
     await expect
       .poll(async () => {
