@@ -705,7 +705,12 @@ export class PlanEditorPage {
   }
 
   /** 存檔快照裡記的材質選擇。 */
-  async planSnapshotSurfaces(): Promise<{ floor: string; wall: string }> {
+  async planSnapshotSurfaces(): Promise<{
+    floor: string;
+    wall: string;
+    /** 逐面牆的款式覆寫(T9)。沒有任何覆寫時是空物件,不是 undefined。 */
+    wallOverrides: Record<string, string>;
+  }> {
     const raw = await this.editor.getAttribute("data-plan-surfaces");
     return JSON.parse(raw ?? "null");
   }
