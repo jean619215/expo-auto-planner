@@ -619,8 +619,8 @@ export default function SurfaceMaterials({
 
   const wallMaterialFor = useCallback(
     (wallId: string) => {
-      const { key } = resolveWallSource(selection, uploads, wallId);
-      return wallMaterials.get(key) ?? defaultWallMaterial;
+      void wallId;
+      return defaultWallMaterial;
     },
     [wallMaterials, defaultWallMaterial, selection, uploads],
   );
