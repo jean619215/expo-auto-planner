@@ -117,6 +117,19 @@ export interface NormalReadback {
   varianceXY: number;
 }
 
+/**
+ * 一面牆實際掛著的材質(T9)。鏡射 RefinedSceneProbe 的 `WallSurfaceReport`。
+ *
+ * `materialUuid` 是場景裡那個材質物件的身分,`albedoMean` 是它的貼圖從 GPU
+ * 讀回來的平均亮度 —— 兩者都不是選單的回音。
+ */
+export interface WallSurfaceReport {
+  wallId: string;
+  materialUuid: string;
+  mapUuid: string;
+  albedoMean: number | null;
+}
+
 export interface MaterialProbeReport {
   ready: boolean;
   maxAnisotropy: number | null;
@@ -129,6 +142,8 @@ export interface MaterialProbeReport {
   columnAlbedo: AlbedoReadback | null;
   floorUvMeterError: number | null;
   wallUvMeterError: number | null;
+  /** 逐面牆的實際材質(T9),依 wallId 排序;沒有牆時是空陣列。 */
+  walls: WallSurfaceReport[];
   liveSurfaceTargets: number | null;
   totalSurfaceBakes: number | null;
 }
@@ -690,7 +705,12 @@ export class PlanEditorPage {
   }
 
   /** 存檔快照裡記的材質選擇。 */
-  async planSnapshotSurfaces(): Promise<{ floor: string; wall: string }> {
+  async planSnapshotSurfaces(): Promise<{
+    floor: string;
+    wall: string;
+    /** 逐面牆的款式覆寫(T9)。沒有任何覆寫時是空物件,不是 undefined。 */
+    wallOverrides: Record<string, string>;
+  }> {
     const raw = await this.editor.getAttribute("data-plan-surfaces");
     return JSON.parse(raw ?? "null");
   }
@@ -702,6 +722,8 @@ export class PlanEditorPage {
     {
       code: string;
       partCount: number;
+      /** 這個代碼在場上有幾**件**(數場景圖裡的根 group)。 */
+      instances: number;
       triangles: number;
       /** 實際幾何外廓(公尺),未套用擺放位置與旋轉。 */
       sizeM: [number, number, number];
@@ -745,6 +767,25 @@ export class PlanEditorPage {
     await this.page.getByTestId("booth-custom-apply").click();
   }
 
+  /**
+   * 在步驟 02 的家具目錄裡選一個品項(進入放置模式)。
+   *
+   * T7 之後目錄是三層收合式的,品項卡預設藏在收合的分支底下 —— 直接
+   * `getByTestId("furniture-place-XXX").click()` 會找不到元素。這裡走搜尋:
+   * 代碼是唯一的,填進搜尋框就一定只剩那張卡,不必知道它屬於哪個大類/子類。
+   *
+   * 選完把搜尋清掉,讓面板回到三層導覽 —— 否則下一次呼叫會疊在上一次的
+   * 搜尋結果上,而那是一種很難看出來的耦合。
+   */
+  async pickCatalogItem(code: string) {
+    const search = this.page.getByTestId("catalog-search");
+    await search.fill(code);
+    const card = this.page.getByTestId(`furniture-place-${code}`);
+    await card.waitFor({ state: "visible" });
+    await card.click();
+    await this.page.getByTestId("catalog-search-clear").click();
+  }
+
   /** 可編輯範圍(攤位 + 邊距)。探針讀的是實作算出來的矩形,不是回音。 */
   async planArea(): Promise<{
     minX: number;
@@ -778,6 +819,41 @@ export class PlanEditorPage {
 
   async cancelBoothSize() {
     await this.page.getByTestId("booth-size-confirm-cancel").click();
+  }
+
+  /**
+   * 報價面板上顯示的合計,解析成數字。
+   *
+   * **讀的是畫面文字**,不是某個 `data-total` 屬性 —— T8 要驗的就是「使用者
+   * 看到的金額對不對」,中間多一層探針屬性只會讓兩者可以各自漂移。
+   */
+  async quoteTotal(): Promise<number> {
+    return parseTwd(await this.page.getByTestId("quote-total").innerText());
+  }
+
+  /** 報價面板自己數的件數(用來與場景探針的件數交叉比對)。 */
+  async quoteItemCount(): Promise<number> {
+    const text = await this.page.getByTestId("quote-item-count").innerText();
+    return Number(text.replace(/[^0-9]/g, ""));
+  }
+
+  /** 某一個品項那一列的明細:名稱、數量、單價、小計。 */
+  async quoteLine(code: string): Promise<{
+    name: string;
+    quantity: number;
+    unitPrice: number;
+    subtotal: number;
+  }> {
+    const text = async (testId: string) =>
+      (await this.page.getByTestId(testId).innerText()).trim();
+    return {
+      name: await text(`quote-line-name-${code}`),
+      quantity: Number(
+        (await text(`quote-line-quantity-${code}`)).replace(/[^0-9]/g, ""),
+      ),
+      unitPrice: parseTwd(await text(`quote-line-unit-${code}`)),
+      subtotal: parseTwd(await text(`quote-line-subtotal-${code}`)),
+    };
   }
 
   // --- R4 步驟 02 刪除(feedback round 2, T2)---------------------------
@@ -1034,6 +1110,51 @@ export class PlanEditorPage {
     return JSON.parse(raw ?? "null") as MaterialProbeReport;
   }
 
+  /**
+   * 逐面牆實際掛著的材質(T9),依 wallId 排序。
+   *
+   * **這是探針從場景圖與 GPU 讀回來的**,不是選單的值 —— 要斷言「兩面牆真的
+   * 不一樣」就比這裡的 `materialUuid` 與 `albedoMean`,不要比 `data-wall-preset`
+   * (那是設定值的回音,實作壞掉時它照樣是對的)。
+   */
+  async refinedWallSurfaces(): Promise<WallSurfaceReport[]> {
+    const diagnostics = await this.refinedMaterialDiagnostics();
+    return diagnostics?.walls ?? [];
+  }
+
+  /** 步驟 03 個別牆面清單有幾列(沒有牆時清單整個不存在,回 0)。 */
+  async wallSurfaceRowCount(): Promise<number> {
+    const list = this.page.getByTestId("wall-surface-list");
+    if ((await list.count()) === 0) return 0;
+    return Number(await list.getAttribute("data-wall-count"));
+  }
+
+  /** 把第 n 面牆(1-based,與畫面上的「牆 N」一致)設成某個款式。 */
+  async setWallSurface(index: number, presetId: string) {
+    await this.page
+      .getByTestId(`wall-surface-select-${index}`)
+      .selectOption(presetId);
+  }
+
+  /** 第 n 面牆那一列對應的 `WallSegment.id` —— 用來與探針的回報對上。 */
+  async wallSurfaceRowId(index: number): Promise<string> {
+    return (
+      (await this.page
+        .getByTestId(`wall-surface-row-${index}`)
+        .getAttribute("data-wall-id")) ?? ""
+    );
+  }
+
+  /** 給第 n 面牆上傳一張自訂圖。 */
+  async uploadWallSurfaceImage(
+    index: number,
+    file: { name: string; mimeType: string; buffer: Buffer },
+  ) {
+    await this.page
+      .getByTestId(`wall-surface-upload-${index}`)
+      .setInputFiles(file);
+  }
+
   // --- venue-refined-3d task 5: imported furniture model diagnostics ----
   //
   // GLB 載入是非同步的(fetch + Draco worker 解碼),完成時間遠晚於
@@ -1151,4 +1272,11 @@ export class PlanEditorPage {
     await this.page.mouse.move(end.x, end.y, { steps: 8 });
     await this.page.mouse.up();
   }
+}
+
+/** `NT$ 1,370` → `1370`。千分位與貨幣前綴都不進數字。 */
+function parseTwd(text: string): number {
+  const digits = text.replace(/[^0-9]/g, "");
+  if (!digits) throw new Error(`金額字串解析不出數字: ${JSON.stringify(text)}`);
+  return Number(digits);
 }

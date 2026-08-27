@@ -60,7 +60,7 @@ async function placeFurnitureOnStep2(
   offsetPx: { x: number; y: number } = { x: 0, y: 0 },
 ) {
   const before = await editor.furnitureCount();
-  await page.getByTestId(`furniture-place-${code}`).click();
+  await editor.pickCatalogItem(code);
   const center = await step2CanvasCenter(page);
   await page.mouse.move(center.x + offsetPx.x, center.y + offsetPx.y);
   await page.waitForTimeout(100);
@@ -162,9 +162,11 @@ test.describe("精密 3D 場景 (步驟 03) - Task 6: 展場家具程序化幾�
   test("P3: 程序化與匯入模型互斥,同一件家具不會被畫兩次", async ({ page }) => {
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
-    // 一件程序化(counter)+ 一件匯入模型(table),兩條路同時活著。
+    // 一件程序化(counter)+ 一件匯入模型,兩條路同時活著。
+    // T5 之後桌子改走程序化,匯入模型那一半必須換成仍是 GLB 的椅子 ——
+    // 用桌子的話兩件都是程序化,這條「互斥」根本沒被測到。
     await placeFurnitureOnStep2(page, editor, "CNT-100-110", { x: -30, y: 0 });
-    await placeFurnitureOnStep2(page, editor, "TBL-120-75", { x: 30, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "CHR-45-90", { x: 30, y: 0 });
 
     await editor.goToRefined();
     await waitForRefinedReady(editor);
@@ -177,7 +179,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 6: 展場家具程序化幾�
     const procedural = await editor.refinedProceduralFurnitureReports();
     const models = await editor.refinedFurnitureModelReports();
     expect(procedural.map((r) => r.code)).toEqual(["CNT-100-110"]);
-    expect(models.map((r) => r.code)).toEqual(["TBL-120-75"]);
+    expect(models.map((r) => r.code)).toEqual(["CHR-45-90"]);
 
     // 兩件家具、兩種來源,件數就是 2 —— 若某一件被兩條路各畫一次,這裡會是 3。
     await expect

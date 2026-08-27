@@ -70,7 +70,7 @@ async function placeFurnitureOnStep2(
   offsetPx: { x: number; y: number } = { x: 0, y: 0 },
 ) {
   const before = await editor.furnitureCount();
-  await page.getByTestId(`furniture-place-${code}`).click();
+  await editor.pickCatalogItem(code);
   const center = await step2CanvasCenter(page);
   await clickFloor(page, { x: center.x + offsetPx.x, y: center.y + offsetPx.y });
   await expect
@@ -93,13 +93,13 @@ async function toStep2(editor: PlanEditorPage) {
 }
 
 /** kind -> FURNITURE_DEFAULTS 的 (w, height3d, h),與 src/lib/venue/furniture.ts 一致。 */
+// T5(第三輪 D4)之後,方正規格件(桌/櫃/展示櫃)改走程序化 —— 一份 GLB 只有
+// 一種比例,做不出「同款不同高度」的兩個品項。留在 GLB 的只剩方箱畫不出來的
+// 曲面件:椅子、沙發、植栽。
 const MODEL_KINDS = [
-  { code: "TBL-120-75", target: [1.2, 0.75, 0.7] },
   { code: "CHR-45-90", target: [0.45, 0.9, 0.45] },
-  { code: "CAB-60-180", target: [0.6, 1.8, 1.2] },
   { code: "SOF-180-80", target: [1.8, 0.8, 0.8] },
   { code: "PLT-50-120", target: [0.5, 1.2, 0.5] },
-  { code: "DSP-100-160", target: [1.0, 1.6, 0.5] },
 ] as const;
 
 /** M8 用來 mock 存檔載入的 API(沿用 venue-zoom-pan.spec.ts 的寫法)。 */
@@ -194,26 +194,10 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
     }
   });
 
-  test("M2: cabinet 的方位修正讓模型長邊對上平面圖長邊", async ({ page }) => {
-    const editor = new PlanEditorPage(page);
-    await toStep2(editor);
-    await placeFurnitureOnStep2(page, editor, "CAB-60-180");
-
-    await editor.goToRefined();
-    await waitForFurnitureModels(editor);
-
-    const report = await editor.refinedFurnitureModelReport("CAB-60-180");
-    expect(report).toBeDefined();
-    if (!report) return;
-
-    // 平面圖目標是 0.6(X) x 1.2(Z) —— 長邊在 Z。模型原生是 1.141 x 0.488,
-    // 長邊在 X,所以 models.ts 給了 rotationY = 90。若那個 90 掉了,fittedM
-    // 的長邊會落回 X,這條就紅。
-    const [x, , z] = report.fittedM;
-    expect(z, "cabinet 的長邊應在 Z 軸(rotationY=90 未生效?)").toBeGreaterThan(x);
-    // 貼齊的那一軸必須是長邊 —— 只比大小還不夠,轉錯方向也可能 z > x。
-    expect(z / report.targetM[2]).toBeGreaterThan(0.85);
-  });
+  // M2(cabinet 的 rotationY=90 方位修正)已隨 T5 移除:cabinet 改走程序化,
+  // 而剩下的三個 GLB 品項native 方位都正確,`rotationY` 目前**沒有任何使用者**。
+  // 機制仍留在 `CatalogGeometry` 與 `normalizeModel()` 裡 —— T6 匯入新模型時
+  // 若用得上就補一支同型的測試,若確定用不上就把欄位一起拿掉,不要放著不管。
 
   test("M3: 沒有模型的三種展場家具不走匯入模型,且不會被畫兩次", async ({
     page,
@@ -253,7 +237,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
 
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
-    await placeFurnitureOnStep2(page, editor, "TBL-120-75", { x: -30, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "CHR-45-90", { x: -30, y: 0 });
     await placeFurnitureOnStep2(page, editor, "PLT-50-120", { x: 30, y: 0 });
 
     await editor.goToRefined();
@@ -265,16 +249,16 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
       .toBe(2);
 
     const plantRequested = timeline.indexOf("req:plant.glb");
-    const tableFinished = timeline.indexOf("res:table.glb");
+    const eagerFinished = timeline.indexOf("res:chair.glb");
     expect(plantRequested, "plant.glb 從未被請求").toBeGreaterThanOrEqual(0);
-    expect(tableFinished, "table.glb 從未載完").toBeGreaterThanOrEqual(0);
+    expect(eagerFinished, "chair.glb 從未載完").toBeGreaterThanOrEqual(0);
     // 「延後」的定義就是這一行:plant 的請求發生在 eager 那批**收完之後**,
     // 而不是只在它後面一點點排隊。plant 是 1.32MB / 原生 96k 面,綁同一個
     // Suspense 會讓整個步驟 03 一起等它。
     expect(
       plantRequested,
       `plant.glb 未延後載入 (timeline: ${timeline.join(" -> ")})`,
-    ).toBeGreaterThan(tableFinished);
+    ).toBeGreaterThan(eagerFinished);
   });
 
   test("M5: 只載入場上真的有的 kind", async ({ page }) => {
@@ -282,7 +266,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
 
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
-    await placeFurnitureOnStep2(page, editor, "TBL-120-75");
+    await placeFurnitureOnStep2(page, editor, "CHR-45-90");
 
     await editor.goToRefined();
     await waitForFurnitureModels(editor);
@@ -292,8 +276,8 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
     const requested = timeline
       .filter((entry) => entry.startsWith("req:"))
       .map((entry) => entry.slice(4));
-    expect(new Set(requested), "只擺了一張桌子,不該把其他 GLB 也拉下來").toEqual(
-      new Set(["table.glb"]),
+    expect(new Set(requested), "只擺了一張椅子,不該把其他 GLB 也拉下來").toEqual(
+      new Set(["chair.glb"]),
     );
   });
 
@@ -303,8 +287,8 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
     test.slow();
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
-    await placeFurnitureOnStep2(page, editor, "TBL-120-75", { x: -30, y: 0 });
-    await placeFurnitureOnStep2(page, editor, "CAB-60-180", { x: 30, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "CHR-45-90", { x: -30, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "SOF-180-80", { x: 30, y: 0 });
 
     await editor.goToRefined();
     await waitForFurnitureModels(editor);

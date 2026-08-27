@@ -222,6 +222,22 @@ interface NormalReadback {
   varianceXY: number;
 }
 
+/**
+ * 一面牆實際掛著的材質(第三輪 T9)。
+ *
+ * `materialUuid` 是**場景裡那個物件**的身分,不是選單的值 —— 兩面牆設成不同
+ * 款式卻拿到同一個 uuid,就代表實作把它們接到同一份材質上了(T9 的破壞驗證
+ * 打的正是這裡)。`albedoMean` 再往下一層:那份材質的貼圖從 GPU 讀回來的平均
+ * 亮度,證明兩份材質不只是不同物件,烘出來的像素也真的不一樣。
+ */
+export interface WallSurfaceReport {
+  wallId: string;
+  materialUuid: string;
+  mapUuid: string;
+  /** 程序化烘焙才有;走實拍貼圖包或上傳圖的牆為 null(貼圖是檔案不是烘的)。 */
+  albedoMean: number | null;
+}
+
 export interface MaterialProbeReport {
   ready: boolean;
   maxAnisotropy: number | null;
@@ -239,6 +255,8 @@ export interface MaterialProbeReport {
   columnAlbedo: AlbedoReadback | null;
   floorUvMeterError: number | null;
   wallUvMeterError: number | null;
+  /** 逐面牆的實際材質(T9)。依 wallId 排序,場上沒有牆時是空陣列。 */
+  walls: WallSurfaceReport[];
   liveSurfaceTargets: number | null;
   totalSurfaceBakes: number | null;
 }
@@ -255,6 +273,7 @@ const NOT_READY_MATERIALS: MaterialProbeReport = {
   columnAlbedo: null,
   floorUvMeterError: null,
   wallUvMeterError: null,
+  walls: [],
   liveSurfaceTargets: null,
   totalSurfaceBakes: null,
 };
@@ -329,6 +348,50 @@ function describeSurfaceMaterial(
     materialColorHex: material.color.getHexString(),
     normalScaleX: material.normalScale.x,
   };
+}
+
+/**
+ * 逐面牆的實際材質(T9 條件 2)。
+ *
+ * 三個讀數層層加深:
+ *  1. `materialUuid` —— 場景裡那個材質物件的身分。兩面設成不同款式的牆拿到
+ *     同一個 uuid,就是「兩組共用同一個材質物件」,破壞驗證要打的就是它。
+ *  2. `mapUuid` —— 貼圖物件的身分。材質不同但貼圖同一張也是假的分組。
+ *  3. `albedoMean` —— 從 GPU 把那份烘焙讀回來的平均亮度。前兩項證明「是不同
+ *     的物件」,這一項證明「畫出來真的不一樣」。
+ *
+ * 每個 render target 只讀一次:十面木紋牆共用一份材質,沒有理由讀十遍
+ * (一次 readFullAlbedoStats 是整張 512² 的 readback)。
+ */
+function readWallSurfaceReports(
+  gl: THREE.WebGLRenderer,
+  wallMeshes: THREE.Mesh[],
+  albedoTargets: Map<string, THREE.WebGLRenderTarget>,
+): WallSurfaceReport[] {
+  // 鍵是 render target 物件本身 —— WebGLRenderTarget 沒有 uuid,而它的
+  // `.texture` 有,但用物件當鍵更直接也不會誤把兩張同源貼圖當成同一個。
+  const meanByTarget = new Map<THREE.WebGLRenderTarget, number>();
+  const reports: WallSurfaceReport[] = [];
+
+  for (const mesh of wallMeshes) {
+    const wallId = typeof mesh.userData.wallId === "string" ? mesh.userData.wallId : "";
+    const material = mesh.material as THREE.MeshStandardMaterial;
+    const target = albedoTargets.get(material.uuid) ?? null;
+    let albedoMean: number | null = null;
+    if (target) {
+      const cached = meanByTarget.get(target);
+      albedoMean = cached ?? readFullAlbedoStats(gl, target).mean;
+      if (cached === undefined) meanByTarget.set(target, albedoMean);
+    }
+    reports.push({
+      wallId,
+      materialUuid: material.uuid,
+      mapUuid: material.map?.uuid ?? "",
+      albedoMean,
+    });
+  }
+
+  return reports.sort((a, b) => a.wallId.localeCompare(b.wallId));
 }
 
 function readRegionLuminance(
@@ -657,15 +720,25 @@ export default function RefinedSceneProbe({
 }: RefinedSceneProbeProps) {
   const gl = useThree((state) => state.gl);
   const scene = useThree((state) => state.scene);
-  const { ready: materialsReady, textureSet } = useSurfaceMaterials();
+  const {
+    ready: materialsReady,
+    textureSet,
+    wallAlbedoTargets,
+  } = useSurfaceMaterials();
   const frameRef = useRef(0);
   const lastReportRef = useRef<string | null>(null);
   // Cached once per mount — the material readback (T2/T4/T5) is real GPU
   // work and does not need to repeat every frame (architect-plan.md Test
   // Plan: "只在首次報告時做一次,不進每幀路徑").
   const materialsCacheRef = useRef<MaterialProbeReport | null>(null);
-  // 上一次量到的地板材質 uuid —— 材質物件換了才代表快取過期。
-  const lastFloorMaterialUuidRef = useRef<string | null>(null);
+  // 上一次量到的材質指紋(地板 + 每一面牆的材質 uuid)—— 材質物件換了才代表
+  // 快取過期。
+  //
+  // T9 之前只看地板:改牆面材質時地板材質也會一起換,所以順帶生效。逐面牆
+  // 之後**不再成立** —— 只改某一面牆的款式,地板材質原封不動,只看地板的話
+  // 快取永遠不過期,探針會一直報上一次的讀數(而且測試會全綠,因為它報的
+  // 是一份「曾經正確」的讀數)。
+  const lastMaterialFingerprintRef = useRef<string | null>(null);
 
   // `resetKey` changes whenever RefinedScene's geometry props change
   // identity (a new revision) or a furniture model finishes loading — re-arm
@@ -721,6 +794,8 @@ export default function RefinedSceneProbe({
       wall: null,
       column: null,
     };
+    /** 場上所有牆 mesh(T9 要逐面回報,不是只看第一面)。 */
+    const wallMeshes: THREE.Mesh[] = [];
 
     scene.traverse((object) => {
       if ((object as THREE.Light).isLight) {
@@ -758,8 +833,9 @@ export default function RefinedSceneProbe({
         if (!found.floor && object.name === REFINED_FLOOR_NAME) {
           found.floor = object as THREE.Mesh;
         }
-        if (!found.wall && object.name === REFINED_WALL_NAME) {
-          found.wall = object as THREE.Mesh;
+        if (object.name === REFINED_WALL_NAME) {
+          wallMeshes.push(object as THREE.Mesh);
+          if (!found.wall) found.wall = object as THREE.Mesh;
         }
         if (!found.column && object.name === REFINED_COLUMN_NAME) {
           found.column = object as THREE.Mesh;
@@ -771,11 +847,12 @@ export default function RefinedSceneProbe({
     const floor = found.floor;
     const shadowCamera = key ? key.shadow.camera : null;
 
-    const floorMaterialUuid = floor
-      ? (floor.material as THREE.Material).uuid
-      : null;
-    if (lastFloorMaterialUuidRef.current !== floorMaterialUuid) {
-      lastFloorMaterialUuidRef.current = floorMaterialUuid;
+    const fingerprint = [
+      floor ? (floor.material as THREE.Material).uuid : "",
+      ...wallMeshes.map((mesh) => (mesh.material as THREE.Material).uuid),
+    ].join("|");
+    if (lastMaterialFingerprintRef.current !== fingerprint) {
+      lastMaterialFingerprintRef.current = fingerprint;
       materialsCacheRef.current = null;
     }
 
@@ -803,6 +880,7 @@ export default function RefinedSceneProbe({
         columnAlbedo: readFullAlbedoStats(gl, textureSet.columnAlbedoTarget),
         floorUvMeterError: computeFloorUvMeterError(floor),
         wallUvMeterError: found.wall ? computeWallUvMeterError(found.wall) : null,
+        walls: readWallSurfaceReports(gl, wallMeshes, wallAlbedoTargets),
         liveSurfaceTargets: stats.liveTargets,
         totalSurfaceBakes: stats.totalBakes,
       };

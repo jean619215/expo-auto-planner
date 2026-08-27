@@ -497,7 +497,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 3: 程序化 PBR 材質(地�
               id: "toolu_add_banner_1",
               name: "add_furniture",
               input: {
-                kind: "bannerStand",
+                code: "BNR-80-200",
                 center: { x: bannerCenterX, y: bannerCenterY },
                 rotationDeg: 0,
               },

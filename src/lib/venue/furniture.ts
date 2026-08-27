@@ -13,18 +13,6 @@ import {
   type PlanPoint,
 } from "./plan";
 
-/** AI 工具參數用的舊分類名。除了 `KIND_TO_CODE` 之外不該有新的使用者。 */
-export type FurnitureKind =
-  | "table"
-  | "chair"
-  | "cabinet"
-  | "counter"
-  | "bannerStand"
-  | "sofa"
-  | "podium"
-  | "plant"
-  | "display";
-
 /**
  * 放好的一件家具。
  *
@@ -39,33 +27,6 @@ export interface FurnitureItem {
   code: string;
   center: PlanPoint; // meters
   rotationDeg: number; // 0 = unrotated, normalized to [0, 360)
-}
-
-/**
- * AI 工具參數的 `kind` 對到目錄代碼。
- *
- * T3 已把所有繪製路徑改成以 `code` 索引,這張表**只剩 AI 這一條進入路徑**在用
- * (`src/lib/ai-panel/actions.ts` 的 schema 仍是 kind 聯集)。T4 把 schema 換成
- * 自由字串代碼 + 伺服器端驗證之後,這張表與 `FurnitureKind` 一起刪除。
- *
- * 注意:這裡回傳 `string`,而 `FurnitureKind` 本身也是字串聯集 —— 把 kind 直接
- * 傳給吃 `code: string` 的函式,型別完全合法但執行期查不到。轉換不能省。
- */
-export const KIND_TO_CODE: Record<FurnitureKind, string> = {
-  table: "TBL-120-75",
-  chair: "CHR-45-90",
-  cabinet: "CAB-60-180",
-  counter: "CNT-100-110",
-  bannerStand: "BNR-80-200",
-  sofa: "SOF-180-80",
-  podium: "POD-60-110",
-  plant: "PLT-50-120",
-  display: "DSP-100-160",
-};
-
-/** 舊 `kind` 對應的目錄代碼。 */
-export function codeForKind(kind: FurnitureKind): string {
-  return KIND_TO_CODE[kind];
 }
 
 function normalizeDeg(deg: number): number {

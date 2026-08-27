@@ -80,8 +80,8 @@ const GENERATE_PLAN_FIXTURE: MockResponse = {
           walls: [],
           columns: [],
           furniture: [
-            { kind: "table", center: { x: 22, y: 22 }, rotationDeg: 0 },
-            { kind: "table", center: { x: 26, y: 22 }, rotationDeg: 0 },
+            { code: "TBL-120-75", center: { x: 22, y: 22 }, rotationDeg: 0 },
+            { code: "TBL-120-75", center: { x: 26, y: 22 }, rotationDeg: 0 },
           ],
         },
       },

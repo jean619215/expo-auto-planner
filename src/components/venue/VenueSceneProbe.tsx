@@ -21,6 +21,9 @@ export const VENUE_COLUMN_NAME = "venue-column";
 /** 家具 mesh 的命名前綴(見 whiteboxFurniture.tsx)。 */
 export const FURNITURE_NAME_PREFIX = "venue-furniture-";
 
+/** 家具**單件**根 group 的命名前綴(見 whiteboxFurniture.tsx)。 */
+export const FURNITURE_ITEM_NAME_PREFIX = "venue-item-";
+
 /** geometry 的三角面數(index 優先,否則用頂點數)。 */
 function triangleCount(geometry: THREE.BufferGeometry): number {
   const index = geometry.getIndex();
@@ -35,6 +38,13 @@ export interface WhiteboxFurnitureShape {
   code: string;
   /** 這個品項被拆成幾個零件 mesh。 */
   partCount: number;
+  /**
+   * 這個代碼在場上有幾**件**(不是幾個零件)。
+   *
+   * 數的是場景圖裡的根 group,不是家具陣列的長度 —— 報價的逐件加總拿這個數字
+   * 交叉驗證,回音式的探針在那裡起不了作用。
+   */
+  instances: number;
   /** 零件三角面數總和。單一 box 是 12,所以 >12 就證明不是方塊了。 */
   triangles: number;
   /**
@@ -98,6 +108,14 @@ export default function VenueSceneProbe({ onReport }: VenueSceneProbeProps) {
       string,
       { min: [number, number, number]; max: [number, number, number] }
     >();
+    // 每個代碼的件數:先數根 group,再在下面併進各代碼的摘要裡。
+    const instances = new Map<string, number>();
+    scene.traverse((node) => {
+      if (!node.name.startsWith(FURNITURE_ITEM_NAME_PREFIX)) return;
+      const code = node.name.slice(FURNITURE_ITEM_NAME_PREFIX.length);
+      instances.set(code, (instances.get(code) ?? 0) + 1);
+    });
+
     scene.traverse((node) => {
       if (!(node instanceof THREE.Mesh)) return;
       if (!node.name.startsWith(FURNITURE_NAME_PREFIX)) return;
@@ -105,6 +123,7 @@ export default function VenueSceneProbe({ onReport }: VenueSceneProbeProps) {
       const existing = shapes.get(code) ?? {
         code,
         partCount: 0,
+        instances: 0,
         triangles: 0,
         sizeM: [0, 0, 0] as [number, number, number],
         hasMap: false,
@@ -141,6 +160,7 @@ export default function VenueSceneProbe({ onReport }: VenueSceneProbeProps) {
       shapes.set(code, {
         code,
         partCount: existing.partCount + 1,
+        instances: instances.get(code) ?? 0,
         triangles: existing.triangles + triangleCount(node.geometry),
         sizeM,
         hasMap: existing.hasMap || material?.map != null,

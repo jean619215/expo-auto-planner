@@ -94,6 +94,10 @@ const ADD_CHAIR_FIXTURE: MockResponse = {
         type: "tool_use",
         id: "toolu_add_chair_1",
         name: "add_furniture",
+        // T4 起 schema 吃目錄代碼。這個 fixture、`src/lib/ai/tools.ts` 的
+        // schema、`PlanEditor` 的 handler 三者必須同時是同一種形狀 —— T3 只改
+        // 了這裡,結果 handler 拿到 undefined、丟例外、整個 applyActions 掛掉,
+        // 而測試只說「找不到 ai-action-summary」,指不到真正的原因。
         input: { code: "CHR-45-90", center: { x: 24, y: 24 }, rotationDeg: 0 },
       },
     ],
@@ -243,7 +247,7 @@ test.describe("AiPanel 跨步驟常駐 - AC7/AC6 手動 3D + AI 互不覆蓋、c
     await expect(editor.stepPreview).toBeVisible();
 
     // 手動在 3D 內放置一件家具(桌子)。
-    await page.getByTestId("furniture-place-TBL-120-75").click();
+    await editor.pickCatalogItem("TBL-120-75");
     const center = await canvasCenter(page);
     await clickFloor(page, center);
     await expect(editor.scene).toHaveAttribute(

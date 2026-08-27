@@ -54,14 +54,12 @@ import {
   type WallSegment,
 } from "@/lib/venue/plan";
 import {
-  codeForKind,
   furnitureFootprintM,
   translateFurniture,
   type FurnitureItem,
 } from "@/lib/venue/furniture";
 import {
   catalogItem,
-  requireCatalogItem,
   subCategoryLabel,
 } from "@/lib/venue/catalog";
 import type {
@@ -83,10 +81,16 @@ import {
   DEFAULT_SURFACE_SELECTION,
   FLOOR_PRESETS,
   WALL_PRESETS,
-  floorPreset,
-  wallPreset,
+  normalizeSurfaceSelection,
+  pruneWallOverrides,
+  wallPresetIdFor,
+  withWallOverride,
   type SurfaceSelection,
 } from "@/lib/venue/surfacePresets";
+import {
+  EMPTY_SURFACE_UPLOADS,
+  type SurfaceUploads,
+} from "./SurfaceMaterials";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -285,10 +289,9 @@ export default function PlanEditor() {
   // 使用者上傳的材質圖。刻意只活在瀏覽器裡:blob URL,不進存檔、不上傳
   // 後端、重整就沒了 —— 這一輪的需求是「上傳材質來預覽」,持久化另立
   // story(需要新的上傳 API、檔案驗證、RLS 與配額)。
-  const [surfaceUploads, setSurfaceUploads] = useState<{
-    floor: string | null;
-    wall: string | null;
-  }>({ floor: null, wall: null });
+  const [surfaceUploads, setSurfaceUploads] = useState<SurfaceUploads>(
+    EMPTY_SURFACE_UPLOADS,
+  );
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [customBooth, setCustomBooth] = useState({
     w: String(DEFAULT_BOOTH.w),
@@ -441,7 +444,9 @@ export default function PlanEditor() {
       furniture,
       venueSizeM: planArea.widthM,
       wallHeightM,
-      surfaces,
+      // 存檔前丟掉已刪除的牆留下的覆寫 —— 否則存檔會慢慢累積查不到對象的
+      // 設定,而 dirty 判定(序列化比對)也會因為這些幽靈欄位而誤報。
+      surfaces: pruneWallOverrides(surfaces, walls.map((wall) => wall.id)),
     };
   }
 
@@ -464,7 +469,11 @@ export default function PlanEditor() {
       columns?: Column[];
       furniture?: FurnitureItem[];
       wallHeightM?: number;
-      surfaces?: SurfaceSelection;
+      surfaces?: {
+        floor?: string;
+        wall?: string;
+        wallOverrides?: Record<string, string>;
+      };
     };
     const loadedPolygon = rawPlan.polygon ?? DEFAULT_FLOOR;
     const loadedWalls = rawPlan.walls ?? [];
@@ -473,12 +482,14 @@ export default function PlanEditor() {
     // 缺欄位的舊存檔一律回預設牆高 —— 決議是舊檔作廢、不寫遷移,但讀到
     // 舊檔也不該炸,clampWallHeight 對 undefined 會回 DEFAULT_WALL_HEIGHT_M。
     const loadedWallHeightM = clampWallHeight(rawPlan.wallHeightM as number);
-    // 缺欄位或存了不存在的 preset id 時,floorPreset/wallPreset 會回第一個
-    // 選項,所以這裡不需要額外的驗證分支。
-    const loadedSurfaces: SurfaceSelection = {
-      floor: floorPreset(rawPlan.surfaces?.floor ?? "").id,
-      wall: wallPreset(rawPlan.surfaces?.wall ?? "").id,
-    };
+    // 缺欄位或存了不存在的 preset id 時,normalizeSurfaceSelection 會回第一個
+    // 選項,所以這裡不需要額外的驗證分支。逐面牆的覆寫(T9)再過一次 prune:
+    // 存檔裡可能留著已經不存在的牆,那些設定沒有對象,留著只會在下一次畫牆
+    // 撞上同一個 id 時冒出來歷不明的材質。
+    const loadedSurfaces = pruneWallOverrides(
+      normalizeSurfaceSelection(rawPlan.surfaces ?? {}),
+      loadedWalls.map((wall) => wall.id),
+    );
 
     setPolygon(loadedPolygon);
     setBoothBounds(floorBoundsM(loadedPolygon));
@@ -487,6 +498,9 @@ export default function PlanEditor() {
     setFurniture(loadedFurniture);
     setWallHeightM(loadedWallHeightM);
     setSurfaces(loadedSurfaces);
+    // 上一份圖的自訂圖不能跟著留下來:blob URL 綁的是上一份圖的牆 id,留著
+    // 會貼到剛讀進來、恰好同 id 的牆上。上傳本來就不進存檔(第二輪決議)。
+    setSurfaceUploads(EMPTY_SURFACE_UPLOADS);
     setSelectedObject(null);
     setSelectedVertex(null);
 
@@ -853,23 +867,29 @@ export default function PlanEditor() {
             w: c.w,
             h: c.h,
           }));
-          const generatedFurniture: FurnitureItem[] =
-            action.input.furniture.map((f) => {
-              // AI 的 schema 到 T4 才換成目錄代碼;在那之前這裡把 kind 轉過去。
-              const code = codeForKind(f.kind);
-              const entry = requireCatalogItem(code);
-              return {
-                id: createObjectId(),
-                code,
-                center: clampColumnCenter(
-                  snapPoint(f.center, planArea),
-                  entry.w,
-                  entry.d,
-                  planArea,
-                ),
-                rotationDeg: normalizeRotationDeg(f.rotationDeg),
-              };
+          // 目錄代碼是模型送來的自由字串(schema 不用 enum,理由見
+          // src/lib/ai/tools.ts)。查不到的代碼跳過該件、記下來,其餘照放 ——
+          // 一件寫錯不該讓整份配置生不出來。
+          const unknownCodes: string[] = [];
+          const generatedFurniture: FurnitureItem[] = [];
+          for (const f of action.input.furniture) {
+            const entry = catalogItem(f.code);
+            if (!entry) {
+              unknownCodes.push(f.code);
+              continue;
+            }
+            generatedFurniture.push({
+              id: createObjectId(),
+              code: entry.code,
+              center: clampColumnCenter(
+                snapPoint(f.center, planArea),
+                entry.w,
+                entry.d,
+                planArea,
+              ),
+              rotationDeg: normalizeRotationDeg(f.rotationDeg),
             });
+          }
           nextPolygon = floorPoints;
           nextWalls = generatedWalls;
           nextColumns = generatedColumns;
@@ -884,19 +904,32 @@ export default function PlanEditor() {
             parts.push(`${generatedColumns.length} 根柱子`);
           if (generatedFurniture.length > 0)
             parts.push(`${generatedFurniture.length} 件家具`);
+          const skipped =
+            unknownCodes.length > 0
+              ? `;${unknownCodes.length} 件家具的代碼不在目錄裡,已跳過(${unknownCodes.join("、")})`
+              : "";
           results.push({
             toolUseId: action.toolUseId,
             ok: true,
-            message: `已產生配置:${parts.join("、")}`,
+            message: `已產生配置:${parts.join("、")}${skipped}`,
           });
           break;
         }
         case "add_furniture": {
-          const code = codeForKind(action.input.kind);
-          const entry = requireCatalogItem(code);
+          // 代碼查不到就拒絕這一個 action,並繼續處理同一批的其他 action ——
+          // 與 move_item / remove_item 的「已跳過」模式一致。
+          const entry = catalogItem(action.input.code);
+          if (!entry) {
+            results.push({
+              toolUseId: action.toolUseId,
+              ok: false,
+              message: `代碼 ${action.input.code} 不在家具目錄裡,已跳過新增`,
+            });
+            break;
+          }
           const item: FurnitureItem = {
             id: createObjectId(),
-            code,
+            code: entry.code,
             center: clampColumnCenter(
               snapPoint(action.input.center, planArea),
               entry.w,
@@ -1230,6 +1263,37 @@ export default function PlanEditor() {
     setSurfaceUploads((prev) => {
       if (prev[surface]) URL.revokeObjectURL(prev[surface]!);
       return { ...prev, [surface]: null };
+    });
+  }
+
+  /** 某一面牆自己的自訂圖(T9)。驗證與釋放的規則與上面那組完全相同。 */
+  function handleWallSurfaceUpload(wallId: string, file: File | null) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setUploadError("只接受圖片檔");
+      return;
+    }
+    if (file.size > MAX_SURFACE_UPLOAD_BYTES) {
+      setUploadError("圖片超過 8MB");
+      return;
+    }
+    setUploadError(null);
+    setSurfaceUploads((prev) => {
+      if (prev.walls[wallId]) URL.revokeObjectURL(prev.walls[wallId]);
+      return {
+        ...prev,
+        walls: { ...prev.walls, [wallId]: URL.createObjectURL(file) },
+      };
+    });
+  }
+
+  function clearWallSurfaceUpload(wallId: string) {
+    setSurfaceUploads((prev) => {
+      if (!prev.walls[wallId]) return prev;
+      URL.revokeObjectURL(prev.walls[wallId]);
+      const walls = { ...prev.walls };
+      delete walls[wallId];
+      return { ...prev, walls };
     });
   }
 
@@ -2267,9 +2331,88 @@ export default function PlanEditor() {
                   </span>
                 )}
                 <span className="text-muted-foreground">
-                  柱子跟隨牆面材質;上傳的圖只當顏色用,不產生凹凸
+                  柱子跟隨預設牆面材質;上傳的圖只當顏色用,不產生凹凸
                 </span>
               </div>
+              {/*
+                逐面牆各自設定(T9)。**沒有牆時整段不渲染** —— 空的選單比沒有
+                選單更難懂:使用者會以為功能壞了,而不是「還沒畫牆」。
+              */}
+              {walls.length > 0 && (
+                <div
+                  data-testid="wall-surface-list"
+                  data-wall-count={walls.length}
+                  className="mb-2 flex flex-col gap-1 rounded-md border border-stone-300 bg-card px-2 py-1.5 text-xs"
+                >
+                  <span className="font-bold text-muted-foreground">
+                    個別牆面({walls.length} 面)
+                  </span>
+                  {walls.map((wall, index) => {
+                    const override = surfaces.wallOverrides[wall.id];
+                    const upload = surfaceUploads.walls[wall.id];
+                    return (
+                      <div
+                        key={wall.id}
+                        data-testid={`wall-surface-row-${index + 1}`}
+                        data-wall-id={wall.id}
+                        // 實際生效的款式 —— 有覆寫就是覆寫,沒有就是預設。
+                        // 這是**設定值**的回音,場景裡真正掛了什麼要問探針
+                        // (RefinedSceneProbe 的 walls)。
+                        data-wall-preset={wallPresetIdFor(surfaces, wall.id)}
+                        data-wall-upload={upload ? "upload" : ""}
+                        className="flex flex-wrap items-center gap-2"
+                      >
+                        <span className="w-12 text-muted-foreground">
+                          牆 {index + 1}
+                        </span>
+                        <select
+                          data-testid={`wall-surface-select-${index + 1}`}
+                          value={override ?? ""}
+                          onChange={(e) =>
+                            setSurfaces((prev) =>
+                              withWallOverride(
+                                prev,
+                                wall.id,
+                                e.target.value === "" ? null : e.target.value,
+                              ),
+                            )
+                          }
+                          className="rounded border border-stone-300 bg-card px-1 py-0.5 text-foreground"
+                        >
+                          <option value="">同預設</option>
+                          {WALL_PRESETS.map((preset) => (
+                            <option key={preset.id} value={preset.id}>
+                              {preset.label}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          data-testid={`wall-surface-upload-${index + 1}`}
+                          onChange={(e) =>
+                            handleWallSurfaceUpload(
+                              wall.id,
+                              e.target.files?.[0] ?? null,
+                            )
+                          }
+                          className="w-36 text-[11px]"
+                        />
+                        {upload && (
+                          <button
+                            type="button"
+                            data-testid={`wall-surface-upload-clear-${index + 1}`}
+                            onClick={() => clearWallSurfaceUpload(wall.id)}
+                            className="rounded border border-stone-300 px-1"
+                          >
+                            清除
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               <RefinedSceneLoader
                 polygon={polygon}
                 walls={walls}

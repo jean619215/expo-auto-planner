@@ -8,7 +8,6 @@ import {
   SUB_CATEGORIES,
   catalogItem,
 } from "../src/lib/venue/catalog";
-import { KIND_TO_CODE } from "../src/lib/venue/furniture";
 
 // 驗收閘:T2 家具目錄資料層(stories/venue-catalog-and-quote-draft.md)。
 //
@@ -43,8 +42,23 @@ test.describe("Furniture catalogue (T2)", () => {
 
     // 不是只數數量 —— 逐一確認舊的九種都找得到對應品項,否則「遷移」可能
     // 漏掉其中幾種而數量仍然湊得出來。
-    for (const [kind, code] of Object.entries(KIND_TO_CODE)) {
-      expect(catalogItem(code), `${kind} 對應的代碼 ${code} 不在目錄裡`).toBeTruthy();
+    //
+    // 清單寫死在測試裡。原本讀的是 `KIND_TO_CODE`,而 T4 把那張橋接表刪了;
+    // 就算它還在,讀實作的表也只能證明「表裡的代碼都在目錄裡」,證明不了
+    // 「舊的九種都遷過來了」—— 表本身少一筆就一起漏掉。
+    const MIGRATED_CODES = [
+      "TBL-120-75", // 桌子
+      "CHR-45-90", // 椅子
+      "CAB-60-180", // 櫃子
+      "CNT-100-110", // 櫃檯
+      "BNR-80-200", // 易拉寶
+      "SOF-180-80", // 沙發
+      "POD-60-110", // 講台
+      "PLT-50-120", // 植栽
+      "DSP-100-160", // 展示櫃
+    ];
+    for (const code of MIGRATED_CODES) {
+      expect(catalogItem(code), `${code} 不在目錄裡`).toBeTruthy();
     }
   });
 
@@ -153,7 +167,7 @@ test.describe("Furniture catalogue (T2)", () => {
     await editor.clickNextStep();
     await expect(editor.stepPreview).toBeVisible();
 
-    await page.getByTestId("furniture-place-TBL-120-75").click();
+    await editor.pickCatalogItem("TBL-120-75");
 
     // 重試放置:clickFloor 的時序問題偶爾讓第一次點擊打不到地板 mesh(見
     // clickFloor 的註解)。整套一起跑時機器較忙,三次不夠 —— 這一項要驗的是
