@@ -324,3 +324,4 @@ Format: `[ISO timestamp] | task: [task] | stage: [stage] | agent: [agent] | [sum
 [2026-08-26T18:40:00+08:00] | task: T9 四面牆各自貼圖 | stage: implement | agent: developer | 逐面牆材質:surfacePresets 加 wallOverrides + prune/normalize;surfaceTextures 拆 createBaker 並新增 bakeWallTextures(按款式烘);SurfaceMaterials 改成依貼圖指紋建材質;RefinedScene 逐面掛材質;探針逐面回報 materialUuid/mapUuid/albedoMean
 [2026-08-26T19:20:00+08:00] | task: T9 四面牆各自貼圖 | stage: playwright | agent: qa | venue-wall-groups.spec.ts 8 案例全綠;條件 2 第一次跑就抓到真缺陷(改甲牆會重建乙牆的材質物件),修正後通過;破壞驗證「兩組共用同一個材質物件」→ 條件 2 如期轉紅
 [2026-08-26T21:10:00+08:00] | task: T9 四面牆各自貼圖 | stage: complete | agent: qa | 全套回歸:免登入 35 支 spec 301 通過 0 失敗(109+91+101)。venue-surface-picker 快照斷言如預期轉紅(surfaces 多了 wallOverrides),改斷言不放寬比對。第三輪 T1–T9 全部完成
+[2026-08-27T15:00:00+08:00] | task: 第三輪收尾 | stage: complete | agent: claude | PR #15 已由使用者合進 docs/venue-catalog-and-quote(19 commits,44 檔,+4205/-385)。docs 分支現領先 master 36 個 commit 且 master 無獨有 commit。剩最後一步:整輪合回 master
