@@ -1,11 +1,11 @@
 {
-  "story_file": "stories/venue-catalog-and-quote-draft.md",
-  "story_title": "家具目錄與報價(第三輪)",
-  "task_index": 8,
-  "current_task": "[FRONTEND] T9 四面牆各自貼圖(逐面牆)",
+  "story_file": "stories/venue-previews-round4-draft.md",
+  "story_title": "目錄與材質的預覽(第四輪)",
+  "task_index": 0,
+  "current_task": "[FRONTEND] 目錄模型縮圖 + 材質樣式預覽(含側欄版面)",
   "task_type": "FRONTEND",
   "stage": "complete",
-  "next_task": "第三輪收尾:PR #15 已合進 docs/venue-catalog-and-quote(2026-08-27);剩把該分支合回 master",
+  "next_task": "待定;第三輪仍等 docs/venue-catalog-and-quote 合回 master",
   "iteration": {
     "review": 0,
     "qa": 0
@@ -24,5 +24,5 @@
     "qa_bugs_pending": false,
     "escalated": false
   },
-  "last_updated": "2026-08-27T15:00:00+08:00"
+  "last_updated": "2026-08-28T12:00:00+08:00"
 }

@@ -326,3 +326,4 @@ Format: `[ISO timestamp] | task: [task] | stage: [stage] | agent: [agent] | [sum
 [2026-08-26T21:10:00+08:00] | task: T9 四面牆各自貼圖 | stage: complete | agent: qa | 全套回歸:免登入 35 支 spec 301 通過 0 失敗(109+91+101)。venue-surface-picker 快照斷言如預期轉紅(surfaces 多了 wallOverrides),改斷言不放寬比對。第三輪 T1–T9 全部完成
 [2026-08-27T15:00:00+08:00] | task: 第三輪收尾 | stage: complete | agent: claude | PR #15 已由使用者合進 docs/venue-catalog-and-quote(19 commits,44 檔,+4205/-385)。docs 分支現領先 master 36 個 commit 且 master 無獨有 commit。剩最後一步:整輪合回 master
 [2026-08-27T17:30:00+08:00] | task: 第四輪 目錄與材質預覽 | stage: implement | agent: developer | 家具卡加模型縮圖、材質下拉選單換成縮圖格。共用單一離屏 renderer(一張卡一個 Canvas 會擠掉場景的 WebGL context);縮圖用與場景相同的幾何來源;材質縮圖打斜射光後才拍(只貼 albedo 會變平坦色塊)。新 spec venue-previews.spec.ts 8 案全綠
+[2026-08-28T12:00:00+08:00] | task: 第四輪 目錄與材質預覽 | stage: playwright | agent: qa | venue-previews 8 案全綠;破壞驗證(縮圖不看品項/款式)5 案轉紅含條件 2、6。材質控制項搬到左側欄後步驟 03 相關 26 案全綠。全套免登入 36 支 spec 309 通過 0 失敗
