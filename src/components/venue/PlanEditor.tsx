@@ -3,7 +3,13 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Arrow, Circle, Layer, Line, Rect, Stage, Text } from "react-konva";
 import type Konva from "konva";
-import { ZoomIn, ZoomOut, Maximize } from "lucide-react";
+import {
+  ZoomIn,
+  ZoomOut,
+  Maximize,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from "lucide-react";
 import {
   BOOTH_PRESETS,
   DEFAULT_BOOTH,
@@ -58,10 +64,7 @@ import {
   translateFurniture,
   type FurnitureItem,
 } from "@/lib/venue/furniture";
-import {
-  catalogItem,
-  subCategoryLabel,
-} from "@/lib/venue/catalog";
+import { catalogItem, subCategoryLabel } from "@/lib/venue/catalog";
 import type {
   AiAction,
   AiActionResult,
@@ -70,10 +73,7 @@ import type {
 import { fromStoredConversation } from "@/lib/ai-panel/messages";
 import type { ChatTurn } from "./AiPanel";
 import AiPanel from "./AiPanel";
-import PlanSlotsDialog, {
-  type LoadedPlan,
-  type Slot,
-} from "./PlanSlotsDialog";
+import PlanSlotsDialog, { type LoadedPlan, type Slot } from "./PlanSlotsDialog";
 import PlanToolbar, { segmentClassName, type EditorMode } from "./PlanToolbar";
 import VenueSceneLoader from "./VenueSceneLoader";
 import RefinedSceneLoader from "./RefinedSceneLoader";
@@ -87,10 +87,7 @@ import {
   withWallOverride,
   type SurfaceSelection,
 } from "@/lib/venue/surfacePresets";
-import {
-  EMPTY_SURFACE_UPLOADS,
-  type SurfaceUploads,
-} from "./SurfaceMaterials";
+import { EMPTY_SURFACE_UPLOADS, type SurfaceUploads } from "./SurfaceMaterials";
 import SurfacePicker, { SurfaceSwatch } from "./SurfacePicker";
 import { Button } from "@/components/ui/button";
 import {
@@ -268,7 +265,9 @@ export default function PlanEditor() {
    * 只在真正重新定義攤位時才更新(換 preset / 自訂尺寸 / 讀檔 / AI 產生),
    * 頂點的自由編輯則在那圈邊距內活動。
    */
-  const [boothBounds, setBoothBounds] = useState(() => floorBoundsM(DEFAULT_FLOOR));
+  const [boothBounds, setBoothBounds] = useState(() =>
+    floorBoundsM(DEFAULT_FLOOR),
+  );
   const [selectedVertex, setSelectedVertex] = useState<number | null>(null);
 
   const [mode, setMode] = useState<EditorMode>("select");
@@ -294,6 +293,8 @@ export default function PlanEditor() {
     EMPTY_SURFACE_UPLOADS,
   );
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // 步驟 03 的材質側欄開合。與步驟 02 的側欄一致:預設展開,收合後只留切換鈕。
+  const [refinedSidebarOpen, setRefinedSidebarOpen] = useState(true);
   const [customBooth, setCustomBooth] = useState({
     w: String(DEFAULT_BOOTH.w),
     h: String(DEFAULT_BOOTH.h),
@@ -414,7 +415,9 @@ export default function PlanEditor() {
     const pointer = stage?.getPointerPosition();
     if (!pointer) return;
     zoomTo(
-      e.evt.deltaY > 0 ? view.scale / WHEEL_SCALE_FACTOR : view.scale * WHEEL_SCALE_FACTOR,
+      e.evt.deltaY > 0
+        ? view.scale / WHEEL_SCALE_FACTOR
+        : view.scale * WHEEL_SCALE_FACTOR,
       pointer,
     );
   }
@@ -447,14 +450,20 @@ export default function PlanEditor() {
       wallHeightM,
       // 存檔前丟掉已刪除的牆留下的覆寫 —— 否則存檔會慢慢累積查不到對象的
       // 設定,而 dirty 判定(序列化比對)也會因為這些幽靈欄位而誤報。
-      surfaces: pruneWallOverrides(surfaces, walls.map((wall) => wall.id)),
+      surfaces: pruneWallOverrides(
+        surfaces,
+        walls.map((wall) => wall.id),
+      ),
     };
   }
 
   // 序列化比對,不做逐操作 dirty flag(取捨見 architect-plan.md D5)。僅在
   // 讀檔前呼叫;存檔不檢查。
   function isDirty(): boolean {
-    return serializePlanSnapshot(getSnapshot()) !== (savedBaseline ?? EMPTY_PLAN_BASELINE);
+    return (
+      serializePlanSnapshot(getSnapshot()) !==
+      (savedBaseline ?? EMPTY_PLAN_BASELINE)
+    );
   }
 
   // 讀檔套用(architect-plan.md D4)。呼叫時機為 PlanSlotsDialog 的
@@ -1054,9 +1063,7 @@ export default function PlanEditor() {
           break;
         }
         case "resize_floor": {
-          const points = action.input.points.map((p) =>
-            snapPoint(p, planArea),
-          );
+          const points = action.input.points.map((p) => snapPoint(p, planArea));
           if (points.length < MIN_FLOOR_VERTICES) {
             results.push({
               toolUseId: action.toolUseId,
@@ -1489,7 +1496,10 @@ export default function PlanEditor() {
                       step={0.5}
                       value={customBooth.w}
                       onChange={(e) =>
-                        setCustomBooth((prev) => ({ ...prev, w: e.target.value }))
+                        setCustomBooth((prev) => ({
+                          ...prev,
+                          w: e.target.value,
+                        }))
                       }
                       className="w-14 rounded border border-stone-300 bg-card px-1 py-0.5 text-right text-foreground"
                     />
@@ -1501,7 +1511,10 @@ export default function PlanEditor() {
                       step={0.5}
                       value={customBooth.h}
                       onChange={(e) =>
-                        setCustomBooth((prev) => ({ ...prev, h: e.target.value }))
+                        setCustomBooth((prev) => ({
+                          ...prev,
+                          h: e.target.value,
+                        }))
                       }
                       className="w-14 rounded border border-stone-300 bg-card px-1 py-0.5 text-right text-foreground"
                     />
@@ -1558,7 +1571,10 @@ export default function PlanEditor() {
                           }
                           onKeyDown={(e) => {
                             if (e.key !== "Enter") return;
-                            setColumnOffsetCm(side, e.currentTarget.valueAsNumber);
+                            setColumnOffsetCm(
+                              side,
+                              e.currentTarget.valueAsNumber,
+                            );
                           }}
                           className="w-20 rounded border border-stone-300 bg-card px-1 py-0.5 text-right text-foreground"
                         />
@@ -1569,7 +1585,8 @@ export default function PlanEditor() {
                       data-testid="column-offset-hint"
                       className="text-muted-foreground"
                     >
-                      輸入值不受 50cm 吸附限制;之後拖曳以 50cm 為單位移動,會保留這個尾數
+                      輸入值不受 50cm 吸附限制;之後拖曳以 50cm
+                      為單位移動,會保留這個尾數
                     </span>
                   </div>
                 )}
@@ -1677,7 +1694,9 @@ export default function PlanEditor() {
                           x={px.x}
                           y={px.y}
                           radius={6}
-                          fill={selectedVertex === index ? "#1F4E79" : "#ffffff"}
+                          fill={
+                            selectedVertex === index ? "#1F4E79" : "#ffffff"
+                          }
                           stroke="#1F4E79"
                           strokeWidth={2}
                           hitStrokeWidth={16}
@@ -1692,7 +1711,9 @@ export default function PlanEditor() {
                           }}
                           onDragMove={(e) => handleVertexDragMove(index, e)}
                           onDragEnd={(e) => handleVertexDragEnd(index, e)}
-                          onContextMenu={(e) => handleVertexContextMenu(index, e)}
+                          onContextMenu={(e) =>
+                            handleVertexContextMenu(index, e)
+                          }
                         />
                       );
                     })}
@@ -1811,7 +1832,10 @@ export default function PlanEditor() {
                                 suppressObjectClickRef.current = false;
                                 return;
                               }
-                              setSelectedObject({ type: "column", id: column.id });
+                              setSelectedObject({
+                                type: "column",
+                                id: column.id,
+                              });
                               setSelectedVertex(null);
                             }}
                             onTap={() => {
@@ -1819,7 +1843,10 @@ export default function PlanEditor() {
                                 suppressObjectClickRef.current = false;
                                 return;
                               }
-                              setSelectedObject({ type: "column", id: column.id });
+                              setSelectedObject({
+                                type: "column",
+                                id: column.id,
+                              });
                               setSelectedVertex(null);
                             }}
                             onDragMove={(e) => handleColumnBodyDrag(column, e)}
@@ -1869,11 +1896,17 @@ export default function PlanEditor() {
                             stroke={itemColor}
                             strokeWidth={isSelected ? 3 : 1.5}
                             onClick={() => {
-                              setSelectedObject({ type: "furniture", id: item.id });
+                              setSelectedObject({
+                                type: "furniture",
+                                id: item.id,
+                              });
                               setSelectedVertex(null);
                             }}
                             onTap={() => {
-                              setSelectedObject({ type: "furniture", id: item.id });
+                              setSelectedObject({
+                                type: "furniture",
+                                id: item.id,
+                              });
                               setSelectedVertex(null);
                             }}
                           />
@@ -1884,7 +1917,9 @@ export default function PlanEditor() {
                               y={centerPx.y}
                               rotation={item.rotationDeg}
                               text={
-                                entry ? subCategoryLabel(entry.subCategory) : item.code
+                                entry
+                                  ? subCategoryLabel(entry.subCategory)
+                                  : item.code
                               }
                               fontSize={11}
                               fill={itemColor}
@@ -2020,28 +2055,48 @@ export default function PlanEditor() {
                         }[] = [
                           {
                             key: "left",
-                            points: [min.x, center.y, center.x - halfW, center.y],
+                            points: [
+                              min.x,
+                              center.y,
+                              center.x - halfW,
+                              center.y,
+                            ],
                             text: `${columnOffsetsCm.left}cm`,
                             labelX: (min.x + center.x - halfW) / 2,
                             labelY: center.y - 14,
                           },
                           {
                             key: "right",
-                            points: [center.x + halfW, center.y, max.x, center.y],
+                            points: [
+                              center.x + halfW,
+                              center.y,
+                              max.x,
+                              center.y,
+                            ],
                             text: `${columnOffsetsCm.right}cm`,
                             labelX: (center.x + halfW + max.x) / 2,
                             labelY: center.y - 14,
                           },
                           {
                             key: "top",
-                            points: [center.x, min.y, center.x, center.y - halfH],
+                            points: [
+                              center.x,
+                              min.y,
+                              center.x,
+                              center.y - halfH,
+                            ],
                             text: `${columnOffsetsCm.top}cm`,
                             labelX: center.x + 4,
                             labelY: (min.y + center.y - halfH) / 2,
                           },
                           {
                             key: "bottom",
-                            points: [center.x, center.y + halfH, center.x, max.y],
+                            points: [
+                              center.x,
+                              center.y + halfH,
+                              center.x,
+                              max.y,
+                            ],
                             text: `${columnOffsetsCm.bottom}cm`,
                             labelX: center.x + 4,
                             labelY: (center.y + halfH + max.y) / 2,
@@ -2171,7 +2226,9 @@ export default function PlanEditor() {
                           x={metersToPx(selectedWall.start, pxPerMeter).x}
                           y={metersToPx(selectedWall.start, pxPerMeter).y}
                           radius={6}
-                          fill={draggingHandle === "start" ? "#1F4E79" : "#ffffff"}
+                          fill={
+                            draggingHandle === "start" ? "#1F4E79" : "#ffffff"
+                          }
                           stroke="#1F4E79"
                           strokeWidth={2}
                           hitStrokeWidth={16}
@@ -2190,7 +2247,9 @@ export default function PlanEditor() {
                           x={metersToPx(selectedWall.end, pxPerMeter).x}
                           y={metersToPx(selectedWall.end, pxPerMeter).y}
                           radius={6}
-                          fill={draggingHandle === "end" ? "#1F4E79" : "#ffffff"}
+                          fill={
+                            draggingHandle === "end" ? "#1F4E79" : "#ffffff"
+                          }
                           stroke="#1F4E79"
                           strokeWidth={2}
                           hitStrokeWidth={16}
@@ -2257,168 +2316,219 @@ export default function PlanEditor() {
               >
                 上一步
               </Button>
-              <div
-                data-testid="surface-picker"
-                className="mb-2 flex flex-wrap items-start gap-4 rounded-md border border-stone-300 bg-card px-2 py-1.5 text-xs"
-              >
-                <SurfacePicker
-                  surface="floor"
-                  label="地板"
-                  presets={FLOOR_PRESETS}
-                  value={surfaces.floor}
-                  onChange={(floor) =>
-                    setSurfaces((prev) => ({ ...prev, floor }))
-                  }
-                />
-                <SurfacePicker
-                  surface="wall"
-                  label="預設牆面"
-                  presets={WALL_PRESETS}
-                  value={surfaces.wall}
-                  onChange={(wall) => setSurfaces((prev) => ({ ...prev, wall }))}
-                />
-                {(["floor", "wall"] as const).map((surface) => (
-                  <label
-                    key={surface}
-                    className="flex items-center gap-1 text-muted-foreground"
-                  >
-                    {surface === "floor" ? "自訂地板圖" : "自訂牆面圖"}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      data-testid={`surface-${surface}-upload`}
-                      onChange={(e) =>
-                        handleSurfaceUpload(surface, e.target.files?.[0] ?? null)
-                      }
-                      className="w-40 text-[11px]"
-                    />
-                    {surfaceUploads[surface] && (
-                      <button
-                        type="button"
-                        data-testid={`surface-${surface}-upload-clear`}
-                        onClick={() => clearSurfaceUpload(surface)}
-                        className="rounded border border-stone-300 px-1"
-                      >
-                        清除
-                      </button>
-                    )}
-                  </label>
-                ))}
-                {uploadError && (
-                  <span
-                    role="alert"
-                    data-testid="surface-upload-error"
-                    className="text-destructive"
-                  >
-                    {uploadError}
-                  </span>
-                )}
-                <span className="text-muted-foreground">
-                  柱子跟隨預設牆面材質;上傳的圖只當顏色用,不產生凹凸
-                </span>
-              </div>
               {/*
+                材質控制項移到左側欄(第四輪)—— 與步驟 02 的家具目錄同一個
+                位置與同一套開合行為。原本橫躺在場景上方,縮圖化之後那一條會
+                佔掉畫面高度,而使用者在步驟 03 要看的是場景本身。
+              */}
+              <div className="flex items-start gap-3">
+                <aside
+                  data-testid="refined-sidebar"
+                  data-open={refinedSidebarOpen}
+                  className={
+                    (refinedSidebarOpen ? "w-64" : "w-11") +
+                    " shrink-0 rounded-md border border-stone-300 bg-card p-2"
+                  }
+                >
+                  <button
+                    type="button"
+                    data-testid="refined-sidebar-toggle"
+                    aria-label={refinedSidebarOpen ? "收合側欄" : "展開側欄"}
+                    aria-expanded={refinedSidebarOpen}
+                    onClick={() => setRefinedSidebarOpen((prev) => !prev)}
+                    className="flex h-7 w-full items-center justify-center rounded text-blueprint hover:bg-blueprint-wash [&_svg]:size-4"
+                  >
+                    {refinedSidebarOpen ? (
+                      <PanelLeftClose />
+                    ) : (
+                      <PanelLeftOpen />
+                    )}
+                  </button>
+                  {refinedSidebarOpen && (
+                    <div className="mt-2 flex max-h-[460px] flex-col gap-3 overflow-y-auto pr-0.5">
+                      <div
+                        data-testid="surface-picker"
+                        className="flex flex-col gap-3 text-xs"
+                      >
+                        <SurfacePicker
+                          surface="floor"
+                          label="地板"
+                          presets={FLOOR_PRESETS}
+                          value={surfaces.floor}
+                          onChange={(floor) =>
+                            setSurfaces((prev) => ({ ...prev, floor }))
+                          }
+                        />
+                        <SurfacePicker
+                          surface="wall"
+                          label="預設牆面"
+                          presets={WALL_PRESETS}
+                          value={surfaces.wall}
+                          onChange={(wall) =>
+                            setSurfaces((prev) => ({ ...prev, wall }))
+                          }
+                        />
+                        {(["floor", "wall"] as const).map((surface) => (
+                          <label
+                            key={surface}
+                            className="flex items-center gap-1 text-muted-foreground"
+                          >
+                            {surface === "floor" ? "自訂地板圖" : "自訂牆面圖"}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              data-testid={`surface-${surface}-upload`}
+                              onChange={(e) =>
+                                handleSurfaceUpload(
+                                  surface,
+                                  e.target.files?.[0] ?? null,
+                                )
+                              }
+                              className="w-40 text-[11px]"
+                            />
+                            {surfaceUploads[surface] && (
+                              <button
+                                type="button"
+                                data-testid={`surface-${surface}-upload-clear`}
+                                onClick={() => clearSurfaceUpload(surface)}
+                                className="rounded border border-stone-300 px-1"
+                              >
+                                清除
+                              </button>
+                            )}
+                          </label>
+                        ))}
+                        {uploadError && (
+                          <span
+                            role="alert"
+                            data-testid="surface-upload-error"
+                            className="text-destructive"
+                          >
+                            {uploadError}
+                          </span>
+                        )}
+                        <span className="text-muted-foreground">
+                          柱子跟隨預設牆面材質;上傳的圖只當顏色用,不產生凹凸
+                        </span>
+                      </div>
+                      {/*
                 逐面牆各自設定(T9)。**沒有牆時整段不渲染** —— 空的選單比沒有
                 選單更難懂:使用者會以為功能壞了,而不是「還沒畫牆」。
               */}
-              {walls.length > 0 && (
-                <div
-                  data-testid="wall-surface-list"
-                  data-wall-count={walls.length}
-                  className="mb-2 flex flex-col gap-1 rounded-md border border-stone-300 bg-card px-2 py-1.5 text-xs"
-                >
-                  <span className="font-bold text-muted-foreground">
-                    個別牆面({walls.length} 面)
-                  </span>
-                  {walls.map((wall, index) => {
-                    const override = surfaces.wallOverrides[wall.id];
-                    const upload = surfaceUploads.walls[wall.id];
-                    return (
-                      <div
-                        key={wall.id}
-                        data-testid={`wall-surface-row-${index + 1}`}
-                        data-wall-id={wall.id}
-                        // 實際生效的款式 —— 有覆寫就是覆寫,沒有就是預設。
-                        // 這是**設定值**的回音,場景裡真正掛了什麼要問探針
-                        // (RefinedSceneProbe 的 walls)。
-                        data-wall-preset={wallPresetIdFor(surfaces, wall.id)}
-                        data-wall-upload={upload ? "upload" : ""}
-                        className="flex flex-wrap items-center gap-2"
-                      >
-                        <span className="w-12 text-muted-foreground">
-                          牆 {index + 1}
-                        </span>
-                        {/*
+                      {walls.length > 0 && (
+                        <div
+                          data-testid="wall-surface-list"
+                          data-wall-count={walls.length}
+                          className="flex flex-col gap-1 border-t border-stone-200 pt-2 text-xs"
+                        >
+                          <span className="font-bold text-muted-foreground">
+                            個別牆面({walls.length} 面)
+                          </span>
+                          {walls.map((wall, index) => {
+                            const override = surfaces.wallOverrides[wall.id];
+                            const upload = surfaceUploads.walls[wall.id];
+                            return (
+                              <div
+                                key={wall.id}
+                                data-testid={`wall-surface-row-${index + 1}`}
+                                data-wall-id={wall.id}
+                                // 實際生效的款式 —— 有覆寫就是覆寫,沒有就是預設。
+                                // 這是**設定值**的回音,場景裡真正掛了什麼要問探針
+                                // (RefinedSceneProbe 的 walls)。
+                                data-wall-preset={wallPresetIdFor(
+                                  surfaces,
+                                  wall.id,
+                                )}
+                                data-wall-upload={upload ? "upload" : ""}
+                                className="flex flex-wrap items-center gap-2"
+                              >
+                                <span className="w-12 text-muted-foreground">
+                                  牆 {index + 1}
+                                </span>
+                                {/*
                           這一面牆目前實際套用的款式縮圖。逐面牆的清單會隨牆數
                           長大,每一列都攤開六個縮圖會把面板撐爆 —— 所以列上只
                           放「現在是什麼」,要換仍然用選單。
                         */}
-                        <span className="size-7 shrink-0 overflow-hidden rounded-sm border border-stone-300">
-                          <SurfaceSwatch
-                            surface="wall"
-                            presetId={wallPresetIdFor(surfaces, wall.id)}
-                          />
-                        </span>
-                        <select
-                          data-testid={`wall-surface-select-${index + 1}`}
-                          value={override ?? ""}
-                          onChange={(e) =>
-                            setSurfaces((prev) =>
-                              withWallOverride(
-                                prev,
-                                wall.id,
-                                e.target.value === "" ? null : e.target.value,
-                              ),
-                            )
-                          }
-                          className="rounded border border-stone-300 bg-card px-1 py-0.5 text-foreground"
-                        >
-                          <option value="">同預設</option>
-                          {WALL_PRESETS.map((preset) => (
-                            <option key={preset.id} value={preset.id}>
-                              {preset.label}
-                            </option>
-                          ))}
-                        </select>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          data-testid={`wall-surface-upload-${index + 1}`}
-                          onChange={(e) =>
-                            handleWallSurfaceUpload(
-                              wall.id,
-                              e.target.files?.[0] ?? null,
-                            )
-                          }
-                          className="w-36 text-[11px]"
-                        />
-                        {upload && (
-                          <button
-                            type="button"
-                            data-testid={`wall-surface-upload-clear-${index + 1}`}
-                            onClick={() => clearWallSurfaceUpload(wall.id)}
-                            className="rounded border border-stone-300 px-1"
-                          >
-                            清除
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
+                                <span className="size-7 shrink-0 overflow-hidden rounded-sm border border-stone-300">
+                                  <SurfaceSwatch
+                                    surface="wall"
+                                    presetId={wallPresetIdFor(
+                                      surfaces,
+                                      wall.id,
+                                    )}
+                                  />
+                                </span>
+                                <select
+                                  data-testid={`wall-surface-select-${index + 1}`}
+                                  value={override ?? ""}
+                                  onChange={(e) =>
+                                    setSurfaces((prev) =>
+                                      withWallOverride(
+                                        prev,
+                                        wall.id,
+                                        e.target.value === ""
+                                          ? null
+                                          : e.target.value,
+                                      ),
+                                    )
+                                  }
+                                  className="rounded border border-stone-300 bg-card px-1 py-0.5 text-foreground"
+                                >
+                                  <option value="">同預設</option>
+                                  {WALL_PRESETS.map((preset) => (
+                                    <option key={preset.id} value={preset.id}>
+                                      {preset.label}
+                                    </option>
+                                  ))}
+                                </select>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  data-testid={`wall-surface-upload-${index + 1}`}
+                                  onChange={(e) =>
+                                    handleWallSurfaceUpload(
+                                      wall.id,
+                                      e.target.files?.[0] ?? null,
+                                    )
+                                  }
+                                  className="w-36 text-[11px]"
+                                />
+                                {upload && (
+                                  <button
+                                    type="button"
+                                    data-testid={`wall-surface-upload-clear-${index + 1}`}
+                                    onClick={() =>
+                                      clearWallSurfaceUpload(wall.id)
+                                    }
+                                    className="rounded border border-stone-300 px-1"
+                                  >
+                                    清除
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </aside>
+                <div className="min-w-0 flex-1">
+                  <RefinedSceneLoader
+                    polygon={polygon}
+                    walls={walls}
+                    columns={columns}
+                    furniture={furniture}
+                    venueSizeM={planArea.widthM}
+                    viewFitSizeM={sceneFit.sizeM}
+                    viewCenterM={sceneFit.center}
+                    surfaces={surfaces}
+                    surfaceUploads={surfaceUploads}
+                    wallHeightM={wallHeightM}
+                  />
                 </div>
-              )}
-              <RefinedSceneLoader
-                polygon={polygon}
-                walls={walls}
-                columns={columns}
-                furniture={furniture}
-                venueSizeM={planArea.widthM}
-                viewFitSizeM={sceneFit.sizeM}
-                viewCenterM={sceneFit.center}
-                surfaces={surfaces}
-                surfaceUploads={surfaceUploads}
-                wallHeightM={wallHeightM}
-              />
+              </div>
             </div>
           )}
         </div>
