@@ -1,6 +1,7 @@
 # 接續執行備忘 — story `stories/venue-catalog-and-quote-draft.md`(第三輪:家具目錄與報價)
 
-> 最後更新:2026-08-26(T1–T9 全部完成,第三輪待合回 master)。
+> 最後更新:2026-08-27(第三輪 T1–T9 完成並合進 docs 分支;第四輪「預覽」實作完成)。
+> 第四輪的決議與驗收在 `stories/venue-previews-round4-draft.md`。
 > 這份是「隔一陣子回來、或換一個 agent 接手要怎麼繼續」的入口。
 > 逐階段細節在 `.claude/pipeline/task-log.md`,決策與驗收條件在 story 檔本身。
 
