@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Archive,
   Armchair,
@@ -24,6 +24,7 @@ import {
   itemsInSubCategory,
   type CatalogItem,
 } from "@/lib/venue/catalog";
+import { furnitureThumbnail } from "./furnitureThumbnails";
 import { cn } from "@/lib/utils";
 
 /**
@@ -101,6 +102,62 @@ function matchesQuery(item: CatalogItem, query: string): boolean {
   );
 }
 
+/**
+ * 這個品項的模型縮圖。
+ *
+ * **只在卡片真的被渲染出來時才要圖** —— 目錄是三層收合的,沒展開的分支底下
+ * 那些卡片根本不存在,自然也不會排隊渲染。目錄長到上百項時,一次只會畫使用者
+ * 正在看的那幾張。渲染過的有快取,收合再展開不重畫。
+ */
+function useFurnitureThumbnail(item: CatalogItem): string | null {
+  const [src, setSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void furnitureThumbnail(item).then((dataUrl) => {
+      if (!cancelled) setSrc(dataUrl);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [item]);
+
+  return src;
+}
+
+/**
+ * 卡片左側的縮圖格。
+ *
+ * 還沒畫好(或畫不出來)時顯示一個灰底佔位符,而不是讓卡片高度先塌一次再撐
+ * 開 —— 目錄一次十幾張卡,那種跳動很明顯。縮圖失敗也不影響選取。
+ */
+function ItemThumbnail({ item, active }: { item: CatalogItem; active: boolean }) {
+  const src = useFurnitureThumbnail(item);
+  return (
+    <span
+      data-testid={`catalog-thumbnail-${item.code}`}
+      data-loaded={src ? "true" : "false"}
+      className={cn(
+        "flex size-12 shrink-0 items-center justify-center overflow-hidden rounded border",
+        active ? "border-blueprint-light bg-white/15" : "border-stone-200 bg-stone-50",
+      )}
+    >
+      {src ? (
+        // 目錄代碼已經在卡片標題與 title 屬性裡,縮圖是純裝飾 —— 給空 alt
+        // 讓螢幕閱讀器跳過,而不是把型號名念第二次。
+        //
+        // 用 <img> 而不是 next/image:這張圖是**執行期在瀏覽器裡畫出來的**
+        // data URL,沒有伺服器端可以最佳化的來源檔,next/image 的 loader
+        // 幫不上忙(也不接受 data:)。
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={src} alt="" className="size-full object-contain" />
+      ) : (
+        <Package className="size-4 text-muted-foreground/50" />
+      )}
+    </span>
+  );
+}
+
 function ItemCard({
   item,
   active,
@@ -119,33 +176,36 @@ function ItemCard({
       title={`${item.name} — ${priceText(item)}`}
       onClick={() => onPick(item.code)}
       className={cn(
-        "flex w-full flex-col items-start gap-0.5 rounded border px-2 py-1.5 text-left transition-colors",
+        "flex w-full items-center gap-2 rounded border px-2 py-1.5 text-left transition-colors",
         "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50 focus-visible:outline-none",
         active
           ? "border-blueprint bg-blueprint text-white"
           : "border-stone-300 bg-card text-foreground hover:bg-blueprint-wash",
       )}
     >
-      <span className="text-xs font-medium leading-tight">
-        {itemHeading(item)}
-      </span>
-      <span
-        data-testid={`catalog-dimension-${item.code}`}
-        className={cn(
-          "font-mono text-[10px] leading-tight",
-          active ? "text-blueprint-light" : "text-muted-foreground",
-        )}
-      >
-        {itemDimensionText(item)}
-      </span>
-      <span
-        data-testid={`catalog-price-${item.code}`}
-        className={cn(
-          "text-[11px] font-bold leading-tight",
-          active ? "text-white" : "text-blueprint",
-        )}
-      >
-        {priceText(item)}
+      <ItemThumbnail item={item} active={active} />
+      <span className="flex min-w-0 flex-col items-start gap-0.5">
+        <span className="text-xs font-medium leading-tight">
+          {itemHeading(item)}
+        </span>
+        <span
+          data-testid={`catalog-dimension-${item.code}`}
+          className={cn(
+            "font-mono text-[10px] leading-tight",
+            active ? "text-blueprint-light" : "text-muted-foreground",
+          )}
+        >
+          {itemDimensionText(item)}
+        </span>
+        <span
+          data-testid={`catalog-price-${item.code}`}
+          className={cn(
+            "text-[11px] font-bold leading-tight",
+            active ? "text-white" : "text-blueprint",
+          )}
+        >
+          {priceText(item)}
+        </span>
       </span>
     </button>
   );

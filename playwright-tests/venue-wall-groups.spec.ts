@@ -342,7 +342,7 @@ test.describe("Per-wall surface groups (T9)", () => {
     expect(await editor.wallSurfaceRowCount()).toBe(0);
     await expect(page.getByTestId("wall-surface-list")).toHaveCount(0);
     // 場景本身照常:預設牆面的選單仍在,地板材質也照樣烘好。
-    await expect(page.getByTestId("surface-wall-select")).toBeVisible();
+    await expect(page.getByTestId("surface-picker-wall")).toBeVisible();
     expect((await editor.refinedWallSurfaces()).length).toBe(0);
     expect(await editor.refinedMaterialsReady()).toBe(true);
   });
@@ -377,7 +377,7 @@ test.describe("Per-wall surface groups (T9)", () => {
     expect(afterOverride.columnAlbedo!.mean).toBeCloseTo(columnBefore, 6);
 
     // 改預設牆面:柱子跟著換(第二輪決議「柱子不給獨立選項」仍然成立)。
-    await page.getByTestId("surface-wall-select").selectOption(DARK);
+    await editor.selectWallSurface(DARK);
     await expect
       .poll(
         async () =>

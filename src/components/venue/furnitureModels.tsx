@@ -55,7 +55,7 @@ export interface FurnitureModelReport {
  * 座標約定與既有 box 版本一致:模型底面貼在 y=0,水平方向以原點為中心;
  * 呼叫端用 `position=[center.x, 0, center.y]` 擺放即可。
  */
-function normalizeModel(
+export function normalizeModel(
   source: THREE.Object3D,
   item: CatalogItem,
   rotationY: number

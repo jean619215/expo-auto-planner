@@ -1,6 +1,7 @@
 # 接續執行備忘 — story `stories/venue-catalog-and-quote-draft.md`(第三輪:家具目錄與報價)
 
-> 最後更新:2026-08-26(T1–T9 全部完成,第三輪待合回 master)。
+> 最後更新:2026-08-27(第三輪 T1–T9 完成並合進 docs 分支;第四輪「預覽」實作完成)。
+> 第四輪的決議與驗收在 `stories/venue-previews-round4-draft.md`。
 > 這份是「隔一陣子回來、或換一個 agent 接手要怎麼繼續」的入口。
 > 逐階段細節在 `.claude/pipeline/task-log.md`,決策與驗收條件在 story 檔本身。
 
@@ -12,7 +13,7 @@
 |---|---|
 | 第一輪(白模產生器)、第二輪(使用者回饋)| ✅ 已合併進 `master`(PR #12 / #13) |
 | 第三輪 T1–T9(全部)| ✅ 完成 |
-| 第三輪收尾 | ⬜ PR #15 合進 `docs/venue-catalog-and-quote`,整輪再一次合回 `master`(使用者定案)|
+| 第三輪收尾 | 🔵 PR #15 已合進 `docs/venue-catalog-and-quote`(2026-08-27)。剩最後一步:整輪合回 `master` |
 | 免登入 35 支 spec | ✅ 301 通過、0 失敗 |
 | `npm run lint` / `npx tsc --noEmit` | ✅ 乾淨 |
 
@@ -129,10 +130,14 @@ story 第六節只點名 `venue-objects` / `venue-zoom-pan`。T1 實際還動到
 
 ## 下一步:第三輪收尾
 
-程式的部分做完了(T1–T9)。剩下的是合併,使用者已定案:
+程式的部分做完了(T1–T9)。合併剩最後一步:
 
-1. PR #15(head = `claude/work-status-review-wg0mmu`)合進 `docs/venue-catalog-and-quote`。
-2. 整輪做完再一次把 `docs/venue-catalog-and-quote` 合回 `master`。
+1. ~~PR #15(head = `claude/work-status-review-wg0mmu`)合進 `docs/venue-catalog-and-quote`~~ ✅ 2026-08-27 已合併。
+2. ⬜ **把 `docs/venue-catalog-and-quote` 合回 `master`** —— 目前領先 master 36 個 commit,master 沒有任何 docs 分支沒有的東西(可直接快進)。
+
+**開新工作前先看分支起點**:`claude/work-status-review-wg0mmu` 的 PR 已經合併,
+不要再往它上面疊 commit。從最新的預設分支重開(同名沒關係):
+`git fetch origin master && git checkout -B claude/... origin/master`。
 
 下一輪要做什麼還沒定。story 第三節列著兩項刻意不做、但已經評估過的:
 **招牌/看板可上傳自己的圖**(對展場是剛需,但要先在目錄新增「平面看板」品項)、

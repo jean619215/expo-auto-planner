@@ -667,12 +667,42 @@ export class PlanEditorPage {
 
   // --- R6 步驟 03 材質選擇(feedback round 2, T8)------------------------
 
+  // 第四輪:下拉選單換成縮圖選擇器,所以是「點那一格」而不是 selectOption。
   async selectFloorSurface(id: string) {
-    await this.page.getByTestId("surface-floor-select").selectOption(id);
+    await this.page.getByTestId(`surface-option-floor-${id}`).click();
   }
 
   async selectWallSurface(id: string) {
-    await this.page.getByTestId("surface-wall-select").selectOption(id);
+    await this.page.getByTestId(`surface-option-wall-${id}`).click();
+  }
+
+  /** 某一組材質選擇器提供的款式數(縮圖格數)。 */
+  async surfaceOptionCount(surface: "floor" | "wall"): Promise<number> {
+    return this.page
+      .locator(`[data-testid^="surface-option-${surface}-"]`)
+      .count();
+  }
+
+  /** 某一組材質選擇器目前選中的款式 id。 */
+  async selectedSurface(surface: "floor" | "wall"): Promise<string> {
+    return (
+      (await this.page
+        .getByTestId(`surface-picker-${surface}`)
+        .getAttribute("data-selected")) ?? ""
+    );
+  }
+
+  /** 某一格縮圖的圖片來源(dataURL 或貼圖檔路徑)。 */
+  async surfaceSwatchSource(
+    surface: "floor" | "wall",
+    presetId: string,
+  ): Promise<string> {
+    return (
+      (await this.page
+        .getByTestId(`surface-swatch-${surface}-${presetId}`)
+        .first()
+        .getAttribute("src")) ?? ""
+    );
   }
 
   /** 步驟 03 場景實際套用中的地板材質 id。 */
