@@ -85,8 +85,14 @@ export default function SurfacePicker({
                 <SurfaceSwatch surface={surface} presetId={preset.id} />
               </span>
               <span
+                // 標籤換行而不是截斷:「木質地板(實拍)」被截成「木質地板…」
+                // 之後,與「木地板」在畫面上看起來是同一款。完整名稱本來就在
+                // title 裡,但那要 hover 才看得到 —— 選單上的東西應該直接讀得完。
+                //
+                // 同一列的格子高度會自動對齊(flex 的預設 align-items: stretch
+                // 讓同一行的項目等高),所以兩行標籤不會把那一列弄歪。
                 className={cn(
-                  "w-full truncate text-center text-[10px] leading-tight",
+                  "w-full text-center text-[10px] leading-tight break-words",
                   active ? "font-bold text-blueprint" : "text-muted-foreground",
                 )}
               >
