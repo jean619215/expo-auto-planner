@@ -26,14 +26,9 @@ test.describe("Step 03 surface picker (T8)", () => {
     const editor = new PlanEditorPage(page);
     await toRefined(editor);
 
-    const floorOptions = page.locator(
-      '[data-testid="surface-floor-select"] option',
-    );
-    const wallOptions = page.locator(
-      '[data-testid="surface-wall-select"] option',
-    );
-    expect(await floorOptions.count()).toBeGreaterThanOrEqual(3);
-    expect(await wallOptions.count()).toBeGreaterThanOrEqual(3);
+    // 第四輪把下拉選單換成縮圖選擇器,所以數的是縮圖格而不是 <option>。
+    expect(await editor.surfaceOptionCount("floor")).toBeGreaterThanOrEqual(3);
+    expect(await editor.surfaceOptionCount("wall")).toBeGreaterThanOrEqual(3);
   });
 
   test("換地板材質會真的重新烘焙", async ({ page }) => {

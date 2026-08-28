@@ -91,6 +91,7 @@ import {
   EMPTY_SURFACE_UPLOADS,
   type SurfaceUploads,
 } from "./SurfaceMaterials";
+import SurfacePicker, { SurfaceSwatch } from "./SurfacePicker";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -2258,42 +2259,24 @@ export default function PlanEditor() {
               </Button>
               <div
                 data-testid="surface-picker"
-                className="mb-2 flex flex-wrap items-center gap-3 rounded-md border border-stone-300 bg-card px-2 py-1.5 text-xs"
+                className="mb-2 flex flex-wrap items-start gap-4 rounded-md border border-stone-300 bg-card px-2 py-1.5 text-xs"
               >
-                <label className="flex items-center gap-1 text-muted-foreground">
-                  地板
-                  <select
-                    data-testid="surface-floor-select"
-                    value={surfaces.floor}
-                    onChange={(e) =>
-                      setSurfaces((prev) => ({ ...prev, floor: e.target.value }))
-                    }
-                    className="rounded border border-stone-300 bg-card px-1 py-0.5 text-foreground"
-                  >
-                    {FLOOR_PRESETS.map((preset) => (
-                      <option key={preset.id} value={preset.id}>
-                        {preset.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex items-center gap-1 text-muted-foreground">
-                  牆面
-                  <select
-                    data-testid="surface-wall-select"
-                    value={surfaces.wall}
-                    onChange={(e) =>
-                      setSurfaces((prev) => ({ ...prev, wall: e.target.value }))
-                    }
-                    className="rounded border border-stone-300 bg-card px-1 py-0.5 text-foreground"
-                  >
-                    {WALL_PRESETS.map((preset) => (
-                      <option key={preset.id} value={preset.id}>
-                        {preset.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <SurfacePicker
+                  surface="floor"
+                  label="地板"
+                  presets={FLOOR_PRESETS}
+                  value={surfaces.floor}
+                  onChange={(floor) =>
+                    setSurfaces((prev) => ({ ...prev, floor }))
+                  }
+                />
+                <SurfacePicker
+                  surface="wall"
+                  label="預設牆面"
+                  presets={WALL_PRESETS}
+                  value={surfaces.wall}
+                  onChange={(wall) => setSurfaces((prev) => ({ ...prev, wall }))}
+                />
                 {(["floor", "wall"] as const).map((surface) => (
                   <label
                     key={surface}
@@ -2364,6 +2347,17 @@ export default function PlanEditor() {
                       >
                         <span className="w-12 text-muted-foreground">
                           牆 {index + 1}
+                        </span>
+                        {/*
+                          這一面牆目前實際套用的款式縮圖。逐面牆的清單會隨牆數
+                          長大,每一列都攤開六個縮圖會把面板撐爆 —— 所以列上只
+                          放「現在是什麼」,要換仍然用選單。
+                        */}
+                        <span className="size-7 shrink-0 overflow-hidden rounded-sm border border-stone-300">
+                          <SurfaceSwatch
+                            surface="wall"
+                            presetId={wallPresetIdFor(surfaces, wall.id)}
+                          />
                         </span>
                         <select
                           data-testid={`wall-surface-select-${index + 1}`}

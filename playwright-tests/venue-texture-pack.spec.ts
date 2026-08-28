@@ -61,8 +61,9 @@ test.describe("Real texture packs (T10)", () => {
       .poll(() => editor.refinedLightingReady(), { timeout: 60_000 })
       .toBe(true);
 
+    // 第四輪:選項是縮圖格,標籤在格子裡的文字。
     const options = await page
-      .locator('[data-testid="surface-floor-select"] option')
+      .locator('[data-testid^="surface-option-floor-"]')
       .allTextContents();
     expect(options.join("|")).toContain("實拍");
 
