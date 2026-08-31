@@ -48,6 +48,7 @@ import {
   resizeColumnCorner,
   serializePlanSnapshot,
   snapPoint,
+  SNAP_M,
   translateColumn,
   translateWall,
   wallLengthM,
@@ -269,6 +270,28 @@ export default function PlanEditor() {
   // Stage 顯示層 transform(zoom/pan)— 純顯示,不落存檔、不進 plan.ts
   // 任何運算。與 pxPerMeter(公尺→世界像素)是相乘的兩層,互不覆蓋。
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
+  /**
+   * 標註文字的反向縮放。
+   *
+   * Stage 縮放時,圖形要跟著放大(那是使用者要的「比例的放大」),但**標註
+   * 文字應該維持螢幕尺寸** —— 尺寸數字、「地板」這種標籤放大之後會蓋住圖形,
+   * 縮小之後又看不清楚,兩端都變難用。這是製圖軟體的慣例。
+   *
+   * 做法是給文字節點一個 1/scale 的反向縮放:字形淨縮放為 1(維持
+   * fontSize 指定的螢幕像素),而 x/y 仍在世界座標、跟著圖形跑。
+   * offsetX/offsetY 在節點自己的座標系裡,同樣被反向縮放抵消,所以既有的
+   * 置中偏移不需要改。
+   */
+  const labelScale = 1 / view.scale;
+
+  // 線寬也維持螢幕尺寸(`strokeScaleEnabled={false}` 加在每個有 stroke 的
+  // 形狀上),控制點的圓圈同樣反向縮放。放大時線跟著變粗、控制點跟著變大,
+  // 圖面會愈放大愈糊,而且控制點會蓋住它自己要指的那個角落 —— 使用者放大
+  // 正是為了看清楚細節。這是製圖軟體的慣例:**幾何按比例,註記與操作點
+  // 維持定值**。
+  //
+  // 控制點反向縮放還有一個實際好處:點擊判定範圍也跟著維持螢幕尺寸,所以
+  // 縮到很小時控制點不會變得難以點中。
   // mousedown 命中判定(是否命中 Stage 本身 = 真正空白處)供 onDragStart
   // 判斷是否放行 Stage 的 pan drag。
   const panBlockedRef = useRef(false);
@@ -876,6 +899,18 @@ export default function PlanEditor() {
           const floorPoints = action.input.floor.map((p) =>
             snapPoint(p, planArea),
           );
+          // snapPoint 會把超出可編輯範圍的座標**夾到邊界上**,而那對多邊形是
+          // 毀滅性的:兩個都超界的頂點會被夾到同一個角落,形狀直接塌掉。
+          //
+          // 2026-08-31 實際發生:模型畫的正六角形頂點在 (24..36, 25..35),而
+          // 預設攤位的可編輯範圍只有 [15,28] —— 兩個頂點疊成一點,六角形變成
+          // 一個歪掉的三角形,而工具卻回報「已產生配置:6 頂點地板」。
+          // 使用者被告知成功了。
+          const clampedVertexCount = action.input.floor.filter(
+            (p, i) =>
+              Math.abs(p.x - floorPoints[i].x) > SNAP_M / 2 ||
+              Math.abs(p.y - floorPoints[i].y) > SNAP_M / 2,
+          ).length;
           if (floorPoints.length < MIN_FLOOR_VERTICES) {
             results.push({
               toolUseId: action.toolUseId,
@@ -939,10 +974,18 @@ export default function PlanEditor() {
             unknownCodes.length > 0
               ? `;${unknownCodes.length} 件家具的代碼不在目錄裡,已跳過(${unknownCodes.join("、")})`
               : "";
+          // 有頂點被夾就一定要說。模型看得到這句話,才有機會用範圍內的座標
+          // 重畫;使用者也才知道畫面上的形狀為什麼跟他要的不一樣。
+          const clamped =
+            clampedVertexCount > 0
+              ? `;⚠ ${clampedVertexCount} 個地板頂點超出可編輯範圍` +
+                `(x ${planArea.minX}~${planArea.maxX}、y ${planArea.minY}~${planArea.maxY} 公尺),` +
+                `已被移到邊界上,形狀與你的設計不同。請改用範圍內的座標重畫`
+              : "";
           results.push({
             toolUseId: action.toolUseId,
             ok: true,
-            message: `已產生配置:${parts.join("、")}${skipped}`,
+            message: `已產生配置:${parts.join("、")}${skipped}${clamped}`,
           });
           break;
         }
@@ -1641,6 +1684,7 @@ export default function PlanEditor() {
                 >
                   <Layer listening={false}>
                     <Rect
+                      strokeScaleEnabled={false}
                       x={planArea.minX * pxPerMeter}
                       y={planArea.minY * pxPerMeter}
                       width={planArea.widthM * pxPerMeter}
@@ -1651,6 +1695,7 @@ export default function PlanEditor() {
                     />
                     {gridLines.map((line) => (
                       <Line
+                        strokeScaleEnabled={false}
                         key={line.key}
                         points={line.points}
                         stroke={line.stroke}
@@ -1661,6 +1706,8 @@ export default function PlanEditor() {
                   <Layer listening={false}>
                     {majorTicks(planArea.minX, planArea.maxX).map((m) => (
                       <Text
+                        scaleX={labelScale}
+                        scaleY={labelScale}
                         key={`label-top-${m}`}
                         x={m * pxPerMeter + 2}
                         y={2}
@@ -1671,6 +1718,8 @@ export default function PlanEditor() {
                     ))}
                     {majorTicks(planArea.minY, planArea.maxY).map((m) => (
                       <Text
+                        scaleX={labelScale}
+                        scaleY={labelScale}
                         key={`label-left-${m}`}
                         x={2}
                         y={m * pxPerMeter + 2}
@@ -1680,6 +1729,7 @@ export default function PlanEditor() {
                       />
                     ))}
                     <Line
+                      strokeScaleEnabled={false}
                       points={[
                         8,
                         stagePx - 16,
@@ -1690,6 +1740,8 @@ export default function PlanEditor() {
                       strokeWidth={2}
                     />
                     <Text
+                      scaleX={labelScale}
+                      scaleY={labelScale}
                       x={8}
                       y={stagePx - 14}
                       text="5 公尺"
@@ -1699,6 +1751,7 @@ export default function PlanEditor() {
                   </Layer>
                   <Layer listening={mode === "select"}>
                     <Line
+                      strokeScaleEnabled={false}
                       points={polygonPx}
                       closed
                       fill="rgba(191, 219, 254, 0.5)"
@@ -1707,6 +1760,8 @@ export default function PlanEditor() {
                       onDblClick={handleEdgeDblClick}
                     />
                     <Text
+                      scaleX={labelScale}
+                      scaleY={labelScale}
                       listening={false}
                       x={floorCentroidPx.x}
                       y={floorCentroidPx.y}
@@ -1721,6 +1776,9 @@ export default function PlanEditor() {
                       const px = metersToPx(vertex, pxPerMeter);
                       return (
                         <Circle
+                          scaleX={labelScale}
+                          scaleY={labelScale}
+                          strokeScaleEnabled={false}
                           key={index}
                           x={px.x}
                           y={px.y}
@@ -1757,6 +1815,8 @@ export default function PlanEditor() {
                       const midpointPx = metersToPx(midpoint, pxPerMeter);
                       return (
                         <Text
+                          scaleX={labelScale}
+                          scaleY={labelScale}
                           key={`edge-label-${index}`}
                           listening={false}
                           x={midpointPx.x + 4}
@@ -1790,6 +1850,7 @@ export default function PlanEditor() {
                       return (
                         <Fragment key={wall.id}>
                           <Rect
+                            strokeScaleEnabled={false}
                             name="object"
                             x={startPx.x}
                             y={startPx.y}
@@ -1822,6 +1883,8 @@ export default function PlanEditor() {
                           />
                           {lengthPx > 24 && (
                             <Text
+                              scaleX={labelScale}
+                              scaleY={labelScale}
                               listening={false}
                               x={wallMidPx.x}
                               y={wallMidPx.y}
@@ -1847,6 +1910,7 @@ export default function PlanEditor() {
                       return (
                         <Fragment key={column.id}>
                           <Rect
+                            strokeScaleEnabled={false}
                             name="object"
                             x={centerPx.x}
                             y={centerPx.y}
@@ -1885,6 +1949,8 @@ export default function PlanEditor() {
                           />
                           {widthPx > 20 && heightPx > 14 && (
                             <Text
+                              scaleX={labelScale}
+                              scaleY={labelScale}
                               listening={false}
                               x={centerPx.x}
                               y={centerPx.y}
@@ -1914,6 +1980,7 @@ export default function PlanEditor() {
                       return (
                         <Fragment key={item.id}>
                           <Rect
+                            strokeScaleEnabled={false}
                             name="object"
                             x={centerPx.x}
                             y={centerPx.y}
@@ -1943,6 +2010,8 @@ export default function PlanEditor() {
                           />
                           {widthPx > 20 && heightPx > 14 && (
                             <Text
+                              scaleX={labelScale}
+                              scaleY={labelScale}
                               listening={false}
                               x={centerPx.x}
                               y={centerPx.y}
@@ -1986,6 +2055,9 @@ export default function PlanEditor() {
                           draggingColumnCorner.y === corner.y;
                         return (
                           <Circle
+                            scaleX={labelScale}
+                            scaleY={labelScale}
+                            strokeScaleEnabled={false}
                             key={`corner-${corner.x}-${corner.y}`}
                             name="object"
                             x={cornerPx.x}
@@ -2039,6 +2111,8 @@ export default function PlanEditor() {
                         );
                         return (
                           <Text
+                            scaleX={labelScale}
+                            scaleY={labelScale}
                             listening={false}
                             x={
                               columnCenterPx.x +
@@ -2138,6 +2212,7 @@ export default function PlanEditor() {
                             {dims.map((dim) => (
                               <Fragment key={dim.key}>
                                 <Arrow
+                                  strokeScaleEnabled={false}
                                   listening={false}
                                   points={dim.points}
                                   pointerAtBeginning
@@ -2148,6 +2223,8 @@ export default function PlanEditor() {
                                   strokeWidth={1}
                                 />
                                 <Text
+                                  scaleX={labelScale}
+                                  scaleY={labelScale}
                                   listening={false}
                                   x={dim.labelX}
                                   y={dim.labelY}
@@ -2173,6 +2250,7 @@ export default function PlanEditor() {
                       return (
                         <Fragment>
                           <Arrow
+                            strokeScaleEnabled={false}
                             listening={false}
                             points={[min.x, min.y - 18, max.x, min.y - 18]}
                             pointerAtBeginning
@@ -2183,6 +2261,8 @@ export default function PlanEditor() {
                             strokeWidth={1}
                           />
                           <Text
+                            scaleX={labelScale}
+                            scaleY={labelScale}
                             listening={false}
                             x={(min.x + max.x) / 2}
                             y={min.y - 32}
@@ -2191,6 +2271,7 @@ export default function PlanEditor() {
                             fill={DIMENSION_COLOR}
                           />
                           <Arrow
+                            strokeScaleEnabled={false}
                             listening={false}
                             points={[max.x + 18, min.y, max.x + 18, max.y]}
                             pointerAtBeginning
@@ -2201,6 +2282,8 @@ export default function PlanEditor() {
                             strokeWidth={1}
                           />
                           <Text
+                            scaleX={labelScale}
+                            scaleY={labelScale}
                             listening={false}
                             x={max.x + 22}
                             y={(min.y + max.y) / 2}
@@ -2223,6 +2306,8 @@ export default function PlanEditor() {
                         );
                         return (
                           <Text
+                            scaleX={labelScale}
+                            scaleY={labelScale}
                             listening={false}
                             x={wallMidPx.x + 6}
                             y={wallMidPx.y - 16}
@@ -2234,6 +2319,7 @@ export default function PlanEditor() {
                       })()}
                     {draftWall && (
                       <Rect
+                        strokeScaleEnabled={false}
                         listening={false}
                         x={metersToPx(draftWall.start, pxPerMeter).x}
                         y={metersToPx(draftWall.start, pxPerMeter).y}
@@ -2253,6 +2339,9 @@ export default function PlanEditor() {
                     {selectedWall && (
                       <>
                         <Circle
+                          scaleX={labelScale}
+                          scaleY={labelScale}
+                          strokeScaleEnabled={false}
                           name="object"
                           x={metersToPx(selectedWall.start, pxPerMeter).x}
                           y={metersToPx(selectedWall.start, pxPerMeter).y}
@@ -2274,6 +2363,9 @@ export default function PlanEditor() {
                           }}
                         />
                         <Circle
+                          scaleX={labelScale}
+                          scaleY={labelScale}
+                          strokeScaleEnabled={false}
                           name="object"
                           x={metersToPx(selectedWall.end, pxPerMeter).x}
                           y={metersToPx(selectedWall.end, pxPerMeter).y}
@@ -2571,7 +2663,7 @@ export default function PlanEditor() {
           className={step === "refined" ? "hidden" : "contents"}
         >
           <AiPanel
-            plan={{ polygon, walls, columns, furniture }}
+            plan={{ polygon, walls, columns, furniture, area: planArea }}
             applyActions={applyActions}
             planId={currentPlanId}
             slot={currentSlot}
