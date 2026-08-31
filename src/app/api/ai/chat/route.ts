@@ -4,7 +4,7 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createAnthropicClient, AI_MODEL, AI_CHAT_COST } from "@/lib/ai/client";
 import { SYSTEM_PROMPT } from "@/lib/ai/system";
 import { AI_TOOLS } from "@/lib/ai/tools";
-import { deductPoints, getBalance } from "@/lib/points/ledger";
+import { deductPoints, getBalance, refundPoints } from "@/lib/points/ledger";
 import { PRIOR_IMAGE_PLACEHOLDER } from "@/lib/ai-panel/messages";
 
 const NOT_LOGGED_IN_ERROR = "請先登入";
@@ -19,8 +19,17 @@ const MAX_BODY_BYTES = 5 * 1024 * 1024;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// 取捨(phase 1):扣點在模型呼叫前;上游失敗回 502 但不退點,usage log 供
-// 人工補償。退點需要另一套冪等機制,等有實際需求再做。
+// 扣點在模型呼叫前(避免併發下的透支),但**上游失敗會退點**。
+//
+// 原本的取捨是「失敗不退,log 供人工補償」,理由是退點需要另一套冪等機制。
+// 那個理由後來不成立了:`refund` reason 進了 DB,而扣點的 refId 是每次請求
+// 新生的 uuid,`refund:{refId}` 天然唯一 —— unique constraint 就是完整的
+// 冪等機制。
+//
+// 促成改動的是一次真實事故(2026-08-28):Vercel 上 AI 設定有問題,使用者
+// 連送三次,每次扣 10 點、每次回 502,次數從 3 歸零而一張圖都沒產出。
+// 設定類錯誤現在更早擋下(見下方 createAnthropicClient 的位置),真正的
+// 上游失敗則退點。
 
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
@@ -88,6 +97,23 @@ export async function POST(request: Request) {
     }
   }
 
+  // 設定類錯誤(缺 ANTHROPIC_API_KEY)必須在扣點**之前**就擋掉。
+  //
+  // 這行原本在扣點之後、與模型呼叫寫在同一個 try 裡,結果是:金鑰沒設時每一次
+  // 送出都扣 10 點然後回 502,使用者眼睜睜看著次數歸零而一次服務都沒得到。
+  // 實際發生過(2026-08-28,Vercel 上 3 次 → 0 次)。這不是機率問題,是站方
+  // 設定錯誤時的**必然**行為,所以檢查要前移,而不是靠退點善後。
+  let anthropic: Anthropic;
+  try {
+    anthropic = createAnthropicClient();
+  } catch (err) {
+    console.error(
+      "POST /api/ai/chat 缺少 AI 設定(未扣點)",
+      err instanceof Error ? err.message : String(err),
+    );
+    return Response.json({ error: UPSTREAM_ERROR }, { status: 502 });
+  }
+
   const refId = `ai:${crypto.randomUUID()}`;
   let deduction;
   try {
@@ -112,10 +138,21 @@ export async function POST(request: Request) {
 
   let response: Anthropic.Message;
   try {
-    const anthropic = createAnthropicClient();
     response = await anthropic.messages.create({
       model: AI_MODEL,
-      max_tokens: 4096,
+      // 16000 不是隨手放大的。預設模型 claude-sonnet-5 **省略 `thinking` 參數
+      // 時跑的是 adaptive thinking**(思考預設開啟),而 `display` 預設是
+      // `omitted` —— 思考會吃掉 token 預算,但回傳的 thinking 區塊文字是空的。
+      //
+      // 原本的 4096 因此有一個很難查的失敗模式:複雜的要求(多邊形場地 + 牆 +
+      // 柱子 + 預算內的家具配置)可能在產出任何 text 或 tool_use **之前**就把
+      // 預算用光,回來的 content 只剩一個空的 thinking 區塊。前端 extractText
+      // 只挑 text 區塊,於是畫面上是一個空白的助理泡泡、沒有套用摘要 ——
+      // 看起來像「送出後什麼都沒發生」。2026-08-28 實際踩到。
+      //
+      // 16000 是 Anthropic 對非串流請求的建議值(夠大而不會撞到 SDK 的 HTTP
+      // 逾時)。真要再往上就得改成串流。
+      max_tokens: 16000,
       system: [
         {
           type: "text",
@@ -127,11 +164,21 @@ export async function POST(request: Request) {
       messages: messages as Anthropic.MessageParam[],
     });
   } catch (err) {
-    // 已扣點但未取得回應 — 不退點(見檔頭取捨),log 供補償。
+    // 已扣點但沒有交付服務 —— **退點**。
+    //
+    // 冪等鍵是 refund:{refId},而 refId 每次請求都是新的 uuid,所以一筆扣點
+    // 只可能被退一次;unique constraint 就是完整的冪等機制,不需要另外一套。
     const status = err instanceof Anthropic.APIError ? err.status : undefined;
+    const refunded = await safeRefund(userId, refId);
     console.error(
       "POST /api/ai/chat 上游呼叫失敗",
-      JSON.stringify({ userId, refId, status, error: err instanceof Error ? err.message : String(err) })
+      JSON.stringify({
+        userId,
+        refId,
+        status,
+        refunded,
+        error: err instanceof Error ? err.message : String(err),
+      })
     );
     // client 造成的上游 400(訊息格式/壞圖等)回 400 讓前端知道是請求問題,
     // 其餘(限流/過載/伺服器錯)一律 502。
@@ -150,6 +197,10 @@ export async function POST(request: Request) {
       inputTokens: response.usage.input_tokens,
       outputTokens: response.usage.output_tokens,
       cacheReadTokens: response.usage.cache_read_input_tokens ?? 0,
+      // 沒有這兩個欄位,「回了 200 但畫面沒反應」就查不出來 —— 那正是
+      // max_tokens 截斷的症狀,而它與「模型決定不呼叫工具」在 log 上長得一樣。
+      stopReason: response.stop_reason,
+      blockTypes: response.content.map((block) => block.type).join(","),
     })
   );
 
@@ -180,6 +231,30 @@ export async function POST(request: Request) {
     },
     { status: 200 }
   );
+}
+
+/**
+ * 退點,且**不讓退點失敗蓋掉原本的錯誤**。
+ *
+ * 使用者此刻要看到的是「AI 呼叫失敗」,不是「退點時 DB 也出問題」。退不成
+ * 就記進 log 讓人補 —— 那是原本整條路徑的行為,現在縮小成只在這個角落。
+ */
+async function safeRefund(userId: string, refId: string): Promise<string> {
+  try {
+    const result = await refundPoints({
+      userId,
+      amount: AI_CHAT_COST,
+      reason: "refund",
+      deductedRefId: refId,
+    });
+    return result.ok ? "refunded" : result.error;
+  } catch (err) {
+    console.error(
+      "POST /api/ai/chat 退點失敗(需人工補償)",
+      JSON.stringify({ userId, refId, error: err instanceof Error ? err.message : String(err) }),
+    );
+    return "failed";
+  }
 }
 
 async function safeBalance(userId: string): Promise<number | null> {

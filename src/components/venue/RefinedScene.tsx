@@ -107,6 +107,8 @@ function diagnosticsAttrs(diagnostics: RefinedDiagnostics | null): Record<string
     // AC2 按類別拆開的**件數**(不是 mesh 數 — 見 RefinedSceneProbe.tsx 的
     // 欄位註解:匯入模型後 mesh 數與家具件數已經不再相等)。
     "data-shadow-caster-wall-count": String(diagnostics.shadowCasterWallCount),
+    // 地面格線的實際位置(見 RefinedSceneProbe 的 GridReport)。
+    "data-grid": JSON.stringify(diagnostics.grid),
     "data-shadow-caster-column-count": String(diagnostics.shadowCasterColumnCount),
     "data-shadow-caster-furniture-count": String(
       diagnostics.shadowCasterFurnitureCount,
@@ -224,6 +226,8 @@ function RefinedSceneContent({
     [columns, wallHeightM],
   );
   const wallGeometries = useMeterUvBoxGeometries(wallSpecs);
+  // gridHelper 只吃正方形尺寸,格線維持 1m 一條(同步驟 02)。
+  const gridSizeM = Math.ceil(venueSizeM);
   const columnGeometries = useMeterUvBoxGeometries(columnSpecs);
 
   return (
@@ -245,9 +249,18 @@ function RefinedSceneContent({
         maxDistance={150}
         target={[viewCenter.x, 0, viewCenter.y]}
       />
+      {/*
+        格線是地面參考,要跟著**場景**走,不是跟著世界原點。
+
+        原本是 `position=[venueSizeM/2, …]`,那預設了「場地從原點展開」——
+        第三輪 T1 把攤位錨到 BOOTH_ORIGIN(20,20)之後這個假設就不成立了:
+        預設 3×3 攤位的地板中心在 (21.5, 21.5),而格線被畫在 (6.5, 6.5),
+        兩者相距十幾公尺,畫面上就是「網格飄在遠處」。
+        步驟 02 當時改成以可編輯範圍為中心,這裡漏掉了。
+      */}
       <gridHelper
-        args={[venueSizeM, venueSizeM]}
-        position={[venueSizeM / 2, 0.01, venueSizeM / 2]}
+        args={[gridSizeM, gridSizeM]}
+        position={[viewCenter.x, 0.01, viewCenter.y]}
       />
       <FloorMesh polygon={polygon} material={surfaceMaterials.floor} />
       {walls.map((wall) => {
