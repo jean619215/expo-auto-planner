@@ -476,3 +476,96 @@ test.describe("Venue zoom/pan - 案10 網格隨縮放細分", () => {
     expect(await editor.gridLineCount()).toBeLessThan(120);
   });
 });
+
+// 案11:畫布跟著縮放延伸。
+//
+// 回饋原文:「模型外的畫布 可以依照用戶的放大縮小而改變嗎,就是縮小就延伸
+// 畫布範圍」。在此之前網格只畫在可編輯範圍(3×3 攤位是 13×13m)裡,縮小時
+// 那塊愈縮愈小,四周是一片空白 —— 圖紙看起來像浮在虛空中。
+//
+// 判斷**從 canvas 讀回實際像素**,不讀 data-*:要斷言「有沒有鋪滿」「範圍外
+// 是不是比較淡」,唯一算數的是螢幕上真的畫了什麼。
+test.describe("Venue zoom/pan - 案11 畫布跟著縮放延伸", () => {
+  test("每個縮放層級,畫布四角都有塗到底色(圖紙不會浮在空白裡)", async ({
+    page,
+  }) => {
+    const editor = new PlanEditorPage(page);
+    await editor.navigate();
+
+    const expectPainted = async (label: string) => {
+      for (const [i, px] of (await editor.backgroundCornerPixels()).entries()) {
+        // alpha=0 表示那個角落根本沒畫東西 —— 舊行為在預設縮放下就是這樣。
+        expect(px[3], `${label}:第 ${i} 個角落沒有塗到(alpha=${px[3]})`).toBe(
+          255,
+        );
+      }
+    };
+
+    await expectPainted("預設縮放");
+
+    for (let i = 0; i < 20; i++) {
+      await editor.clickZoomOut();
+    }
+    expect(await editor.stageScale()).toBeCloseTo(0.25, 2);
+    await expectPainted("縮到 25%");
+
+    for (let i = 0; i < 30; i++) {
+      await editor.clickZoomIn();
+    }
+    expect(await editor.stageScale()).toBeCloseTo(4, 2);
+    await expectPainted("放到 400%");
+  });
+
+  test("圖紙比範圍外亮,分界看得出來(不然使用者會以為外面也能擺)", async ({
+    page,
+  }) => {
+    const editor = new PlanEditorPage(page);
+    await editor.navigate();
+
+    const area = await editor.planArea();
+    const luma = (px: number[]) => (px[0] + px[1] + px[2]) / 3;
+
+    // 兩個取樣點都刻意避開整數公尺,才不會取在格線上。
+    const inside = await editor.backgroundPixelAtMeter({
+      x: area.minX + 0.25,
+      y: area.minY + 0.25,
+    });
+    const outside = await editor.backgroundPixelAtMeter({
+      x: area.minX - 0.75,
+      y: area.minY + 0.25,
+    });
+
+    expect(luma(inside), "圖紙應該接近純白").toBeGreaterThan(250);
+    // 差距要看得見。兩者若只差幾階,鋪上網格後圖紙的邊界等於消失。
+    expect(
+      luma(inside) - luma(outside),
+      `圖紙 ${luma(inside)} 與範圍外 ${luma(outside)} 的亮度差太小`,
+    ).toBeGreaterThan(6);
+  });
+
+  test("範圍外畫的是網格,不是一塊純色", async ({ page }) => {
+    const editor = new PlanEditorPage(page);
+    await editor.navigate();
+
+    const area = await editor.planArea();
+    // 圖紙左邊界外一段(4m 寬),橫著掃一排像素。
+    const row = await editor.backgroundRowLuma(
+      area.minY + 0.25,
+      area.minX - 5,
+      area.minX - 1,
+    );
+    expect(row.length).toBeGreaterThan(20);
+
+    const distinct = new Set(row);
+    // 純色底就只有一種值;有格線才會出現第二種(以上)。
+    expect(
+      distinct.size,
+      `範圍外只有 ${distinct.size} 種亮度,看起來是一塊純色而不是網格`,
+    ).toBeGreaterThan(1);
+
+    // 鋪滿畫布的那一份一定比只鋪圖紙的那一份多 —— 畫布本來就比圖紙大。
+    expect(await editor.canvasGridLineCount()).toBeGreaterThan(
+      await editor.gridLineCount(),
+    );
+  });
+});

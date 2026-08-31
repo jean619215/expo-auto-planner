@@ -191,10 +191,22 @@ function gridStepsFor(pxPerScreenMeter: number): {
   };
 }
 
+/**
+ * 網格的兩種色階。
+ *
+ * 可編輯範圍**之外**也畫網格(否則縮小時圖紙會浮在一片空白裡),但那塊放不了
+ * 東西 —— 顏色因此要更淡:「看得出是同一張方格紙」但「不會誤以為能擺在那裡」。
+ */
+type GridPalette = { minor: string; major: string };
+const GRID_PALETTE: GridPalette = { minor: "#e7e5e4", major: "#d6d3d1" };
+const CANVAS_GRID_PALETTE: GridPalette = { minor: "#e6e3e0", major: "#d8d4d0" };
+
 function buildGridLines(
   pxPerMeter: number,
   area: FloorBounds,
-  viewScale: number,
+  steps: { minor: number; major: number },
+  palette: GridPalette,
+  keyPrefix: string,
 ) {
   const lines: {
     key: string;
@@ -203,9 +215,7 @@ function buildGridLines(
     strokeWidth: number;
   }[] = [];
 
-  // 判斷依據是**螢幕上**的一公尺有多少像素 —— 也就是世界像素再乘上 Stage
-  // 的縮放。只看 pxPerMeter 的話縮放完全不會影響網格,等於沒做。
-  const { minor: minorM, major: majorM } = gridStepsFor(pxPerMeter * viewScale);
+  const { minor: minorM, major: majorM } = steps;
 
   const x0 = area.minX * pxPerMeter;
   const x1 = area.maxX * pxPerMeter;
@@ -221,9 +231,9 @@ function buildGridLines(
     const isMajor = Math.abs(m / majorM - Math.round(m / majorM)) < 1e-9;
     const pos = m * pxPerMeter;
     lines.push({
-      key: `v-${m}`,
+      key: `${keyPrefix}v-${m}`,
       points: [pos, y0, pos, y1],
-      stroke: isMajor ? "#d6d3d1" : "#e7e5e4",
+      stroke: isMajor ? palette.major : palette.minor,
       strokeWidth: isMajor ? 1.5 : 1,
     });
   }
@@ -236,14 +246,54 @@ function buildGridLines(
     const isMajor = Math.abs(m / majorM - Math.round(m / majorM)) < 1e-9;
     const pos = m * pxPerMeter;
     lines.push({
-      key: `h-${m}`,
+      key: `${keyPrefix}h-${m}`,
       points: [x0, pos, x1, pos],
-      stroke: isMajor ? "#d6d3d1" : "#e7e5e4",
+      stroke: isMajor ? palette.major : palette.minor,
       strokeWidth: isMajor ? 1.5 : 1,
     });
   }
 
   return lines;
+}
+
+/**
+ * 拖曳時的網格預留量,以「幾個視窗寬」計。
+ *
+ * 平移**只在放手時**寫回 `view`(拖曳過程由 Konva 自己搬 Stage,不進 React,
+ * 這是刻意的:每一幀都 setState 會讓整個編輯器重繪)。代價是拖曳中網格範圍
+ * 不會跟著長,拖到邊緣就會露出空白。多畫一圈視窗的量把這件事蓋掉 —— 單一
+ * 手勢很難拖超過一個視窗寬,放手後範圍也立刻重算。
+ */
+const CANVAS_PAN_BUFFER = 1;
+
+/**
+ * 目前**看得到**的世界範圍(公尺),外加拖曳預留量。
+ *
+ * 螢幕 → 世界的反變換:先扣掉 Stage 位移、除以縮放得到世界像素,再除以
+ * `pxPerMeter`。縮小時這塊會長大,網格因此跟著延伸 —— 這正是使用者要的
+ * 「縮小就延伸畫布範圍」,而不是讓圖紙浮在一片空白中間。
+ */
+function visibleAreaFor(
+  stagePx: number,
+  pxPerMeter: number,
+  view: { scale: number; x: number; y: number },
+): FloorBounds {
+  const toMeters = (screenPx: number, offset: number) =>
+    (screenPx - offset) / view.scale / pxPerMeter;
+  const minX = toMeters(0, view.x);
+  const maxX = toMeters(stagePx, view.x);
+  const minY = toMeters(0, view.y);
+  const maxY = toMeters(stagePx, view.y);
+  const padX = (maxX - minX) * CANVAS_PAN_BUFFER;
+  const padY = (maxY - minY) * CANVAS_PAN_BUFFER;
+  return {
+    minX: minX - padX,
+    maxX: maxX + padX,
+    minY: minY - padY,
+    maxY: maxY + padY,
+    widthM: maxX - minX + padX * 2,
+    heightM: maxY - minY + padY * 2,
+  };
 }
 
 /** 座標尺上的 5m 標籤刻度(世界座標整數公尺)。 */
@@ -472,9 +522,33 @@ export default function PlanEditor() {
       }),
     [boothBounds],
   );
+  // 判斷依據是**螢幕上**的一公尺有多少像素 —— 世界像素再乘上 Stage 縮放。
+  // 只看 pxPerMeter 的話縮放完全不會影響網格,等於沒做。
+  const gridSteps = useMemo(
+    () => gridStepsFor(pxPerMeter * view.scale),
+    [pxPerMeter, view.scale],
+  );
+  /** 目前看得到的世界範圍 —— 網格與底色鋪滿的依據,縮小時跟著長大。 */
+  const canvasArea = useMemo(
+    () => visibleAreaFor(stagePx, pxPerMeter, view),
+    [stagePx, pxPerMeter, view],
+  );
+  /** 可編輯範圍**之外**的淡色網格。 */
+  const canvasGridLines = useMemo(
+    () =>
+      buildGridLines(
+        pxPerMeter,
+        canvasArea,
+        gridSteps,
+        CANVAS_GRID_PALETTE,
+        "c-",
+      ),
+    [pxPerMeter, canvasArea, gridSteps],
+  );
+  /** 可編輯範圍內的網格。畫在圖紙底色之上,所以蓋過同位置的淡色線。 */
   const gridLines = useMemo(
-    () => buildGridLines(pxPerMeter, planArea, view.scale),
-    [pxPerMeter, planArea, view.scale],
+    () => buildGridLines(pxPerMeter, planArea, gridSteps, GRID_PALETTE, ""),
+    [pxPerMeter, planArea, gridSteps],
   );
   /**
    * 探針:網格在螢幕上的實際格距(px)。
@@ -1500,6 +1574,8 @@ export default function PlanEditor() {
       data-plan-area={JSON.stringify(planArea)}
       data-grid-line-count={gridLines.length}
       data-grid-minor-px={gridMinorPx}
+      data-canvas-grid-line-count={canvasGridLines.length}
+      data-canvas-area={JSON.stringify(canvasArea)}
       data-plan-surfaces={JSON.stringify(surfaces)}
       data-column-offsets-cm={
         columnOffsetsCm ? JSON.stringify(columnOffsetsCm) : undefined
@@ -1748,15 +1824,39 @@ export default function PlanEditor() {
                   onTouchEnd={handleStageMouseUp}
                 >
                   <Layer listening={false}>
+                    {/*
+                      圖紙外的畫布。縮小時 canvasArea 會長大,底色與淡網格
+                      跟著鋪滿 —— 圖紙不再浮在一片空白裡。畫在圖紙之前,
+                      所以圖紙的不透明底色會蓋掉範圍內的淡線。
+                    */}
+                    <Rect
+                      x={canvasArea.minX * pxPerMeter}
+                      y={canvasArea.minY * pxPerMeter}
+                      width={canvasArea.widthM * pxPerMeter}
+                      height={canvasArea.heightM * pxPerMeter}
+                      fill="#f4f3f1"
+                    />
+                    {canvasGridLines.map((line) => (
+                      <Line
+                        strokeScaleEnabled={false}
+                        key={line.key}
+                        points={line.points}
+                        stroke={line.stroke}
+                        strokeWidth={line.strokeWidth}
+                      />
+                    ))}
                     <Rect
                       strokeScaleEnabled={false}
                       x={planArea.minX * pxPerMeter}
                       y={planArea.minY * pxPerMeter}
                       width={planArea.widthM * pxPerMeter}
                       height={planArea.heightM * pxPerMeter}
-                      fill="#fafaf9"
+                      // 圖紙是白的、周圍是淺灰 —— 可編輯範圍與範圍外的分界
+                      // 靠這個色差撐著。周圍鋪上網格之後,原本的 #fafaf9
+                      // 與底色只差三階,圖紙的邊界等於消失了。
+                      fill="#ffffff"
                       stroke="#a8a29e"
-                      strokeWidth={1}
+                      strokeWidth={1.5}
                     />
                     {gridLines.map((line) => (
                       <Line
