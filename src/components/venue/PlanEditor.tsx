@@ -285,8 +285,13 @@ export default function PlanEditor() {
   const labelScale = 1 / view.scale;
 
   // 線寬也維持螢幕尺寸(`strokeScaleEnabled={false}` 加在每個有 stroke 的
-  // 形狀上)。放大時線跟著變粗,圖面會愈放大愈糊 —— 而使用者放大正是為了看
-  // 清楚細節。同標註文字,這是製圖軟體的慣例:**幾何按比例,註記維持定值**。
+  // 形狀上),控制點的圓圈同樣反向縮放。放大時線跟著變粗、控制點跟著變大,
+  // 圖面會愈放大愈糊,而且控制點會蓋住它自己要指的那個角落 —— 使用者放大
+  // 正是為了看清楚細節。這是製圖軟體的慣例:**幾何按比例,註記與操作點
+  // 維持定值**。
+  //
+  // 控制點反向縮放還有一個實際好處:點擊判定範圍也跟著維持螢幕尺寸,所以
+  // 縮到很小時控制點不會變得難以點中。
   // mousedown 命中判定(是否命中 Stage 本身 = 真正空白處)供 onDragStart
   // 判斷是否放行 Stage 的 pan drag。
   const panBlockedRef = useRef(false);
@@ -1771,6 +1776,8 @@ export default function PlanEditor() {
                       const px = metersToPx(vertex, pxPerMeter);
                       return (
                         <Circle
+                          scaleX={labelScale}
+                          scaleY={labelScale}
                           strokeScaleEnabled={false}
                           key={index}
                           x={px.x}
@@ -2048,6 +2055,8 @@ export default function PlanEditor() {
                           draggingColumnCorner.y === corner.y;
                         return (
                           <Circle
+                            scaleX={labelScale}
+                            scaleY={labelScale}
                             strokeScaleEnabled={false}
                             key={`corner-${corner.x}-${corner.y}`}
                             name="object"
@@ -2330,6 +2339,8 @@ export default function PlanEditor() {
                     {selectedWall && (
                       <>
                         <Circle
+                          scaleX={labelScale}
+                          scaleY={labelScale}
                           strokeScaleEnabled={false}
                           name="object"
                           x={metersToPx(selectedWall.start, pxPerMeter).x}
@@ -2352,6 +2363,8 @@ export default function PlanEditor() {
                           }}
                         />
                         <Circle
+                          scaleX={labelScale}
+                          scaleY={labelScale}
                           strokeScaleEnabled={false}
                           name="object"
                           x={metersToPx(selectedWall.end, pxPerMeter).x}
