@@ -182,3 +182,54 @@ test.describe("Catalogue and surface previews (round 4)", () => {
     expect(await editor.refinedSurfaceFloor()).toBe("concrete");
   });
 });
+
+// 地面格線的位置 —— 與預覽無關,但同屬「畫面上很明顯、測試卻看不到」這一類。
+//
+// 回報的 bug:步驟 03 的網格飄在離場地十幾公尺外。原因是格線以
+// `venueSizeM/2` 定位,那預設「場地從原點展開」,而第三輪 T1 把攤位錨到
+// BOOTH_ORIGIN(20,20)之後就不成立了。步驟 02 當時改對了,步驟 03 漏掉。
+//
+// 之所以能漏這麼久:**沒有任何斷言在看格線**。所以這裡補上。
+test.describe("Ground grid follows the venue", () => {
+  test("步驟 03 的格線畫在場地上,不是畫在世界原點", async ({ page }) => {
+    test.slow();
+    const editor = new PlanEditorPage(page);
+    await editor.navigate();
+    await editor.clickNextStep();
+    await editor.goToRefined();
+    await expect
+      .poll(() => editor.refinedLightingReady(), { timeout: 60_000 })
+      .toBe(true);
+
+    const grid = await editor.refinedGrid();
+    expect(grid, "探針沒有回報格線").not.toBeNull();
+
+    // 預設 3×3 攤位錨在 (20,20),地板中心是 (21.5, 21.5)。**寫死期望值**,
+    // 不拿場景回報的其他數字當基準 —— 那會讓實作與斷言一起漂移。
+    expect(grid!.centerX).toBeGreaterThan(18);
+    expect(grid!.centerX).toBeLessThan(25);
+    expect(grid!.centerZ).toBeGreaterThan(18);
+    expect(grid!.centerZ).toBeLessThan(25);
+
+    // 而且要真的蓋得住場地(可編輯範圍 13m),不是縮成一小格。
+    expect(grid!.sizeM).toBeGreaterThanOrEqual(10);
+  });
+
+  test("換一個大攤位,格線跟著移動與放大", async ({ page }) => {
+    test.slow();
+    const editor = new PlanEditorPage(page);
+    await editor.navigate();
+    await editor.applyCustomBoothSize(20, 20);
+    await editor.clickNextStep();
+    await editor.goToRefined();
+    await expect
+      .poll(() => editor.refinedLightingReady(), { timeout: 60_000 })
+      .toBe(true);
+
+    const grid = await editor.refinedGrid();
+    // 20×20 攤位錨在 (20,20) → 地板中心約 (30, 30),範圍 30m。
+    expect(grid!.centerX).toBeGreaterThan(25);
+    expect(grid!.centerZ).toBeGreaterThan(25);
+    expect(grid!.sizeM).toBeGreaterThanOrEqual(20);
+  });
+});

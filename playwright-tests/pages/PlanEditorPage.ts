@@ -765,6 +765,21 @@ export class PlanEditorPage {
     return JSON.parse(raw ?? "[]");
   }
 
+  /**
+   * 步驟 03 地面格線的實際世界位置與尺寸(公尺)。
+   *
+   * 從場景圖裡的 GridHelper 量的 —— 要驗「格線有沒有畫在場地上」就比這個,
+   * 不要比傳進去的 venueSizeM。
+   */
+  async refinedGrid(): Promise<{
+    centerX: number;
+    centerZ: number;
+    sizeM: number;
+  } | null> {
+    const raw = await this.refinedScene.getAttribute("data-grid");
+    return JSON.parse(raw ?? "null");
+  }
+
   /** 步驟 03 專屬程序化材質的累計烘焙次數(步驟 02 應維持 0)。 */
   async sceneSurfaceBakes(): Promise<number> {
     return Number(await this.scene.getAttribute("data-surface-bakes"));

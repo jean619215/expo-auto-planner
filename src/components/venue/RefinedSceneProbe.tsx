@@ -114,6 +114,13 @@ function measureHeightM(mesh: THREE.Object3D | null): number | null {
   return Number.isFinite(height) ? Math.round(height * 1000) / 1000 : null;
 }
 
+/** 地面格線的實際位置與尺寸(從場景圖讀,不是把 prop 印回來)。 */
+export interface GridReport {
+  centerX: number;
+  centerZ: number;
+  sizeM: number;
+}
+
 export interface RefinedDiagnostics {
   lightCount: number;
   shadowCastingLightCount: number;
@@ -140,6 +147,14 @@ export interface RefinedDiagnostics {
   wallMeshHeightM: number | null;
   columnMeshHeightM: number | null;
   shadowCasterFurnitureCount: number;
+  /**
+   * 地面格線的實際世界位置。
+   *
+   * 存在的理由:格線原本以 `venueSizeM/2` 定位,那預設「場地從原點展開」,
+   * 而攤位錨到 (20,20) 之後就變成畫在離地板十幾公尺外。那種壞法**畫面上很
+   * 明顯,測試卻完全看不到** —— 沒有任何斷言在看格線。
+   */
+  grid: GridReport | null;
   floorReceivesShadow: boolean;
   floorCastsShadow: boolean;
   shadowsEnabled: boolean;
@@ -363,6 +378,27 @@ function describeSurfaceMaterial(
  * 每個 render target 只讀一次:十面木紋牆共用一份材質,沒有理由讀十遍
  * (一次 readFullAlbedoStats 是整張 512² 的 readback)。
  */
+/**
+ * 地面格線的實際世界位置與涵蓋範圍。
+ *
+ * 尺寸從 geometry 的包圍盒量,不是讀建構參數 —— 讀參數的話「args 給對了但
+ * 位置錯了」這種壞法一樣看不出來,而那正是這支探針要抓的東西。
+ */
+function readGridReport(grid: THREE.GridHelper | null): GridReport | null {
+  if (!grid) return null;
+  grid.updateWorldMatrix(true, false);
+  const position = new THREE.Vector3();
+  grid.getWorldPosition(position);
+  if (!grid.geometry.boundingBox) grid.geometry.computeBoundingBox();
+  const box = grid.geometry.boundingBox;
+  const sizeM = box ? box.max.x - box.min.x : 0;
+  return {
+    centerX: Math.round(position.x * 100) / 100,
+    centerZ: Math.round(position.z * 100) / 100,
+    sizeM: Math.round(sizeM * 100) / 100,
+  };
+}
+
 function readWallSurfaceReports(
   gl: THREE.WebGLRenderer,
   wallMeshes: THREE.Mesh[],
@@ -796,8 +832,10 @@ export default function RefinedSceneProbe({
     };
     /** 場上所有牆 mesh(T9 要逐面回報,不是只看第一面)。 */
     const wallMeshes: THREE.Mesh[] = [];
+    let grid: THREE.GridHelper | null = null;
 
     scene.traverse((object) => {
+      if (object instanceof THREE.GridHelper && !grid) grid = object;
       if ((object as THREE.Light).isLight) {
         lightCount += 1;
         if (object.castShadow) {
@@ -897,6 +935,7 @@ export default function RefinedSceneProbe({
       shadowCasterFurnitureCount:
         shadowCasterFurnitureBoxCount +
         [...furnitureInstances.values()].reduce((sum, n) => sum + n, 0),
+      grid: readGridReport(grid),
       floorReceivesShadow: floor ? floor.receiveShadow : false,
       floorCastsShadow: floor ? floor.castShadow : false,
       shadowsEnabled: gl.shadowMap.enabled,
