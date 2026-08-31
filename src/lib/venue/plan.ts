@@ -32,7 +32,13 @@ export const VENUE_SIZE_M = 50;
 export const PLAN_AREA_MARGIN_M = 5;
 export const SNAP_M = 0.5;
 export const MIN_FLOOR_VERTICES = 3;
-export const GRID_MINOR_M = 1;
+/**
+ * 座標尺刻度與比例尺的間距(公尺)。
+ *
+ * 這是**固定**的參考單位,不隨縮放改變 —— 比例尺標著「5 公尺」,它就得一直
+ * 是 5 公尺。畫布上的網格間距則是隨縮放自動細分的(見 PlanEditor 的
+ * `gridStepsFor`),兩者不是同一件事,不要合併。
+ */
 export const GRID_MAJOR_M = 5;
 
 // 常見展位尺寸(公尺)。回饋:「展場絕大多數的都是 3*3 / 3*6 / 3*9 / 6*6」。
