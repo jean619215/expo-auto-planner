@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import type { Column, FloorPolygon, WallSegment } from "@/lib/venue/plan";
 import type { FurnitureItem } from "@/lib/venue/furniture";
-import { CATALOG } from "@/lib/venue/catalog";
+import { catalogueForModel } from "@/lib/venue/catalog";
 import {
   parseToolUse,
   type AiAction,
@@ -200,13 +200,9 @@ export default function AiPanel({
       walls: plan.walls,
       columns: plan.columns,
       furniture: plan.furniture,
-      catalogue: CATALOG.map((item) => ({
-        code: item.code,
-        name: item.name,
-        w: item.w,
-        d: item.d,
-        height3d: item.height3d,
-      })),
+      // 欄位定義在 catalogueForModel() —— 大小守衛的測試讀同一個函式,
+      // 兩邊不可能各自漂移。
+      catalogue: catalogueForModel(),
     });
     const textBlock: Anthropic.TextBlockParam = {
       type: "text",
