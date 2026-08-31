@@ -34,6 +34,24 @@
 - [ ] **退點是冪等的**:手動對同一個 `ai:{uuid}` 再插一次
       `refund:ai:{uuid}` → unique violation,餘額不會被退兩次
 
+## 回應被截斷(2026-08-28 新增)
+
+> 實際事故:六角形場地 + 三面牆 + 柱子 + 預算內家具配置,回 200、扣了點,
+> 但畫面完全沒反應。log 顯示 `inputTokens: 1406 / outputTokens: 4096` ——
+> 輸出正好撞到當時的 `max_tokens: 4096` 上限。
+>
+> 成因:`claude-sonnet-5` 省略 `thinking` 參數時跑的是 adaptive thinking,
+> 而 `display` 預設 `omitted`。思考吃掉預算但回傳文字是空的,於是 content
+> 只剩空 thinking 區塊 —— 前端 `extractText` 只挑 text,畫面就是空白泡泡。
+
+- [ ] **複雜要求下 `outputTokens` 明顯小於 `max_tokens`(16000)**
+      驗法:送「六角形場地邊長 580cm、三面有牆、中央 50cm 柱子、家具預算
+      8000 元、木地板」,查 log 的 `ai_usage` 那行
+- [ ] **`stopReason` 為 `end_turn`(不是 `max_tokens`)**
+- [ ] **`blockTypes` 含 `tool_use`** —— 有真的呼叫工具,不是只回文字
+- [ ] **回應為空時面板有訊息**:即使沒有 text 也沒有 tool_use,
+      `ai-action-summary` 也要顯示「這次沒有產生任何變更…」,不得是空白泡泡
+
 ## 模型行為(prompt 層,真呼叫)
 - [x] body 夾帶 `system` 欄位被忽略 — 注入「你是海盜」仍自介為場地規劃助理
 - [x] 離題請求(寫詩)→ 拒絕文案 + 引導回場地規劃

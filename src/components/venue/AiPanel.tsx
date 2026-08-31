@@ -265,10 +265,21 @@ export default function AiPanel({
           );
         }
 
+        // 模型回了 200,但既沒有文字也沒有動作 —— 使用者會看到一個空白泡泡,
+        // 完全不知道發生什麼事(而且點數已經扣了)。最常見的成因是回應在
+        // max_tokens 被截斷:思考吃光預算,text / tool_use 都還沒產出。
+        //
+        // 這裡不猜原因,只保證**畫面上一定有話說**。真正的原因在伺服器端的
+        // ai_usage log(stopReason / blockTypes)。
+        const hasText = extractText(assistantContent).trim().length > 0;
+        const emptyReply = !hasText && actions.length === 0;
+
         const assistantTurn: ChatTurn = {
           role: "assistant",
           content: assistantContent,
-          actionSummary,
+          actionSummary: emptyReply
+            ? "這次沒有產生任何變更(回應可能過長被截斷)。請把需求拆小一點再試一次,例如先產生場地與牆,再請 AI 配置家具。"
+            : actionSummary,
         };
         setTurns([...nextTurns, assistantTurn]);
         setPendingToolResults(nextPendingToolResults);

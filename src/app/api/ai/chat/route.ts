@@ -140,7 +140,19 @@ export async function POST(request: Request) {
   try {
     response = await anthropic.messages.create({
       model: AI_MODEL,
-      max_tokens: 4096,
+      // 16000 不是隨手放大的。預設模型 claude-sonnet-5 **省略 `thinking` 參數
+      // 時跑的是 adaptive thinking**(思考預設開啟),而 `display` 預設是
+      // `omitted` —— 思考會吃掉 token 預算,但回傳的 thinking 區塊文字是空的。
+      //
+      // 原本的 4096 因此有一個很難查的失敗模式:複雜的要求(多邊形場地 + 牆 +
+      // 柱子 + 預算內的家具配置)可能在產出任何 text 或 tool_use **之前**就把
+      // 預算用光,回來的 content 只剩一個空的 thinking 區塊。前端 extractText
+      // 只挑 text 區塊,於是畫面上是一個空白的助理泡泡、沒有套用摘要 ——
+      // 看起來像「送出後什麼都沒發生」。2026-08-28 實際踩到。
+      //
+      // 16000 是 Anthropic 對非串流請求的建議值(夠大而不會撞到 SDK 的 HTTP
+      // 逾時)。真要再往上就得改成串流。
+      max_tokens: 16000,
       system: [
         {
           type: "text",
@@ -185,6 +197,10 @@ export async function POST(request: Request) {
       inputTokens: response.usage.input_tokens,
       outputTokens: response.usage.output_tokens,
       cacheReadTokens: response.usage.cache_read_input_tokens ?? 0,
+      // 沒有這兩個欄位,「回了 200 但畫面沒反應」就查不出來 —— 那正是
+      // max_tokens 截斷的症狀,而它與「模型決定不呼叫工具」在 log 上長得一樣。
+      stopReason: response.stop_reason,
+      blockTypes: response.content.map((block) => block.type).join(","),
     })
   );
 
