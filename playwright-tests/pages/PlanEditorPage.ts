@@ -850,6 +850,17 @@ export class PlanEditorPage {
     return Number(raw);
   }
 
+  /**
+   * 網格在**螢幕上**的實際格距(px),從畫出去的格線量得。
+   *
+   * 這是判斷「放大時網格有沒有跟著細分」的依據:世界座標的格距會變(1m→0.5m),
+   * 但螢幕上的格距應該維持在一個窄帶裡。
+   */
+  async gridMinorPx(): Promise<number> {
+    const raw = await this.editor.getAttribute("data-grid-minor-px");
+    return Number(raw);
+  }
+
   /** 確認對話框上顯示的「會超出場地的件數」。 */
   async boothOutsideCount(): Promise<number> {
     const raw = await this.boothSizeConfirmDialog.getAttribute(

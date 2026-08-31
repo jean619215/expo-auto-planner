@@ -389,3 +389,90 @@ test.describe("Venue zoom/pan - 案9 存檔的 venueSizeM 跟著攤位 + 舊檔�
     expect(plan.venueSizeM).toBe(20);
   });
 });
+
+// 案10:網格隨縮放細分。
+//
+// 回饋原文:「我想要放大 他的藍圖隔線不會變鬆 而是能有更細的網格」。
+// 在此之前格距在**世界座標**固定 1m —— 放大 4 倍,螢幕上的格子就變成 64px
+// 一格,愈放大愈鬆;縮到 25% 則擠成 4px 一片灰。製圖軟體的做法是讓螢幕上的
+// 格子維持在一個區間,不夠細就自動細分。
+//
+// 判斷讀 `data-grid-minor-px` —— 它是從**畫出去的那一份格線**量的相鄰間距,
+// 不是 `gridStepsFor()` 的參數回音。把 buildGridLines 的 viewScale 拿掉(退回
+// 舊行為)這兩項都會紅。
+test.describe("Venue zoom/pan - 案10 網格隨縮放細分", () => {
+  // 螢幕格距的可接受區間。下限是 MIN_GRID_PX(12px,再細就擠成灰);上限是
+  // 階梯本身的後果 —— 相鄰兩階最多差 2.5 倍(2m→5m),所以 12×2.5=30,再加
+  // 上「最細只到 SNAP_M=0.5m」的天花板(4 倍縮放下 32px)。
+  const MIN_PX = 12;
+  const MAX_PX = 33;
+
+  test("放大 4 倍:世界格距變細(1m→0.5m),螢幕格距沒有跟著撐開", async ({
+    page,
+  }) => {
+    const editor = new PlanEditorPage(page);
+    await editor.navigate();
+
+    const ppm = await editor.pxPerMeter();
+    const baseScreenPx = await editor.gridMinorPx();
+    const baseWorldM = baseScreenPx / ppm;
+    // 預設縮放維持現行的 1m 網格 —— 這條同時守著「別為了放大時更細,
+    // 把平常的網格換粗了」。
+    expect(baseWorldM).toBeCloseTo(1, 6);
+
+    for (let i = 0; i < 20; i++) {
+      await editor.clickZoomIn();
+    }
+    const scale = await editor.stageScale();
+    expect(scale).toBeCloseTo(4, 2);
+
+    const zoomedScreenPx = await editor.gridMinorPx();
+    const zoomedWorldM = zoomedScreenPx / (ppm * scale);
+
+    // 世界格距真的細分了(而不是靠螢幕格距的巧合)。
+    expect(zoomedWorldM).toBeLessThan(baseWorldM);
+    expect(zoomedWorldM).toBeCloseTo(0.5, 6);
+
+    // 舊行為在這裡是 1m × 16px × 4 = 64px。
+    expect(zoomedScreenPx).toBeLessThanOrEqual(MAX_PX);
+    expect(zoomedScreenPx).toBeGreaterThanOrEqual(MIN_PX);
+  });
+
+  test("整個縮放範圍(25%–400%)螢幕格距都待在同一個窄帶裡", async ({
+    page,
+  }) => {
+    const editor = new PlanEditorPage(page);
+    await editor.navigate();
+
+    const measured: { scale: number; px: number }[] = [];
+    for (let i = 0; i < 20; i++) {
+      await editor.clickZoomOut();
+    }
+    expect(await editor.stageScale()).toBeCloseTo(0.25, 2);
+    measured.push({ scale: 0.25, px: await editor.gridMinorPx() });
+
+    // 由下限一路點回上限,沿途取樣。
+    for (let i = 0; i < 30; i++) {
+      await editor.clickZoomIn();
+      measured.push({
+        scale: await editor.stageScale(),
+        px: await editor.gridMinorPx(),
+      });
+    }
+    expect(measured[measured.length - 1].scale).toBeCloseTo(4, 2);
+
+    for (const sample of measured) {
+      expect(
+        sample.px,
+        `縮放 ${sample.scale.toFixed(2)}x 時螢幕格距 ${sample.px.toFixed(1)}px 落在窄帶外`,
+      ).toBeGreaterThanOrEqual(MIN_PX);
+      expect(
+        sample.px,
+        `縮放 ${sample.scale.toFixed(2)}x 時螢幕格距 ${sample.px.toFixed(1)}px 落在窄帶外`,
+      ).toBeLessThanOrEqual(MAX_PX);
+    }
+
+    // 格線條數也不能因此爆炸 —— 細分是為了看得清楚,不是為了畫幾千條線。
+    expect(await editor.gridLineCount()).toBeLessThan(120);
+  });
+});

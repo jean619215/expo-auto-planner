@@ -17,7 +17,6 @@ import {
   DEFAULT_WALL_HEIGHT_M,
   EMPTY_PLAN_BASELINE,
   GRID_MAJOR_M,
-  GRID_MINOR_M,
   MIN_FLOOR_VERTICES,
   planAreaFor,
   VENUE_SIZE_M,
@@ -151,7 +150,52 @@ type WizardStep = "edit" | "preview" | "refined";
  * 5 的倍數上 —— 攤位錨在 20m,邊距 5m,minX 是 15,兩者剛好一致;之後邊距
  * 若改成非整數,粗線仍然對得上公尺刻度。
  */
-function buildGridLines(pxPerMeter: number, area: FloorBounds) {
+/**
+ * 網格的細分階梯(公尺)。**最細到 `SNAP_M`(0.5m)為止** —— 再細下去畫出來
+ * 的格線對不到任何可以吸附的位置,那是在騙人:使用者會以為自己能對到那一格。
+ */
+const GRID_STEPS_M = [SNAP_M, 1, 2, 5, 10, 25, 50];
+
+/**
+ * 一格在螢幕上至少要幾像素。低於這個值格線就擠成一片灰。
+ *
+ * 12px 是挑出來的,不是隨手取的:預設縮放下畫布 800px 對 50m,一公尺剛好
+ * 16px —— 門檻必須低於 16,**預設畫面才會維持現行的 1m/5m 網格**(門檻取
+ * 18 會讓預設就跳成 2m 格,那是把「放大時更細」換成「平常變粗」)。同時要
+ * 夠高,0.5m 格才不會在 1 倍附近就擠出來:12px 對應放大 1.5 倍才啟用。
+ */
+const MIN_GRID_PX = 12;
+
+/**
+ * 目前縮放層級該用的網格間距。
+ *
+ * 沒有這個的話,格線間距在**世界座標**是固定的 1m —— 放大兩倍,螢幕上的格子
+ * 就變兩倍大,網格因此愈放大愈鬆、參考價值愈低;縮小時反過來擠成一片灰。
+ * 製圖軟體的做法是讓**螢幕上的格子大小維持在一個區間**,放大時自動細分。
+ *
+ * 挑階梯裡第一個「在螢幕上夠大」的間距。粗線用階梯上再高一階,兩者的比例
+ * 因此隨縮放改變(1m/5m、0.5m/1m 都可能),但視覺節奏維持一致。
+ */
+function gridStepsFor(pxPerScreenMeter: number): {
+  minor: number;
+  major: number;
+} {
+  const minorIndex = GRID_STEPS_M.findIndex(
+    (step) => step * pxPerScreenMeter >= MIN_GRID_PX,
+  );
+  // 全部都太小(縮到極限)時退回最粗的一階,而不是畫出幾千條線。
+  const index = minorIndex === -1 ? GRID_STEPS_M.length - 1 : minorIndex;
+  return {
+    minor: GRID_STEPS_M[index],
+    major: GRID_STEPS_M[Math.min(index + 2, GRID_STEPS_M.length - 1)],
+  };
+}
+
+function buildGridLines(
+  pxPerMeter: number,
+  area: FloorBounds,
+  viewScale: number,
+) {
   const lines: {
     key: string;
     points: number[];
@@ -159,17 +203,22 @@ function buildGridLines(pxPerMeter: number, area: FloorBounds) {
     strokeWidth: number;
   }[] = [];
 
+  // 判斷依據是**螢幕上**的一公尺有多少像素 —— 也就是世界像素再乘上 Stage
+  // 的縮放。只看 pxPerMeter 的話縮放完全不會影響網格,等於沒做。
+  const { minor: minorM, major: majorM } = gridStepsFor(pxPerMeter * viewScale);
+
   const x0 = area.minX * pxPerMeter;
   const x1 = area.maxX * pxPerMeter;
   const y0 = area.minY * pxPerMeter;
   const y1 = area.maxY * pxPerMeter;
 
   for (
-    let m = Math.ceil(area.minX / GRID_MINOR_M) * GRID_MINOR_M;
+    let m = Math.ceil(area.minX / minorM) * minorM;
     m <= area.maxX;
-    m += GRID_MINOR_M
+    m += minorM
   ) {
-    const isMajor = m % GRID_MAJOR_M === 0;
+    // 浮點數:0.5 的倍數累加會產生 20.999999…,直接取模會判錯粗線。
+    const isMajor = Math.abs(m / majorM - Math.round(m / majorM)) < 1e-9;
     const pos = m * pxPerMeter;
     lines.push({
       key: `v-${m}`,
@@ -180,11 +229,11 @@ function buildGridLines(pxPerMeter: number, area: FloorBounds) {
   }
 
   for (
-    let m = Math.ceil(area.minY / GRID_MINOR_M) * GRID_MINOR_M;
+    let m = Math.ceil(area.minY / minorM) * minorM;
     m <= area.maxY;
-    m += GRID_MINOR_M
+    m += minorM
   ) {
-    const isMajor = m % GRID_MAJOR_M === 0;
+    const isMajor = Math.abs(m / majorM - Math.round(m / majorM)) < 1e-9;
     const pos = m * pxPerMeter;
     lines.push({
       key: `h-${m}`,
@@ -424,9 +473,24 @@ export default function PlanEditor() {
     [boothBounds],
   );
   const gridLines = useMemo(
-    () => buildGridLines(pxPerMeter, planArea),
-    [pxPerMeter, planArea],
+    () => buildGridLines(pxPerMeter, planArea, view.scale),
+    [pxPerMeter, planArea, view.scale],
   );
+  /**
+   * 探針:網格在螢幕上的實際格距(px)。
+   *
+   * 量的是**畫出去的那一份** `gridLines` —— 取相鄰兩條垂直線的世界座標距離,
+   * 再乘上 Stage 縮放。不回報 `gridStepsFor()` 的輸入或輸出:那只會確認我們
+   * 把常數傳對了,不會確認畫面真的細分了(AGENTS.md:探針不得是 prop 的回音)。
+   */
+  const gridMinorPx = useMemo(() => {
+    const xs = gridLines
+      .filter((line) => line.key.startsWith("v-"))
+      .map((line) => line.points[0])
+      .sort((a, b) => a - b);
+    if (xs.length < 2) return 0;
+    return (xs[1] - xs[0]) * view.scale;
+  }, [gridLines, view.scale]);
 
   // Konva 官方滾輪錨點縮放食譜:以 anchor(螢幕座標系下的一點)為中心縮放,
   // 該點縮放前後的螢幕位置不變。newScale 靜默 clamp 到 [MIN_SCALE,
@@ -1435,6 +1499,7 @@ export default function PlanEditor() {
       data-plan-area-h-m={planArea.heightM}
       data-plan-area={JSON.stringify(planArea)}
       data-grid-line-count={gridLines.length}
+      data-grid-minor-px={gridMinorPx}
       data-plan-surfaces={JSON.stringify(surfaces)}
       data-column-offsets-cm={
         columnOffsetsCm ? JSON.stringify(columnOffsetsCm) : undefined
