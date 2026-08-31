@@ -602,3 +602,35 @@ export function subCategoriesIn(category: string): CatalogSubCategory[] {
 export function catalogFootprintM(item: CatalogItem): { w: number; h: number } {
   return { w: item.w, h: item.d };
 }
+
+/**
+ * 送給模型的目錄摘要(AI 附錄與大小守衛的**單一來源**)。
+ *
+ * tool schema 的 `code` 是自由字串(不用 enum,見 `src/lib/ai/tools.ts`),
+ * 所以模型必須從某處知道有哪些代碼可用 —— 就是這份。
+ *
+ * **`price` 是必要的,不是可有可無。** 使用者會說「家具預算 8000 元以內」,
+ * 而沒有單價的話模型只能回頭問使用者要價格 —— 那是它老實,但體驗很差,
+ * 而且價格明明就在目錄裡。（2026-08-31 實際發生:模型回覆「目前目錄只有
+ * 尺寸資料,沒有單價資訊」並要求使用者自行提供。）
+ *
+ * 欄位刻意精簡:每一輪對話都會夾帶整份,所以只放模型**決策時真的會用到**
+ * 的東西 —— 代碼、名稱、外廓、價格。分類資訊已經含在中文名稱裡。
+ */
+export function catalogueForModel(): {
+  code: string;
+  name: string;
+  w: number;
+  d: number;
+  height3d: number;
+  price: number;
+}[] {
+  return CATALOG.map((item) => ({
+    code: item.code,
+    name: item.name,
+    w: item.w,
+    d: item.d,
+    height3d: item.height3d,
+    price: item.price,
+  }));
+}

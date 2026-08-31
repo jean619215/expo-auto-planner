@@ -6,6 +6,7 @@ import {
   CATEGORIES,
   SUB_CATEGORIES,
   catalogStats,
+  catalogueForModel,
 } from "../src/lib/venue/catalog";
 
 // 驗收閘:T6 擴充目錄與價格(stories/venue-catalog-and-quote-draft.md,決議 D2)。
@@ -149,14 +150,10 @@ test.describe("Catalogue structure and pricing (T6)", () => {
     //
     // 這裡不是效能測試,是一道提醒:超過門檻就該改成給模型一支查詢工具,
     // 而不是繼續加大清單(RESUME.md 與 T4 的紀錄都寫了)。
-    const payload = CATALOG.map((i) => ({
-      code: i.code,
-      name: i.name,
-      w: i.w,
-      d: i.d,
-      height3d: i.height3d,
-    }));
-    const bytes = JSON.stringify(payload).length;
+    // **讀實際送出去的那個函式**,不要在這裡複製一份欄位清單 —— 複製的話
+    // 附錄加了欄位(例如 2026-08-31 補的 price)這裡會繼續量舊的組合,
+    // 少算而且沒有人會發現。
+    const bytes = JSON.stringify(catalogueForModel()).length;
 
     // 8KB 約 2500 tokens/輪。目前 23 項約 1.8KB;競品規模 233 項推估約 18KB,
     // 會在中途撞到這條線 —— 那正是該換做法的時候。
@@ -165,5 +162,36 @@ test.describe("Catalogue structure and pricing (T6)", () => {
       `目錄附錄已達 ${bytes} bytes(${CATALOG.length} 項)。` +
         `該把每輪夾帶整份目錄改成給模型一支查詢工具了。`,
     ).toBeLessThan(8_000);
+  });
+});
+
+// 附錄的內容(不只大小)。2026-08-31 的實際回報:使用者說「家具預算 8000 元」,
+// 模型回覆「目前目錄只有尺寸資料,沒有單價資訊」並要求使用者自行提供價格 ——
+// 它說的是實話,附錄真的沒有 price,而價格明明就在目錄裡。
+test.describe("送給模型的目錄附錄內容", () => {
+  test("每一項都帶價格 —— 沒有價格,模型無法處理預算類要求", () => {
+    const payload = catalogueForModel();
+    expect(payload).toHaveLength(CATALOG.length);
+
+    for (const item of payload) {
+      expect(
+        item.price,
+        `${item.code} 在送給模型的附錄裡沒有價格`,
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  test("附錄的價格與目錄一致(不是另外寫死的一份)", () => {
+    const byCode = new Map(catalogueForModel().map((i) => [i.code, i]));
+    for (const item of CATALOG) {
+      expect(byCode.get(item.code)?.price).toBe(item.price);
+      expect(byCode.get(item.code)?.name).toBe(item.name);
+    }
+  });
+
+  test("附錄只帶模型決策會用到的欄位", () => {
+    // 每一輪都夾帶整份,所以欄位要克制。多一個欄位就是每輪多付一次錢。
+    const keys = Object.keys(catalogueForModel()[0]).sort();
+    expect(keys).toEqual(["code", "d", "height3d", "name", "price", "w"]);
   });
 });

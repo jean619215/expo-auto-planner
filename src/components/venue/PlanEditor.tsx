@@ -116,7 +116,24 @@ const DEFAULT_VIEW_SIZE_M = VENUE_SIZE_M;
 // 使用者能縮多小的體感界線。
 const MIN_SCALE = 0.25;
 const MAX_SCALE = 4;
-const WHEEL_SCALE_FACTOR = 1.06;
+/**
+ * 滾輪縮放的靈敏度(每一像素的 wheel delta 造成多少倍率)。
+ *
+ * 原本是「每次 wheel 事件固定乘 1.06」,**完全忽略 deltaY 的大小**。滑鼠一格
+ * = 一次事件,那樣還好;但**觸控板一次滑動會送出數十次小 delta 的事件**,
+ * 1.06^30 ≈ 5.7 倍 —— 輕輕一撥就從 100% 衝到 400%,也就是使用者回報的
+ * 「縮放太敏感」。
+ *
+ * 0.0006 讓滑鼠一格(Chrome 的 deltaY≈100)仍是約 1.06 倍、手感不變,
+ * 而觸控板的每次小 delta 只造成極小倍率,累積起來才是一次完整的縮放。
+ */
+const ZOOM_SENSITIVITY = 0.0006;
+
+/** 單次 wheel 事件最多相當於多少像素。有些驅動會送出 deltaY > 1000。 */
+const MAX_WHEEL_DELTA_PX = 150;
+
+/** deltaMode 換算成像素:0=像素、1=行、2=頁。 */
+const WHEEL_DELTA_PX_PER_MODE = [1, 16, 400];
 const BUTTON_SCALE_FACTOR = 1.25;
 
 type SelectedObject = {
@@ -414,12 +431,16 @@ export default function PlanEditor() {
     // 唯一保留處(其餘互動一律遷移到 getRelativePointerPosition())。
     const pointer = stage?.getPointerPosition();
     if (!pointer) return;
-    zoomTo(
-      e.evt.deltaY > 0
-        ? view.scale / WHEEL_SCALE_FACTOR
-        : view.scale * WHEEL_SCALE_FACTOR,
-      pointer,
+    // deltaMode 先正規化成像素:Firefox 常用「行」(一格 deltaY≈3),Chrome
+    // 用像素(一格≈100)。不換算的話同一個手勢在兩個瀏覽器差三十倍。
+    const perUnit = WHEEL_DELTA_PX_PER_MODE[e.evt.deltaMode] ?? 1;
+    const deltaPx = e.evt.deltaY * perUnit;
+    const clamped = Math.max(
+      -MAX_WHEEL_DELTA_PX,
+      Math.min(MAX_WHEEL_DELTA_PX, deltaPx),
     );
+    // 指數而非線性:縮放在感知上是乘法的,而且 exp 恆正,倍率不可能翻號或歸零。
+    zoomTo(view.scale * Math.exp(-clamped * ZOOM_SENSITIVITY), pointer);
   }
 
   function resetView() {
@@ -1590,6 +1611,16 @@ export default function PlanEditor() {
                     </span>
                   </div>
                 )}
+                {/*
+                  畫布外框。步驟 02 的 3D 場景一直有一個有邊界的容器,步驟 01
+                  的 Stage 卻是裸的 —— 縮放平移之後很容易失去方位感:畫布裡
+                  雖然有可編輯範圍的矩形,但那個矩形本身也會跟著跑掉,於是
+                  「我現在在看哪裡」沒有任何固定參考點。
+                */}
+                <div
+                  data-testid="plan-canvas-frame"
+                  className="w-fit overflow-hidden rounded border border-stone-300 bg-card"
+                >
                 <Stage
                   width={stagePx}
                   height={stagePx}
@@ -2267,6 +2298,7 @@ export default function PlanEditor() {
                     )}
                   </Layer>
                 </Stage>
+                </div>
               </div>
             </div>
           )}
