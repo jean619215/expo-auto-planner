@@ -21,7 +21,7 @@ test.describe("Venue wall height (R3)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.clickNextStep();
 
     expect(await editor.wallHeightM()).toBe(4);
@@ -35,7 +35,7 @@ test.describe("Venue wall height (R3)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.clickNextStep();
 
     await editor.setWallHeight(6);
@@ -50,7 +50,7 @@ test.describe("Venue wall height (R3)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.columnTool();
-    await editor.placeColumn({ x: 8, y: 8 });
+    await editor.placeColumn({ x: 21, y: 21 });
     await editor.clickNextStep();
 
     await expect
@@ -65,10 +65,13 @@ test.describe("Venue wall height (R3)", () => {
   });
 
   test("步驟 03 讀到與步驟 02 相同的牆高", async ({ page }) => {
+    // 掛步驟 03 的場景,無 GPU 環境要十幾秒才會 ready —— 見 AGENTS.md
+    // 「重量級 3D 測試要明確編列 timeout 預算」。
+    test.slow();
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.clickNextStep();
 
     await editor.setWallHeight(5);
@@ -83,22 +86,27 @@ test.describe("Venue wall height (R3)", () => {
     // 把 RefinedScene 的牆高寫死成 3 也會全綠(這正是本 task 第一次
     // 破壞驗證抓到的事)。
     await expect
-      .poll(async () => await editor.refinedWallMeshHeightM())
+      .poll(async () => await editor.refinedWallMeshHeightM(), {
+        timeout: 30_000,
+      })
       .toBeCloseTo(5, 2);
   });
 
   test("步驟 03 的柱子幾何高度同樣跟著設定值", async ({ page }) => {
+    test.slow();
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.columnTool();
-    await editor.placeColumn({ x: 8, y: 8 });
+    await editor.placeColumn({ x: 21, y: 21 });
     await editor.clickNextStep();
 
     await editor.setWallHeight(8);
     await editor.goToRefined();
 
     await expect
-      .poll(async () => await editor.refinedColumnMeshHeightM())
+      .poll(async () => await editor.refinedColumnMeshHeightM(), {
+        timeout: 30_000,
+      })
       .toBeCloseTo(8, 2);
   });
 
@@ -106,7 +114,7 @@ test.describe("Venue wall height (R3)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.clickNextStep();
 
     await editor.setWallHeight(99);

@@ -53,34 +53,42 @@ export const REFINED_WALL_NAME = "refined-wall";
 export const REFINED_COLUMN_NAME = "refined-column";
 
 /**
- * 白模 box 的保底路徑。task 6 之後九種家具已經全部有造型(六種匯入模型、
- * 三種程序化),所以正常情況下場上不會有這種 mesh —— 它只在「有人往
- * FURNITURE_DEFAULTS 加了新 kind、卻還沒給它模型或程序化造型」時出現,
- * 讓那件家具至少畫得出來、也仍然被算進投影件數,而不是無聲消失。
+ * 白模 box 的保底路徑。目錄裡九個品項全部有造型(六個匯入模型、三個程序化),
+ * 所以正常情況下場上不會有這種 mesh —— 它只在「目錄長出了這裡還不認得的幾何
+ * 種類」時出現,讓那件家具至少畫得出來、也仍然被算進投影件數,而不是無聲消失。
  */
 export const REFINED_FURNITURE_BOX_NAME = "refined-furniture-box";
 
 /**
- * 用 `<Instances>` 畫出來的家具。名稱帶 kind 與 part 序號 ——
- * `refined-furniture-instance:cabinet:3`。
+ * 用 `<Instances>` 畫出來的家具。名稱帶**目錄代碼**與 part 序號 ——
+ * `refined-furniture-instance:CAB-60-180:3`。
  *
- * 匯入模型(task 5)與程序化造型(task 6)**共用**這個命名,探針因此不需要
- * 分辨一件家具是哪一種來源 —— 兩邊的座標約定與 instancing 方式本來就一樣。
+ * 匯入模型與程序化造型**共用**這個命名,探針因此不需要分辨一件家具是哪一種
+ * 來源 —— 兩邊的座標約定與 instancing 方式本來就一樣。
  *
- * 為什麼要把 kind 編進名字:一件家具可能由多個零件組成(cabinet 的 GLB 有 5
- * 個 mesh,櫃檯/講台/展示架各 3 個零件),每個零件各自是一個 `<Instances>`
+ * 為什麼要把代碼編進名字:一件家具可能由多個零件組成(櫃子的 GLB 有 5 個
+ * mesh,櫃檯/講台/展示架各 3 個零件),每個零件各自是一個 `<Instances>`
  * → 一個 `InstancedMesh`。所以「castShadow 的 mesh 數」跟「投影的家具件數」
- * 已經不是同一回事,探針必須先照 kind 分組、每組只取一個代表讀它的 instance
+ * 已經不是同一回事,探針必須先照代碼分組、每組只取一個代表讀它的 instance
  * 數,才能還原真正的家具件數。
+ *
+ * 分組鍵是代碼而不是子類:同一子類的兩個尺寸變體是兩份幾何、兩個
+ * `InstancedMesh`,合併計數會讓其中一個的件數被另一個蓋掉。
+ *
+ * 代碼本身含連字號但不含冒號,所以下面用 `lastIndexOf(":")` 切 part 序號是
+ * 安全的 —— 若日後代碼可能帶冒號,這裡要跟著改。
  */
 export const REFINED_FURNITURE_INSTANCE_PREFIX = "refined-furniture-instance:";
 
-export function refinedFurnitureInstanceName(kind: string, partIndex: number): string {
-  return `${REFINED_FURNITURE_INSTANCE_PREFIX}${kind}:${partIndex}`;
+export function refinedFurnitureInstanceName(
+  code: string,
+  partIndex: number,
+): string {
+  return `${REFINED_FURNITURE_INSTANCE_PREFIX}${code}:${partIndex}`;
 }
 
-/** 從 `refined-furniture-instance:cabinet:3` 取回 `cabinet`。 */
-function furnitureInstanceKindFromName(name: string): string | null {
+/** 從 `refined-furniture-instance:CAB-60-180:3` 取回 `CAB-60-180`。 */
+function furnitureInstanceCodeFromName(name: string): string | null {
   if (!name.startsWith(REFINED_FURNITURE_INSTANCE_PREFIX)) return null;
   const rest = name.slice(REFINED_FURNITURE_INSTANCE_PREFIX.length);
   const separator = rest.lastIndexOf(":");
@@ -113,7 +121,7 @@ export interface RefinedDiagnostics {
   // AC2(地板受影但不投影,牆/柱/家具投影)按類別拆開的投影計數。
   //
   // 為什麼不繼續只看 `shadowCasterMeshCount`:task 5 匯入真實模型後,那個
-  // 數字同時被兩件事扭曲 —— 一個 kind 的 N 件家具共用一個 `InstancedMesh`
+  // 數字同時被兩件事扭曲 —— 一個品項的 N 件家具共用一個 `InstancedMesh`
   // (N 件只算 1),而一個多 mesh 的 GLB 又會拆成 partCount 個
   // `InstancedMesh`(1 件算 partCount)。cabinet 是 5 個 part,所以
   // 「2 件家具」在 mesh 數上會是 6。下面三個計數各自還原成**件數**,才是
@@ -214,6 +222,22 @@ interface NormalReadback {
   varianceXY: number;
 }
 
+/**
+ * 一面牆實際掛著的材質(第三輪 T9)。
+ *
+ * `materialUuid` 是**場景裡那個物件**的身分,不是選單的值 —— 兩面牆設成不同
+ * 款式卻拿到同一個 uuid,就代表實作把它們接到同一份材質上了(T9 的破壞驗證
+ * 打的正是這裡)。`albedoMean` 再往下一層:那份材質的貼圖從 GPU 讀回來的平均
+ * 亮度,證明兩份材質不只是不同物件,烘出來的像素也真的不一樣。
+ */
+export interface WallSurfaceReport {
+  wallId: string;
+  materialUuid: string;
+  mapUuid: string;
+  /** 程序化烘焙才有;走實拍貼圖包或上傳圖的牆為 null(貼圖是檔案不是烘的)。 */
+  albedoMean: number | null;
+}
+
 export interface MaterialProbeReport {
   ready: boolean;
   maxAnisotropy: number | null;
@@ -231,6 +255,8 @@ export interface MaterialProbeReport {
   columnAlbedo: AlbedoReadback | null;
   floorUvMeterError: number | null;
   wallUvMeterError: number | null;
+  /** 逐面牆的實際材質(T9)。依 wallId 排序,場上沒有牆時是空陣列。 */
+  walls: WallSurfaceReport[];
   liveSurfaceTargets: number | null;
   totalSurfaceBakes: number | null;
 }
@@ -247,6 +273,7 @@ const NOT_READY_MATERIALS: MaterialProbeReport = {
   columnAlbedo: null,
   floorUvMeterError: null,
   wallUvMeterError: null,
+  walls: [],
   liveSurfaceTargets: null,
   totalSurfaceBakes: null,
 };
@@ -321,6 +348,50 @@ function describeSurfaceMaterial(
     materialColorHex: material.color.getHexString(),
     normalScaleX: material.normalScale.x,
   };
+}
+
+/**
+ * 逐面牆的實際材質(T9 條件 2)。
+ *
+ * 三個讀數層層加深:
+ *  1. `materialUuid` —— 場景裡那個材質物件的身分。兩面設成不同款式的牆拿到
+ *     同一個 uuid,就是「兩組共用同一個材質物件」,破壞驗證要打的就是它。
+ *  2. `mapUuid` —— 貼圖物件的身分。材質不同但貼圖同一張也是假的分組。
+ *  3. `albedoMean` —— 從 GPU 把那份烘焙讀回來的平均亮度。前兩項證明「是不同
+ *     的物件」,這一項證明「畫出來真的不一樣」。
+ *
+ * 每個 render target 只讀一次:十面木紋牆共用一份材質,沒有理由讀十遍
+ * (一次 readFullAlbedoStats 是整張 512² 的 readback)。
+ */
+function readWallSurfaceReports(
+  gl: THREE.WebGLRenderer,
+  wallMeshes: THREE.Mesh[],
+  albedoTargets: Map<string, THREE.WebGLRenderTarget>,
+): WallSurfaceReport[] {
+  // 鍵是 render target 物件本身 —— WebGLRenderTarget 沒有 uuid,而它的
+  // `.texture` 有,但用物件當鍵更直接也不會誤把兩張同源貼圖當成同一個。
+  const meanByTarget = new Map<THREE.WebGLRenderTarget, number>();
+  const reports: WallSurfaceReport[] = [];
+
+  for (const mesh of wallMeshes) {
+    const wallId = typeof mesh.userData.wallId === "string" ? mesh.userData.wallId : "";
+    const material = mesh.material as THREE.MeshStandardMaterial;
+    const target = albedoTargets.get(material.uuid) ?? null;
+    let albedoMean: number | null = null;
+    if (target) {
+      const cached = meanByTarget.get(target);
+      albedoMean = cached ?? readFullAlbedoStats(gl, target).mean;
+      if (cached === undefined) meanByTarget.set(target, albedoMean);
+    }
+    reports.push({
+      wallId,
+      materialUuid: material.uuid,
+      mapUuid: material.map?.uuid ?? "",
+      albedoMean,
+    });
+  }
+
+  return reports.sort((a, b) => a.wallId.localeCompare(b.wallId));
 }
 
 function readRegionLuminance(
@@ -649,15 +720,25 @@ export default function RefinedSceneProbe({
 }: RefinedSceneProbeProps) {
   const gl = useThree((state) => state.gl);
   const scene = useThree((state) => state.scene);
-  const { ready: materialsReady, textureSet } = useSurfaceMaterials();
+  const {
+    ready: materialsReady,
+    textureSet,
+    wallAlbedoTargets,
+  } = useSurfaceMaterials();
   const frameRef = useRef(0);
   const lastReportRef = useRef<string | null>(null);
   // Cached once per mount — the material readback (T2/T4/T5) is real GPU
   // work and does not need to repeat every frame (architect-plan.md Test
   // Plan: "只在首次報告時做一次,不進每幀路徑").
   const materialsCacheRef = useRef<MaterialProbeReport | null>(null);
-  // 上一次量到的地板材質 uuid —— 材質物件換了才代表快取過期。
-  const lastFloorMaterialUuidRef = useRef<string | null>(null);
+  // 上一次量到的材質指紋(地板 + 每一面牆的材質 uuid)—— 材質物件換了才代表
+  // 快取過期。
+  //
+  // T9 之前只看地板:改牆面材質時地板材質也會一起換,所以順帶生效。逐面牆
+  // 之後**不再成立** —— 只改某一面牆的款式,地板材質原封不動,只看地板的話
+  // 快取永遠不過期,探針會一直報上一次的讀數(而且測試會全綠,因為它報的
+  // 是一份「曾經正確」的讀數)。
+  const lastMaterialFingerprintRef = useRef<string | null>(null);
 
   // `resetKey` changes whenever RefinedScene's geometry props change
   // identity (a new revision) or a furniture model finishes loading — re-arm
@@ -694,9 +775,9 @@ export default function RefinedSceneProbe({
     let shadowCasterWallCount = 0;
     let shadowCasterColumnCount = 0;
     let shadowCasterFurnitureBoxCount = 0;
-    // kind -> 該 kind 的 instance 數。用 Map 而非累加:同一個 kind 的每個
-    // part 都是獨立的 InstancedMesh 但共用同一份 instance 清單,累加會把
-    // 件數乘上 partCount。
+    // 代碼 -> 該品項的 instance 數。用 Map 而非累加:同一個品項的每個 part
+    // 都是獨立的 InstancedMesh 但共用同一份 instance 清單,累加會把件數乘上
+    // partCount。
     const furnitureInstances = new Map<string, number>();
     // Held on an object rather than in `let` bindings: TypeScript's control
     // flow analysis cannot see assignments made inside the traverse callback
@@ -713,6 +794,8 @@ export default function RefinedSceneProbe({
       wall: null,
       column: null,
     };
+    /** 場上所有牆 mesh(T9 要逐面回報,不是只看第一面)。 */
+    const wallMeshes: THREE.Mesh[] = [];
 
     scene.traverse((object) => {
       if ((object as THREE.Light).isLight) {
@@ -732,7 +815,7 @@ export default function RefinedSceneProbe({
           if (object.name === REFINED_FURNITURE_BOX_NAME) {
             shadowCasterFurnitureBoxCount += 1;
           }
-          const instancedKind = furnitureInstanceKindFromName(object.name);
+          const instancedKind = furnitureInstanceCodeFromName(object.name);
           if (instancedKind) {
             // `InstancedMesh.count` is drei <Instances>'s own per-frame
             // bookkeeping (`min(limit, range, instances.length)`), so it is
@@ -750,8 +833,9 @@ export default function RefinedSceneProbe({
         if (!found.floor && object.name === REFINED_FLOOR_NAME) {
           found.floor = object as THREE.Mesh;
         }
-        if (!found.wall && object.name === REFINED_WALL_NAME) {
-          found.wall = object as THREE.Mesh;
+        if (object.name === REFINED_WALL_NAME) {
+          wallMeshes.push(object as THREE.Mesh);
+          if (!found.wall) found.wall = object as THREE.Mesh;
         }
         if (!found.column && object.name === REFINED_COLUMN_NAME) {
           found.column = object as THREE.Mesh;
@@ -763,11 +847,12 @@ export default function RefinedSceneProbe({
     const floor = found.floor;
     const shadowCamera = key ? key.shadow.camera : null;
 
-    const floorMaterialUuid = floor
-      ? (floor.material as THREE.Material).uuid
-      : null;
-    if (lastFloorMaterialUuidRef.current !== floorMaterialUuid) {
-      lastFloorMaterialUuidRef.current = floorMaterialUuid;
+    const fingerprint = [
+      floor ? (floor.material as THREE.Material).uuid : "",
+      ...wallMeshes.map((mesh) => (mesh.material as THREE.Material).uuid),
+    ].join("|");
+    if (lastMaterialFingerprintRef.current !== fingerprint) {
+      lastMaterialFingerprintRef.current = fingerprint;
       materialsCacheRef.current = null;
     }
 
@@ -795,6 +880,7 @@ export default function RefinedSceneProbe({
         columnAlbedo: readFullAlbedoStats(gl, textureSet.columnAlbedoTarget),
         floorUvMeterError: computeFloorUvMeterError(floor),
         wallUvMeterError: found.wall ? computeWallUvMeterError(found.wall) : null,
+        walls: readWallSurfaceReports(gl, wallMeshes, wallAlbedoTargets),
         liveSurfaceTargets: stats.liveTargets,
         totalSurfaceBakes: stats.totalBakes,
       };

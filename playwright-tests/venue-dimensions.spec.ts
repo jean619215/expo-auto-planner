@@ -148,20 +148,18 @@ test.describe("Venue Plan Editor - Task 3 dimensions", () => {
     expect(updated.center.y - updated.h / 2).toBeCloseTo(originalTop, 5);
   });
 
-  test("resizing near the 200x200m boundary clamps growth without moving the anchor/center beyond bounds", async ({
+  test("在可編輯範圍邊界附近縮放柱子:成長被夾住,錨點/中心不越界", async ({
     page,
   }) => {
-    // Plannable range is PLAN_AREA_SIZE_M = 200 (2D 畫布 zoom/pan 任務),
-    // not the default 50m view-fit. The corner-drag itself is a native
-    // Konva node drag (tracked via document-level listeners once started),
-    // so it can be dragged past the visible canvas's physical pixel bounds
-    // same as vertex dragging — only the placeColumn() start point needs to
-    // stay within the default-view clickable area.
+    // 可編輯範圍(第三輪 T1)= 攤位 + 5m 邊距,預設 3×3 攤位就是 [15,28]。
+    // 角落拖曳本身是 Konva 的原生 node drag(開始後由 document 層監聽),
+    // 所以可以拖出畫布的可見像素範圍;只有 placeColumn() 的起點需要落在
+    // 預設視圖點得到的地方。
     const editor = new PlanEditorPage(page);
     await editor.navigate();
 
     await editor.columnTool();
-    await editor.placeColumn({ x: 49, y: 49 });
+    await editor.placeColumn({ x: 27, y: 27 });
     const { columns } = await editor.objects();
     const columnId = columns[0].id;
     const original = columns[0];
@@ -174,8 +172,8 @@ test.describe("Venue Plan Editor - Task 3 dimensions", () => {
     const { columns: after } = await editor.objects();
     const updated = after.find((c) => c.id === columnId)!;
 
-    expect(updated.center.x + updated.w / 2).toBeCloseTo(200, 5);
-    expect(updated.center.y + updated.h / 2).toBeCloseTo(200, 5);
+    expect(updated.center.x + updated.w / 2).toBeCloseTo(28, 5);
+    expect(updated.center.y + updated.h / 2).toBeCloseTo(28, 5);
     expect(updated.center.x - updated.w / 2).toBeCloseTo(originalLeft, 5);
     expect(updated.center.y - updated.h / 2).toBeCloseTo(originalTop, 5);
   });
@@ -208,7 +206,7 @@ test.describe("Venue Plan Editor - Task 3 dimensions", () => {
     await editor.navigate();
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 8.2, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 23.2, y: 20 });
     // Wall auto-selected after creation.
     const { walls } = await editor.objects();
     const wall = walls[0];
@@ -219,7 +217,7 @@ test.describe("Venue Plan Editor - Task 3 dimensions", () => {
 
     expect(await editor.wallLabel()).toBe(`${Math.round(expectedLength * 100)}cm`);
 
-    await editor.clickAt({ x: 40, y: 40 });
+    await editor.clickAt({ x: 16, y: 27 });
     expect(await editor.selectedId()).toBe("");
     expect(await editor.wallLabel()).toBe("");
   });
@@ -231,7 +229,7 @@ test.describe("Venue Plan Editor - Task 3 dimensions", () => {
     await editor.navigate();
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     const { walls } = await editor.objects();
     const wallId = walls[0].id;
 
@@ -324,11 +322,13 @@ test.describe("Venue Plan Editor - Task 3 dimensions", () => {
     const { columns } = await editor.objects();
     const columnId = columns[0].id;
 
+    // 目標 x=15 正好是範圍左緣,柱子半寬 0.25 → 中心被夾在 15.25。
+    // 這一項守的就是「translate 仍然夾制」,所以期望值就是夾制後的值。
     await editor.dragObjectBody({ x: 20, y: 20 }, { x: 15, y: 25 });
 
     const { columns: after } = await editor.objects();
     const updated = after.find((c) => c.id === columnId)!;
-    expect(updated.center.x).toBeCloseTo(15, 5);
+    expect(updated.center.x).toBeCloseTo(15.25, 5);
     expect(updated.center.y).toBeCloseTo(25, 5);
     expect(updated.w).toBeCloseTo(0.5, 5);
     expect(updated.h).toBeCloseTo(0.5, 5);
@@ -383,7 +383,7 @@ test.describe("Venue Plan Editor - Task 3 dimensions", () => {
     await editor.navigate();
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 5.5, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 20.5, y: 20 });
 
     const { walls } = await editor.objects();
     expect(walls.length).toBe(1);

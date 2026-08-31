@@ -12,19 +12,17 @@ import {
   type FloorPolygon,
   type WallSegment,
 } from "@/lib/venue/plan";
-import {
-  FURNITURE_DEFAULTS,
-  type FurnitureItem,
-  type FurnitureKind,
-} from "@/lib/venue/furniture";
-import { hasFurnitureModel } from "@/lib/venue/models";
+import type { FurnitureItem } from "@/lib/venue/furniture";
+import { catalogItem } from "@/lib/venue/catalog";
 import type { SurfaceSelection } from "@/lib/venue/surfacePresets";
-import { hasProceduralFurniture } from "@/lib/venue/proceduralFurniture";
 import { planBoundsM } from "@/lib/venue/bounds";
 import type { PlanBounds } from "@/lib/venue/bounds";
 import { useFloorGeometry } from "./floorGeometry";
 import { HallLighting, HallEnvironment, REFINED_GL, REFINED_SURFACE } from "./refinedLighting";
-import SurfaceMaterials, { useSurfaceMaterials } from "./SurfaceMaterials";
+import SurfaceMaterials, {
+  useSurfaceMaterials,
+  type SurfaceUploads,
+} from "./SurfaceMaterials";
 import { hashStringToUnit, useMeterUvBoxGeometries } from "./boxGeometry";
 import { WALL_TILE_M } from "./surfaceTextures";
 import FurnitureModels, {
@@ -55,7 +53,7 @@ interface RefinedSceneProps {
   /** 使用者選的地板/牆面材質(feedback round 2, R6)。 */
   surfaces: SurfaceSelection;
   /** 使用者上傳的材質圖(blob URL);沒有就是 null。 */
-  surfaceUploads: { floor: string | null; wall: string | null };
+  surfaceUploads: SurfaceUploads;
   /**
    * 全域牆高(公尺)。與步驟 02 讀同一份頂層 state —— 這一步是唯讀場景,
    * 不自己持有也不回寫,02↔03 的一致性靠這點保證。
@@ -259,10 +257,17 @@ function RefinedSceneContent({
         );
         const geometry = wallGeometries.get(wall.id);
         if (!geometry) return null;
+        // 逐面牆各自的材質(T9)。沒有個別指定的牆拿到的是同一個物件 ——
+        // 共用是刻意的,見 SurfaceMaterials 的 resolveWallSource()。
+        const wallMaterial = surfaceMaterials.wallMaterialFor(wall.id);
         return (
           <mesh
             key={wall.id}
             name={REFINED_WALL_NAME}
+            // 探針靠 userData 認出「這是哪一面牆」。名字維持 REFINED_WALL_NAME
+            // 不動 —— 既有的牆面量測(高度、UV、陰影投射者)全都以那個名字
+            // 尋找,把 id 編進名字會一次弄壞它們。
+            userData={{ wallId: wall.id }}
             geometry={geometry}
             position={[
               (wall.start.x + wall.end.x) / 2,
@@ -273,8 +278,8 @@ function RefinedSceneContent({
             castShadow
             receiveShadow
           >
-            {surfaceMaterials.wall ? (
-              <primitive object={surfaceMaterials.wall} attach="material" />
+            {wallMaterial ? (
+              <primitive object={wallMaterial} attach="material" />
             ) : (
               <meshStandardMaterial
                 color={REFINED_SURFACE.wall.color}
@@ -345,22 +350,24 @@ function RefinedSceneContent({
         // 保底路徑:既沒有模型、也還沒給程序化造型的 kind(目前九種家具都有
         // 造型,所以正常情況下這裡不會產出任何東西)。留著是為了讓日後新增
         // 的 kind 至少畫得出來,而不是無聲消失。
-        if (hasFurnitureModel(item.kind) || hasProceduralFurniture(item.kind)) {
-          return null;
-        }
-        const defaults = FURNITURE_DEFAULTS[item.kind];
+        // 保底 box 只畫「目錄裡有、但幾何種類不是 model 也不是 procedural」
+        // 的品項 —— 那兩條路各自有專屬元件,重畫會讓同一件家具出現兩次。
+        const entry = catalogItem(item.code);
+        if (!entry) return null;
+        if (entry.geometry.kind === "model") return null;
+        if (entry.geometry.kind === "procedural") return null;
         return (
           <mesh
             key={item.id}
             name={REFINED_FURNITURE_BOX_NAME}
-            position={[item.center.x, defaults.height3d / 2, item.center.y]}
+            position={[item.center.x, entry.height3d / 2, item.center.y]}
             rotation={[0, (-item.rotationDeg * Math.PI) / 180, 0]}
             castShadow
             receiveShadow
           >
-            <boxGeometry args={[defaults.w, defaults.height3d, defaults.h]} />
+            <boxGeometry args={[entry.w, entry.height3d, entry.d]} />
             <meshStandardMaterial
-              color={defaults.color}
+              color={entry.color}
               roughness={REFINED_SURFACE.furniture.roughness}
               metalness={REFINED_SURFACE.furniture.metalness}
             />
@@ -433,30 +440,59 @@ export default function RefinedScene({
     }
   }, [polygon, walls, columns, furniture]);
 
+  // 場上牆的 id(穩定字串)。SurfaceMaterials 用它決定要為哪些款式烘貼圖,
+  // 而不是每次 walls 陣列換身分就重烘。
+  const wallIds = useMemo(() => walls.map((wall) => wall.id), [walls]);
+  const wallIdsKey = wallIds.join(",");
+
+  /**
+   * 材質相關輸入的指紋:地板/預設牆的自訂圖、逐面牆的自訂圖、逐面牆的款式
+   * 覆寫。**逐面牆的部分不能漏** —— 探針以這個鍵決定何時重新量測,漏掉就會
+   * 出現「改了某面牆的材質,探針還在報上一次的讀數」,而那正是 T9 條件 2
+   * 要抓的東西。
+   */
+  const uploadsKey = useMemo(() => {
+    const perWall = Object.entries(surfaceUploads.walls)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([wallId, url]) => `${wallId}=${url}`)
+      .join(",");
+    const overrides = Object.entries(surfaces.wallOverrides)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([wallId, presetId]) => `${wallId}=${presetId}`)
+      .join(",");
+    return [
+      surfaceUploads.floor ?? "",
+      surfaceUploads.wall ?? "",
+      perWall,
+      overrides,
+      wallIdsKey,
+    ].join("|");
+  }, [surfaceUploads, surfaces.wallOverrides, wallIdsKey]);
+
   const [diagnostics, setDiagnostics] = useState<RefinedDiagnostics | null>(null);
   const [materialsReady, setMaterialsReady] = useState(false);
   const [eagerLoaded, setEagerLoaded] = useState(false);
   const [modelReports, setModelReports] = useState<
-    Partial<Record<FurnitureKind, FurnitureModelReport>>
+    Record<string, FurnitureModelReport>
   >({});
   const [proceduralReports, setProceduralReports] = useState<
-    Partial<Record<FurnitureKind, ProceduralFurnitureReport>>
+    Record<string, ProceduralFurnitureReport>
   >({});
 
   const handleEagerLoaded = useCallback(() => setEagerLoaded(true), []);
   const handleModelReport = useCallback((report: FurnitureModelReport) => {
     setModelReports((prev) => {
-      const existing = prev[report.kind];
+      const existing = prev[report.code];
       // 每幀都 setState 會讓 R3F 進無窮 render 迴圈 — 內容相同就原封不動
       // 回傳同一個物件,讓 React 跳過這次更新。
       if (existing && JSON.stringify(existing) === JSON.stringify(report)) {
         return prev;
       }
-      return { ...prev, [report.kind]: report };
+      return { ...prev, [report.code]: report };
     });
   }, []);
 
-  // 對外只吐「場上真的還有這個 kind」的量測 —— 家具被刪掉後,上一份報告會
+  // 對外只吐「場上真的還有這個品項」的量測 —— 家具被刪掉後,上一份報告會
   // 留在 modelReports 裡(元件卸載不會反向清),直接吐出去測試會讀到過期資料。
   //
   // 刻意不在 revision 變動時整批清空:eagerLoaded 一旦被重設,植栽就會
@@ -464,28 +500,28 @@ export default function RefinedScene({
   const handleProceduralReport = useCallback(
     (report: ProceduralFurnitureReport) => {
       setProceduralReports((prev) => {
-        const existing = prev[report.kind];
+        const existing = prev[report.code];
         if (existing && JSON.stringify(existing) === JSON.stringify(report)) {
           return prev;
         }
-        return { ...prev, [report.kind]: report };
+        return { ...prev, [report.code]: report };
       });
     },
     [],
   );
 
   const activeModelReports = useMemo(() => {
-    const kinds = new Set(furniture.map((item) => item.kind));
+    const codes = new Set(furniture.map((item) => item.code));
     return Object.values(modelReports).filter((report) =>
-      kinds.has(report.kind)
+      codes.has(report.code)
     );
   }, [modelReports, furniture]);
 
   // 與 activeModelReports 同理:家具被刪掉後,上一份報告會留在 state 裡。
   const activeProceduralReports = useMemo(() => {
-    const kinds = new Set(furniture.map((item) => item.kind));
+    const codes = new Set(furniture.map((item) => item.code));
     return Object.values(proceduralReports).filter((report) =>
-      kinds.has(report.kind)
+      codes.has(report.code)
     );
   }, [proceduralReports, furniture]);
 
@@ -493,7 +529,7 @@ export default function RefinedScene({
   // 後者是必要的:GLB 解碼是非同步的,家具的 InstancedMesh 往往在 revision
   // 那一次武裝(PROBE_ACTIVE_FRAMES 幀)之後才進場景圖,少了它探針會停在一份
   // 還沒有家具的過期快照(RefinedSceneProbe.tsx 的 resetKey 註解)。
-  // 用 kind + partCount 而非 instanceCount:後者每動一次家具都變,但那種
+  // 用代碼 + partCount 而非 instanceCount:後者每動一次家具都變,但那種
   // 變動本來就已經 bump 了 revision。
   //
   // 材質選擇也要進來:探針的材質診斷是一次性計算後就快取住的,換材質後
@@ -501,7 +537,7 @@ export default function RefinedScene({
   // 像是「換材質沒有生效」。
   const probeResetKey = useMemo(() => {
     const signature = activeModelReports
-      .map((report) => `${report.kind}:${report.partCount}`)
+      .map((report) => `${report.code}:${report.partCount}`)
       .sort()
       .join(",");
     return `${revision}|${signature}|${surfaces.floor}:${surfaces.wall}|${surfaceUploads.floor ?? ""}:${surfaceUploads.wall ?? ""}`;
@@ -550,6 +586,7 @@ export default function RefinedScene({
         >
           <SurfaceMaterials
             selection={surfaces}
+            wallIds={wallIds}
             uploads={surfaceUploads}
             onReady={setMaterialsReady}
           >
@@ -565,7 +602,7 @@ export default function RefinedScene({
               revision={revision}
               probeResetKey={probeResetKey}
               surfaces={surfaces}
-              uploadsKey={`${surfaceUploads.floor ?? ""}:${surfaceUploads.wall ?? ""}`}
+              uploadsKey={uploadsKey}
               eagerLoaded={eagerLoaded}
               onEagerLoaded={handleEagerLoaded}
               onModelReport={handleModelReport}

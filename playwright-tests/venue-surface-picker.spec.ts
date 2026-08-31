@@ -26,14 +26,9 @@ test.describe("Step 03 surface picker (T8)", () => {
     const editor = new PlanEditorPage(page);
     await toRefined(editor);
 
-    const floorOptions = page.locator(
-      '[data-testid="surface-floor-select"] option',
-    );
-    const wallOptions = page.locator(
-      '[data-testid="surface-wall-select"] option',
-    );
-    expect(await floorOptions.count()).toBeGreaterThanOrEqual(3);
-    expect(await wallOptions.count()).toBeGreaterThanOrEqual(3);
+    // 第四輪把下拉選單換成縮圖選擇器,所以數的是縮圖格而不是 <option>。
+    expect(await editor.surfaceOptionCount("floor")).toBeGreaterThanOrEqual(3);
+    expect(await editor.surfaceOptionCount("wall")).toBeGreaterThanOrEqual(3);
   });
 
   test("換地板材質會真的重新烘焙", async ({ page }) => {
@@ -124,9 +119,15 @@ test.describe("Step 03 surface picker (T8)", () => {
       .toBe("carpet");
 
     // 存檔快照是 dirty 判定的依據 —— 材質換了就應該被視為有變更。
+    //
+    // `wallOverrides` 是第三輪 T9 加的(逐面牆各自貼圖)。這裡刻意仍然用
+    // `toEqual` 比整個物件而不是只挑欄位:快照的形狀本來就是這一項要守的東西,
+    // 多一個沒人預期的欄位應該讓它紅,而不是安靜通過。沒有任何個別設定時它是
+    // 空物件 —— 不是 undefined,那個差別會讓讀舊檔的 Object.entries 丟例外。
     expect(await editor.planSnapshotSurfaces()).toEqual({
       floor: "carpet",
       wall: "painted",
+      wallOverrides: {},
     });
   });
 

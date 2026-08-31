@@ -1,7 +1,12 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import type { Column, FloorPolygon, WallSegment } from "@/lib/venue/plan";
+import type {
+  Column,
+  FloorBounds,
+  FloorPolygon,
+  WallSegment,
+} from "@/lib/venue/plan";
 import type { FurnitureItem } from "@/lib/venue/furniture";
 
 const VenueScene = dynamic(() => import("./VenueScene"), {
@@ -19,6 +24,7 @@ interface VenueSceneLoaderProps {
   columns: Column[];
   furniture: FurnitureItem[];
   venueSizeM?: number;
+  planArea?: FloorBounds;
   viewFitSizeM?: number;
   viewCenterM?: { x: number; y: number };
   wallHeightM: number;
@@ -36,6 +42,7 @@ export default function VenueSceneLoader({
   columns,
   furniture,
   venueSizeM,
+  planArea,
   viewFitSizeM,
   viewCenterM,
   wallHeightM,
@@ -49,6 +56,7 @@ export default function VenueSceneLoader({
       columns={columns}
       furniture={furniture}
       venueSizeM={venueSizeM}
+      planArea={planArea}
       viewFitSizeM={viewFitSizeM}
       viewCenterM={viewCenterM}
       wallHeightM={wallHeightM}

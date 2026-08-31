@@ -66,17 +66,17 @@ async function clickFloor(page: Page, point: { x: number; y: number }) {
 async function placeFurnitureOnStep2(
   page: Page,
   editor: PlanEditorPage,
-  kind: string,
+  code: string,
   offsetPx: { x: number; y: number } = { x: 0, y: 0 },
 ) {
   const before = await editor.furnitureCount();
-  await page.getByTestId(`furniture-place-${kind}`).click();
+  await editor.pickCatalogItem(code);
   const center = await step2CanvasCenter(page);
   await clickFloor(page, { x: center.x + offsetPx.x, y: center.y + offsetPx.y });
   await expect
     .poll(() => editor.furnitureCount(), {
       timeout: 5_000,
-      message: `${kind} 沒有放上去 — 偏移 (${offsetPx.x}, ${offsetPx.y}) 可能點在地板之外`,
+      message: `${code} 沒有放上去 — 偏移 (${offsetPx.x}, ${offsetPx.y}) 可能點在地板之外`,
     })
     .toBe(before + 1);
 }
@@ -93,20 +93,20 @@ async function toStep2(editor: PlanEditorPage) {
 }
 
 /** kind -> FURNITURE_DEFAULTS 的 (w, height3d, h),與 src/lib/venue/furniture.ts 一致。 */
+// T5(第三輪 D4)之後,方正規格件(桌/櫃/展示櫃)改走程序化 —— 一份 GLB 只有
+// 一種比例,做不出「同款不同高度」的兩個品項。留在 GLB 的只剩方箱畫不出來的
+// 曲面件:椅子、沙發、植栽。
 const MODEL_KINDS = [
-  { kind: "table", target: [1.2, 0.75, 0.7] },
-  { kind: "chair", target: [0.45, 0.9, 0.45] },
-  { kind: "cabinet", target: [0.6, 1.8, 1.2] },
-  { kind: "sofa", target: [1.8, 0.8, 0.8] },
-  { kind: "plant", target: [0.5, 1.2, 0.5] },
-  { kind: "display", target: [1.0, 1.6, 0.5] },
+  { code: "CHR-45-90", target: [0.45, 0.9, 0.45] },
+  { code: "SOF-180-80", target: [1.8, 0.8, 0.8] },
+  { code: "PLT-50-120", target: [0.5, 1.2, 0.5] },
 ] as const;
 
 /** M8 用來 mock 存檔載入的 API(沿用 venue-zoom-pan.spec.ts 的寫法)。 */
 const PLAN_SLOT_RE = /\/api\/plans\/\d$/;
 
 /** 沒有 Poly Haven 資產的展場專用家具(task 6 起改由程序化幾何繪製)。 */
-const BOX_ONLY_KINDS = ["counter", "bannerStand", "podium"] as const;
+const BOX_ONLY_KINDS = ["CNT-100-110", "BNR-80-200", "POD-60-110"] as const;
 
 /**
  * Records `/models/venue/*.glb` traffic **in order**, tagging requests and
@@ -150,7 +150,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
       { x: 0, y: -15 },
     ];
     for (const [index, entry] of MODEL_KINDS.entries()) {
-      await placeFurnitureOnStep2(page, editor, entry.kind, offsets[index]);
+      await placeFurnitureOnStep2(page, editor, entry.code, offsets[index]);
     }
 
     await editor.goToRefined();
@@ -163,17 +163,17 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
       .toBe(MODEL_KINDS.length);
 
     for (const entry of MODEL_KINDS) {
-      const report = await editor.refinedFurnitureModelReport(entry.kind);
-      expect(report, `${entry.kind} 應該由匯入模型繪製`).toBeDefined();
+      const report = await editor.refinedFurnitureModelReport(entry.code);
+      expect(report, `${entry.code} 應該由匯入模型繪製`).toBeDefined();
       if (!report) continue;
 
       // 契約上 scale 就是一個數字 —— 三軸不可能各縮各的。這是「不得非等比
       // 拉伸變形」(AGENTS.md)最直接的證據。
-      expect(Number.isFinite(report.scale), `${entry.kind} scale 應為有限數`)
+      expect(Number.isFinite(report.scale), `${entry.code} scale 應為有限數`)
         .toBe(true);
-      expect(report.scale, `${entry.kind} scale 應為正數`).toBeGreaterThan(0);
+      expect(report.scale, `${entry.code} scale 應為正數`).toBeGreaterThan(0);
 
-      expect(report.targetM, `${entry.kind} 目標尺寸應取自 FURNITURE_DEFAULTS`)
+      expect(report.targetM, `${entry.code} 目標尺寸應取自 FURNITURE_DEFAULTS`)
         .toEqual([...entry.target]);
 
       // 沒有任何一軸溢出目標框(留 1mm 浮點容差)。
@@ -183,37 +183,21 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
       for (const [axis, ratio] of ratios.entries()) {
         expect(
           ratio,
-          `${entry.kind} 第 ${axis} 軸溢出目標框(${report.fittedM[axis]} > ${report.targetM[axis]})`,
+          `${entry.code} 第 ${axis} 軸溢出目標框(${report.fittedM[axis]} > ${report.targetM[axis]})`,
         ).toBeLessThanOrEqual(1 + 1e-3);
       }
       // 且至少一軸貼齊 —— 否則「等比」也可能是縮得莫名其妙的小。
       expect(
         Math.max(...ratios),
-        `${entry.kind} 沒有任何一軸貼齊目標尺寸(最大佔比 ${Math.max(...ratios)})`,
+        `${entry.code} 沒有任何一軸貼齊目標尺寸(最大佔比 ${Math.max(...ratios)})`,
       ).toBeGreaterThan(1 - 1e-3);
     }
   });
 
-  test("M2: cabinet 的方位修正讓模型長邊對上平面圖長邊", async ({ page }) => {
-    const editor = new PlanEditorPage(page);
-    await toStep2(editor);
-    await placeFurnitureOnStep2(page, editor, "cabinet");
-
-    await editor.goToRefined();
-    await waitForFurnitureModels(editor);
-
-    const report = await editor.refinedFurnitureModelReport("cabinet");
-    expect(report).toBeDefined();
-    if (!report) return;
-
-    // 平面圖目標是 0.6(X) x 1.2(Z) —— 長邊在 Z。模型原生是 1.141 x 0.488,
-    // 長邊在 X,所以 models.ts 給了 rotationY = 90。若那個 90 掉了,fittedM
-    // 的長邊會落回 X,這條就紅。
-    const [x, , z] = report.fittedM;
-    expect(z, "cabinet 的長邊應在 Z 軸(rotationY=90 未生效?)").toBeGreaterThan(x);
-    // 貼齊的那一軸必須是長邊 —— 只比大小還不夠,轉錯方向也可能 z > x。
-    expect(z / report.targetM[2]).toBeGreaterThan(0.85);
-  });
+  // M2(cabinet 的 rotationY=90 方位修正)已隨 T5 移除:cabinet 改走程序化,
+  // 而剩下的三個 GLB 品項native 方位都正確,`rotationY` 目前**沒有任何使用者**。
+  // 機制仍留在 `CatalogGeometry` 與 `normalizeModel()` 裡 —— T6 匯入新模型時
+  // 若用得上就補一支同型的測試,若確定用不上就把欄位一起拿掉,不要放著不管。
 
   test("M3: 沒有模型的三種展場家具不走匯入模型,且不會被畫兩次", async ({
     page,
@@ -253,8 +237,8 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
 
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
-    await placeFurnitureOnStep2(page, editor, "table", { x: -30, y: 0 });
-    await placeFurnitureOnStep2(page, editor, "plant", { x: 30, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "CHR-45-90", { x: -30, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "PLT-50-120", { x: 30, y: 0 });
 
     await editor.goToRefined();
     await waitForFurnitureModels(editor);
@@ -265,16 +249,16 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
       .toBe(2);
 
     const plantRequested = timeline.indexOf("req:plant.glb");
-    const tableFinished = timeline.indexOf("res:table.glb");
+    const eagerFinished = timeline.indexOf("res:chair.glb");
     expect(plantRequested, "plant.glb 從未被請求").toBeGreaterThanOrEqual(0);
-    expect(tableFinished, "table.glb 從未載完").toBeGreaterThanOrEqual(0);
+    expect(eagerFinished, "chair.glb 從未載完").toBeGreaterThanOrEqual(0);
     // 「延後」的定義就是這一行:plant 的請求發生在 eager 那批**收完之後**,
     // 而不是只在它後面一點點排隊。plant 是 1.32MB / 原生 96k 面,綁同一個
     // Suspense 會讓整個步驟 03 一起等它。
     expect(
       plantRequested,
       `plant.glb 未延後載入 (timeline: ${timeline.join(" -> ")})`,
-    ).toBeGreaterThan(tableFinished);
+    ).toBeGreaterThan(eagerFinished);
   });
 
   test("M5: 只載入場上真的有的 kind", async ({ page }) => {
@@ -282,7 +266,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
 
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
-    await placeFurnitureOnStep2(page, editor, "table");
+    await placeFurnitureOnStep2(page, editor, "CHR-45-90");
 
     await editor.goToRefined();
     await waitForFurnitureModels(editor);
@@ -292,8 +276,8 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
     const requested = timeline
       .filter((entry) => entry.startsWith("req:"))
       .map((entry) => entry.slice(4));
-    expect(new Set(requested), "只擺了一張桌子,不該把其他 GLB 也拉下來").toEqual(
-      new Set(["table.glb"]),
+    expect(new Set(requested), "只擺了一張椅子,不該把其他 GLB 也拉下來").toEqual(
+      new Set(["chair.glb"]),
     );
   });
 
@@ -303,8 +287,8 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
     test.slow();
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
-    await placeFurnitureOnStep2(page, editor, "table", { x: -30, y: 0 });
-    await placeFurnitureOnStep2(page, editor, "cabinet", { x: 30, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "CHR-45-90", { x: -30, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "SOF-180-80", { x: 30, y: 0 });
 
     await editor.goToRefined();
     await waitForFurnitureModels(editor);
@@ -343,16 +327,16 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
   }) => {
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
-    await placeFurnitureOnStep2(page, editor, "chair", { x: -40, y: 0 });
-    await placeFurnitureOnStep2(page, editor, "chair", { x: 0, y: 0 });
-    await placeFurnitureOnStep2(page, editor, "chair", { x: 40, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "CHR-45-90", { x: -40, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "CHR-45-90", { x: 0, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "CHR-45-90", { x: 40, y: 0 });
 
     await editor.goToRefined();
     await waitForFurnitureModels(editor);
 
     const reports = await editor.refinedFurnitureModelReports();
     expect(reports, "三張椅子只該有一份 chair 報告(共用同一組 geometry)").toHaveLength(1);
-    expect(reports[0].kind).toBe("chair");
+    expect(reports[0].code).toBe("CHR-45-90");
     expect(reports[0].instanceCount).toBe(3);
 
     // 件數走 InstancedMesh.count,不是 mesh 數 —— 三張椅子仍然只有
@@ -376,10 +360,9 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
     const COUNT = 300;
     const furniture = Array.from({ length: COUNT }, (_, i) => ({
       id: `chair-${i}`,
-      kind: "chair",
+      // T2 之後存檔存的是目錄代碼;沒有 code 的舊形狀會被繪製端拒畫(D8)。
+      code: "CHR-45-90",
       center: { x: 5 + (i % 50) * 0.5, y: 5 + Math.floor(i / 50) * 0.5 },
-      w: 0.45,
-      h: 0.45,
       rotationDeg: 0,
     }));
 
@@ -461,7 +444,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 5: 匯入真實家具模型",
       .poll(() => editor.refinedShadowCasterFurnitureCount(), { timeout: 20_000 })
       .toBe(COUNT);
 
-    const report = await editor.refinedFurnitureModelReport("chair");
+    const report = await editor.refinedFurnitureModelReport("CHR-45-90");
     expect(report?.instanceCount).toBe(COUNT);
   });
 });

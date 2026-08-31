@@ -13,21 +13,13 @@ import * as THREE from "three";
 import { Canvas, type ThreeEvent } from "@react-three/fiber";
 import { OrbitControls, TransformControls } from "@react-three/drei";
 import {
-  Table2,
-  Armchair,
-  Archive,
-  Store,
-  Flag,
-  Sofa,
-  Presentation,
-  Flower2,
-  Package,
   RotateCcw,
   PanelLeftClose,
   PanelLeftOpen,
   Trash2,
 } from "lucide-react";
 import {
+  DEFAULT_PLAN_AREA,
   MAX_WALL_HEIGHT_M,
   MIN_WALL_HEIGHT_M,
   VENUE_SIZE_M,
@@ -37,21 +29,23 @@ import {
   translateWall,
   wallLengthM,
   type Column,
+  type FloorBounds,
   type FloorPolygon,
   type WallSegment,
 } from "@/lib/venue/plan";
 import {
-  FURNITURE_DEFAULTS,
   createFurniture,
   rotateFurniture,
   translateFurniture,
   type FurnitureItem,
-  type FurnitureKind,
 } from "@/lib/venue/furniture";
+
 import { Button } from "@/components/ui/button";
 import { segmentClassName } from "./PlanToolbar";
 import { useFloorGeometry } from "./floorGeometry";
 import WhiteboxFurnitureItem from "./whiteboxFurniture";
+import CatalogPanel from "./CatalogPanel";
+import QuotePanel from "./QuotePanel";
 import VenueSceneProbe, {
   VENUE_WALL_NAME,
   VENUE_COLUMN_NAME,
@@ -62,24 +56,17 @@ type SelectedId =
   | { type: "wall" | "column" | "furniture"; id: string }
   | null;
 
-const FURNITURE_ICONS: Record<FurnitureKind, typeof Table2> = {
-  table: Table2,
-  chair: Armchair,
-  cabinet: Archive,
-  counter: Store,
-  bannerStand: Flag,
-  sofa: Sofa,
-  podium: Presentation,
-  plant: Flower2,
-  display: Package,
-};
-
 interface VenueSceneProps {
   polygon: FloorPolygon;
   walls: WallSegment[];
   columns: Column[];
   furniture: FurnitureItem[];
   venueSizeM?: number;
+  /**
+   * 可編輯範圍(攤位 + 邊距)。3D 內拖曳與放置的 clamp 依據 —— 與 2D 共用
+   * 同一份,兩個畫面才不會各自有一套邊界。
+   */
+  planArea?: FloorBounds;
   // 選填:相機取景/gizmo 尺寸的 fit 基準,與 venueSizeM(ground plane/clamp
   // 用)分離 — 預設回退到 venueSizeM,維持既有呼叫端行為不變。
   viewFitSizeM?: number;
@@ -122,6 +109,7 @@ export default function VenueScene({
   columns,
   furniture,
   venueSizeM = VENUE_SIZE_M,
+  planArea = DEFAULT_PLAN_AREA,
   viewFitSizeM,
   viewCenterM,
   wallHeightM,
@@ -130,11 +118,13 @@ export default function VenueScene({
 }: VenueSceneProps) {
   const fit = viewFitSizeM ?? venueSizeM;
   const center = viewCenterM ?? { x: fit / 2, y: fit / 2 };
+  // gridHelper 只吃正方形尺寸,取可編輯範圍的長邊,格線維持 1m。
+  const gridSizeM = Math.ceil(Math.max(planArea.widthM, planArea.heightM));
   const [selectedId, setSelectedId] = useState<SelectedId>(null);
   const [transformMode, setTransformMode] = useState<"translate" | "rotate">(
     "translate",
   );
-  const [placingKind, setPlacingKind] = useState<FurnitureKind | null>(null);
+  const [placingCode, setPlacingCode] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const selectedMeshRef = useRef<THREE.Object3D | null>(null);
   const dragStartRef = useRef<{ x: number; z: number } | null>(null);
@@ -237,29 +227,29 @@ export default function VenueScene({
 
     if (selectedId.type === "wall") {
       nextWalls = walls.map((w) =>
-        w.id === selectedId.id ? translateWall(w, deltaPlan, venueSizeM) : w,
+        w.id === selectedId.id ? translateWall(w, deltaPlan, planArea) : w,
       );
     } else if (selectedId.type === "column") {
       nextColumns = columns.map((c) =>
-        c.id === selectedId.id ? translateColumn(c, deltaPlan, venueSizeM) : c,
+        c.id === selectedId.id ? translateColumn(c, deltaPlan, planArea) : c,
       );
     } else {
       nextFurniture = furniture.map((f) =>
-        f.id === selectedId.id ? translateFurniture(f, deltaPlan, venueSizeM) : f,
+        f.id === selectedId.id ? translateFurniture(f, deltaPlan, planArea) : f,
       );
     }
     onSceneChange?.({ walls: nextWalls, columns: nextColumns, furniture: nextFurniture });
   }
 
   function handleFloorClick(e: ThreeEvent<MouseEvent>) {
-    if (placingKind) {
+    if (placingCode) {
       const item = createFurniture(
-        placingKind,
+        placingCode,
         { x: e.point.x, y: e.point.z },
-        venueSizeM,
+        planArea,
       );
       const nextFurniture = [...furniture, item];
-      setPlacingKind(null);
+      setPlacingCode(null);
       selectObject({ type: "furniture", id: item.id });
       onSceneChange?.({ walls, columns, furniture: nextFurniture });
       return;
@@ -286,6 +276,8 @@ export default function VenueScene({
       data-testid="venue-scene"
       data-generated="true"
       data-orbit-controls="true"
+      /* 放置模式對外可見:放置失敗時要能分辨「沒進入放置模式」與「raycast 打空」。 */
+      data-placing-code={placingCode ?? ""}
       data-wall-mesh-count={walls.length}
       data-column-mesh-count={columns.length}
       data-furniture-mesh-count={furniture.length}
@@ -305,7 +297,7 @@ export default function VenueScene({
           data-testid="venue-sidebar"
           data-open={sidebarOpen}
           className={
-            (sidebarOpen ? "w-48" : "w-11") +
+            (sidebarOpen ? "w-64" : "w-11") +
             " shrink-0 rounded-md border border-stone-300 bg-card p-2"
           }
         >
@@ -320,7 +312,9 @@ export default function VenueScene({
             {sidebarOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
           </button>
           {sidebarOpen && (
-            <div className="mt-2 flex flex-col gap-3">
+            <div className="mt-2 flex max-h-[460px] flex-col gap-3 overflow-y-auto pr-0.5">
+              {/* 金額擺在側欄最上面:目錄可以捲很長,小計要一直看得到。 */}
+              <QuotePanel furniture={furniture} />
               {onWallHeightChange && (
                 <div className="flex flex-col gap-1.5">
                   <span className="px-0.5 text-xs font-bold text-muted-foreground">
@@ -351,32 +345,12 @@ export default function VenueScene({
                   </label>
                 </div>
               )}
-              <div className="flex flex-col gap-1.5">
-                <span className="px-0.5 text-xs font-bold text-muted-foreground">
-                  家具
-                </span>
-                {(Object.keys(FURNITURE_DEFAULTS) as FurnitureKind[]).map(
-                  (kind) => {
-                    const Icon = FURNITURE_ICONS[kind];
-                    return (
-                      <Button
-                        key={kind}
-                        type="button"
-                        size="sm"
-                        variant={placingKind === kind ? "default" : "outline"}
-                        data-testid={`furniture-place-${kind}`}
-                        onClick={() =>
-                          setPlacingKind((prev) => (prev === kind ? null : kind))
-                        }
-                        className="w-full justify-start"
-                      >
-                        <Icon />
-                        {FURNITURE_DEFAULTS[kind].label}
-                      </Button>
-                    );
-                  },
-                )}
-              </div>
+              <CatalogPanel
+                placingCode={placingCode}
+                onPick={(code) =>
+                  setPlacingCode((prev) => (prev === code ? null : code))
+                }
+              />
               <div className="flex flex-col gap-1.5">
                 <span className="px-0.5 text-xs font-bold text-muted-foreground">
                   調整
@@ -459,8 +433,12 @@ export default function VenueScene({
           />
           <VenueSceneProbe onReport={handleProbeReport} />
           <gridHelper
-            args={[venueSizeM, venueSizeM]}
-            position={[venueSizeM / 2, 0.01, venueSizeM / 2]}
+            args={[gridSizeM, gridSizeM]}
+            position={[
+              (planArea.minX + planArea.maxX) / 2,
+              0.01,
+              (planArea.minY + planArea.maxY) / 2,
+            ]}
           />
           <FloorMesh polygon={polygon} onClick={handleFloorClick} />
           {walls.map((wall) => {

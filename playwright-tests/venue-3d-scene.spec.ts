@@ -33,7 +33,7 @@ test.describe("Venue Plan Editor - Task 4 & 5: 3D whitebox scene + step wizard",
     await editor.navigate();
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
 
     await expect(editor.nextStepButton).toBeEnabled();
   });
@@ -45,7 +45,7 @@ test.describe("Venue Plan Editor - Task 4 & 5: 3D whitebox scene + step wizard",
     await editor.navigate();
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
 
     await editor.clickNextStep();
 
@@ -68,7 +68,7 @@ test.describe("Venue Plan Editor - Task 4 & 5: 3D whitebox scene + step wizard",
     await editor.navigate();
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.clickNextStep();
     const firstGeneration = await editor.generationCount();
 
@@ -90,12 +90,12 @@ test.describe("Venue Plan Editor - Task 4 & 5: 3D whitebox scene + step wizard",
     await editor.navigate();
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.clickNextStep();
     const generationBefore = await editor.generationCount();
 
     await editor.clickBackToEdit();
-    await editor.clickAt({ x: 7.5, y: 5 });
+    await editor.clickAt({ x: 22.5, y: 20 });
     await editor.pressDelete();
 
     expect(await editor.wallCount()).toBe(0);
@@ -115,7 +115,7 @@ test.describe("Venue Plan Editor - Task 4 & 5: 3D whitebox scene + step wizard",
     await editor.navigate();
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
 
     const before = await editor.generationCount();
     await editor.clickNextStep();
@@ -140,7 +140,7 @@ test.describe("Venue Plan Editor - Task 4 & 5: 3D whitebox scene + step wizard",
     expect(await editor.vertexCount()).toBe(4);
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.clickNextStep();
 
     await expect(editor.scene).toHaveCount(1);
@@ -176,7 +176,7 @@ test.describe("Venue Plan Editor - Task 4 & 5: 3D whitebox scene + step wizard",
     await editor.navigate();
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.columnTool();
     await editor.placeColumn({ x: 20, y: 20 });
 
@@ -204,7 +204,7 @@ test.describe("Venue Plan Editor - Task 4 & 5: 3D whitebox scene + step wizard",
     await editor.navigate();
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.clickNextStep();
     const firstGeneration = await editor.generationCount();
 
@@ -221,7 +221,7 @@ test.describe("Venue Plan Editor - Task 4 & 5: 3D whitebox scene + step wizard",
     await editor.navigate();
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.clickNextStep();
 
     expect(await editor.orbitControlsPresent()).toBe(true);
@@ -238,7 +238,7 @@ test.describe("Venue Plan Editor - Task 4 & 5: 3D whitebox scene + step wizard",
 
     // Draw one wall; it becomes auto-selected (selectedObject set).
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     const wallCountBefore = await editor.wallCount();
     const objectsBefore = await editor.objects();
 
@@ -269,7 +269,7 @@ test.describe("Venue Plan Editor - Task 4 & 5: 3D whitebox scene + step wizard",
     await editor.navigate();
 
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     const wallCountBefore = await editor.wallCount();
     const objectsBefore = await editor.objects();
 

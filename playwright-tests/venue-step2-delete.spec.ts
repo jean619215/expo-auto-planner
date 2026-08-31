@@ -38,7 +38,7 @@ async function placeTableInPreview(page: Page, editor: PlanEditorPage) {
   await editor.clickNextStep();
   await expect(editor.stepPreview).toBeVisible();
 
-  await page.getByTestId("furniture-place-table").click();
+  await editor.pickCatalogItem("TBL-120-75");
 
   // 重試三次:clickFloor 的時序問題偶爾會讓第一次點擊打不到地板 mesh
   // (見上面的註解)。這裡不是在容忍缺陷 —— 放置成功與否仍然要被斷言,
@@ -99,7 +99,7 @@ test.describe("Venue step 02 delete (R4)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.columnTool();
-    await editor.placeColumn({ x: 8, y: 8 });
+    await editor.placeColumn({ x: 21, y: 21 });
     await editor.clickNextStep();
     await expect(editor.stepPreview).toBeVisible();
 
@@ -143,7 +143,7 @@ test.describe("Venue step 02 delete (R4)", () => {
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.columnTool();
-    await editor.placeColumn({ x: 8, y: 8 });
+    await editor.placeColumn({ x: 21, y: 21 });
     expect(await editor.selectedType()).toBe("column");
 
     await editor.clickNextStep();

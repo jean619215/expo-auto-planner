@@ -12,12 +12,12 @@
 // **座標約定與匯入模型完全一致**:底面貼 y=0、水平以原點為中心,呼叫端用
 // `position=[center.x, 0, center.y]` 擺放即可。
 //
-// **所有尺寸都是 `FURNITURE_DEFAULTS` 的 w / height3d / h 的函數**,這裡不出現
-// 任何獨立的絕對尺寸來源 —— 家具尺寸的唯一來源是 FURNITURE_DEFAULTS
-// (AGENTS.md 硬規定)。少數幾個絕對值(桌板厚度、桿子半徑之類)是「做工厚度」
-// 而不是家具尺寸,而且一律夾在總尺寸之內。
+// **所有尺寸都是目錄品項的 w / height3d / d 的函數**,這裡不出現任何獨立的
+// 絕對尺寸來源 —— 家具尺寸的唯一來源是目錄(AGENTS.md 硬規定)。少數幾個絕對
+// 值(桌板厚度、桿子半徑之類)是「做工厚度」而不是家具尺寸,而且一律夾在總
+// 尺寸之內。
 
-import { FURNITURE_DEFAULTS, type FurnitureKind } from "./furniture";
+import { catalogItem, type CatalogItem, type ProceduralShape } from "./catalog";
 
 /** 表面處理。實際的顏色/粗糙度由 renderer 端的 FINISHES 決定。 */
 export type PartFinish = "body" | "accent" | "metal" | "panel";
@@ -164,30 +164,218 @@ function podiumParts(w: number, h: number, height3d: number): FurniturePart[] {
   ];
 }
 
-const BUILDERS: Partial<
-  Record<FurnitureKind, (w: number, h: number, height3d: number) => FurniturePart[]>
+/**
+ * 桌子:桌板 + 四支收在角落的桌腳。
+ *
+ * 方正規格件走程序化的理由(第三輪 D4):目錄要有「桌子 H75」與「桌子 H100」
+ * 兩個品項,而一份 GLB 只有一種比例 —— 等比縮放做不出兩種正確高度,非等比
+ * 拉伸又違反「匯入模型一律等比縮放」的硬規定,拉長的桌腳也很難看。造型由
+ * 參數拼出來就沒有這個問題:高度就是 `height3d`。
+ */
+function tableParts(w: number, h: number, height3d: number): FurniturePart[] {
+  const topH = SLAB_M;
+  const legH = height3d - topH;
+  const legSide = 0.05;
+  // 桌腳從外緣內縮一點點 —— 切齊外緣看起來像箱子而不是桌子。
+  const inset = legSide / 2 + 0.02;
+  const legX = w / 2 - inset;
+  const legZ = h / 2 - inset;
+
+  const legs: FurniturePart[] = [
+    [-1, -1],
+    [1, -1],
+    [-1, 1],
+    [1, 1],
+  ].map(([sx, sz], i) => ({
+    id: `leg-${i}`,
+    shape: { kind: "box" as const, w: legSide, h: legH, d: legSide },
+    position: [sx * legX, legH / 2, sz * legZ] as [number, number, number],
+    finish: "metal" as const,
+  }));
+
+  return [
+    ...legs,
+    {
+      // 桌板吃滿標稱尺寸 —— 這是整件家具的最大水平外廓。
+      id: "top",
+      shape: { kind: "box", w, h: topH, d: h },
+      position: [0, legH + topH / 2, 0],
+      finish: "body",
+    },
+  ];
+}
+
+/**
+ * 櫃子:主體 + 頂板 + 一條把手橫料。
+ *
+ * 只有一個盒子的話,櫃子與展示櫃在白模下完全分不出來;把手是最省的識別特徵。
+ */
+function cabinetParts(w: number, h: number, height3d: number): FurniturePart[] {
+  const plinthH = BASE_M;
+  const topH = SLAB_M * 0.6;
+  const bodyH = height3d - plinthH - topH;
+  const handleH = 0.03;
+
+  return [
+    {
+      id: "plinth",
+      shape: { kind: "box", w: w * 0.9, h: plinthH, d: h * 0.9 },
+      position: [0, plinthH / 2, 0],
+      finish: "accent",
+    },
+    {
+      id: "body",
+      shape: { kind: "box", w, h: bodyH, d: h },
+      position: [0, plinthH + bodyH / 2, 0],
+      finish: "body",
+    },
+    {
+      // 橫料貼在正面(-Z),略微凸出於櫃體之外仍在標稱深度內。
+      id: "handle",
+      shape: { kind: "box", w: w * 0.5, h: handleH, d: 0.02 },
+      position: [0, plinthH + bodyH * 0.62, -h / 2 + 0.01],
+      finish: "metal",
+    },
+    {
+      id: "top",
+      shape: { kind: "box", w, h: topH, d: h },
+      position: [0, plinthH + bodyH + topH / 2, 0],
+      finish: "accent",
+    },
+  ];
+}
+
+/**
+ * 展示櫃:底座 + 兩片層板 + 頂板。
+ *
+ * 層板是它與實心櫃子的差別 —— 白模下「看得到分層」就足以辨識,不需要玻璃。
+ */
+function displayCaseParts(
+  w: number,
+  h: number,
+  height3d: number,
+): FurniturePart[] {
+  const baseH = BASE_M;
+  const topH = SLAB_M * 0.6;
+  const shelfH = 0.03;
+  const innerH = height3d - baseH - topH;
+  const postSide = 0.04;
+  const postX = w / 2 - postSide / 2;
+  const postZ = h / 2 - postSide / 2;
+
+  const posts: FurniturePart[] = [
+    [-1, -1],
+    [1, -1],
+    [-1, 1],
+    [1, 1],
+  ].map(([sx, sz], i) => ({
+    id: `post-${i}`,
+    shape: { kind: "box" as const, w: postSide, h: innerH, d: postSide },
+    position: [sx * postX, baseH + innerH / 2, sz * postZ] as [
+      number,
+      number,
+      number,
+    ],
+    finish: "metal" as const,
+  }));
+
+  // 兩片層板把內部空間三等分,位置隨 height3d 走。
+  const shelves: FurniturePart[] = [1, 2].map((n) => ({
+    id: `shelf-${n}`,
+    shape: { kind: "box" as const, w: w * 0.94, h: shelfH, d: h * 0.94 },
+    position: [0, baseH + (innerH * n) / 3, 0] as [number, number, number],
+    finish: "panel" as const,
+  }));
+
+  return [
+    {
+      id: "base",
+      shape: { kind: "box", w, h: baseH, d: h },
+      position: [0, baseH / 2, 0],
+      finish: "accent",
+    },
+    ...posts,
+    ...shelves,
+    {
+      id: "top",
+      shape: { kind: "box", w, h: topH, d: h },
+      position: [0, baseH + innerH + topH / 2, 0],
+      finish: "accent",
+    },
+  ];
+}
+
+/**
+ * 展台:略微內縮的踢腳座 + 實心台面。
+ *
+ * 與桌子的差別是「沒有腳」—— 展台是實心量體,商品放在頂面。內縮的踢腳座讓它
+ * 不會讀成一個貼地的方塊,也是它在白模下與純色地板分得開的原因。
+ */
+function platformParts(w: number, h: number, height3d: number): FurniturePart[] {
+  const plinthH = Math.min(BASE_M, height3d * 0.2);
+  const bodyH = height3d - plinthH - SLAB_M;
+  return [
+    {
+      id: "plinth",
+      shape: { kind: "box", w: w * 0.88, h: plinthH, d: h * 0.88 },
+      position: [0, plinthH / 2, 0],
+      finish: "accent",
+    },
+    {
+      id: "body",
+      shape: { kind: "box", w: w * 0.96, h: bodyH, d: h * 0.96 },
+      position: [0, plinthH + bodyH / 2, 0],
+      finish: "body",
+    },
+    {
+      // 台面吃滿標稱尺寸 —— 整件的最大水平外廓。
+      id: "top",
+      shape: { kind: "box", w, h: SLAB_M, d: h },
+      position: [0, height3d - SLAB_M / 2, 0],
+      finish: "panel",
+    },
+  ];
+}
+
+/**
+ * 造型名對到零件建構函式。
+ *
+ * 索引鍵是**造型**而不是品項:同一個造型會被多個品項共用(目錄長大之後,
+ * 「接待櫃檯 100」與「接待櫃檯 150」是兩個代碼、同一種櫃檯造型,只是尺寸參數
+ * 不同)。以造型為鍵,新增尺寸變體不必碰這裡。
+ */
+const BUILDERS: Record<
+  ProceduralShape,
+  (w: number, h: number, height3d: number) => FurniturePart[]
 > = {
   counter: counterParts,
   bannerStand: bannerStandParts,
   podium: podiumParts,
+  table: tableParts,
+  cabinet: cabinetParts,
+  displayCase: displayCaseParts,
+  platform: platformParts,
 };
 
-/** 這個 kind 是否由程序化幾何繪製(而非匯入模型或白模 box)。 */
-export function hasProceduralFurniture(kind: FurnitureKind): boolean {
-  return kind in BUILDERS;
+/** 這個代碼是否由程序化幾何繪製(而非匯入模型或白模 box)。 */
+export function hasProceduralFurniture(code: string): boolean {
+  return catalogItem(code)?.geometry.kind === "procedural";
+}
+
+/** 依目錄品項建零件清單;尺寸全部來自該品項。 */
+export function proceduralPartsForItem(item: CatalogItem): FurniturePart[] | undefined {
+  if (item.geometry.kind !== "procedural") return undefined;
+  return BUILDERS[item.geometry.shape](item.w, item.d, item.height3d);
 }
 
 /**
- * 取得該 kind 的零件清單;沒有程序化造型的 kind 回傳 `undefined`。
- * 尺寸全部由 `FURNITURE_DEFAULTS` 推導。
+ * 取得該代碼的零件清單;不是程序化品項(或代碼不存在)回傳 `undefined`。
  */
 export function proceduralFurnitureParts(
-  kind: FurnitureKind
+  code: string
 ): FurniturePart[] | undefined {
-  const build = BUILDERS[kind];
-  if (!build) return undefined;
-  const defaults = FURNITURE_DEFAULTS[kind];
-  return build(defaults.w, defaults.h, defaults.height3d);
+  const item = catalogItem(code);
+  return item ? proceduralPartsForItem(item) : undefined;
 }
 
 /**
@@ -233,14 +421,14 @@ export function partExtentM(part: FurniturePart): {
 /**
  * 整件程序化家具的外廓尺寸(公尺)。
  *
- * 存在的理由:AGENTS.md 要求家具尺寸唯一來源是 `FURNITURE_DEFAULTS`,而
- * 程序化造型是由一堆比例拼出來的 —— 沒有這個函式,「拼出來的東西到底有沒有
- * 剛好等於標稱尺寸」就只能靠肉眼。驗收 spec 直接拿它跟 FURNITURE_DEFAULTS 比。
+ * 存在的理由:AGENTS.md 要求家具尺寸唯一來源是目錄,而程序化造型是由一堆比例
+ * 拼出來的 —— 沒有這個函式,「拼出來的東西到底有沒有剛好等於標稱尺寸」就只能
+ * 靠肉眼。驗收 spec 直接拿它跟目錄比。
  */
 export function proceduralFurnitureSizeM(
-  kind: FurnitureKind
+  code: string
 ): [number, number, number] | undefined {
-  const parts = proceduralFurnitureParts(kind);
+  const parts = proceduralFurnitureParts(code);
   if (!parts || parts.length === 0) return undefined;
 
   const min: [number, number, number] = [Infinity, Infinity, Infinity];

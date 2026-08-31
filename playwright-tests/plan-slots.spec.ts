@@ -137,7 +137,7 @@ const FIXTURE_PLAN = {
   walls: [],
   columns: [],
   furniture: [
-    { id: "f1", kind: "table", center: { x: 10, y: 10 }, w: 1.2, h: 0.7, rotationDeg: 0 },
+    { id: "f1", code: "TBL-120-75", center: { x: 10, y: 10 }, rotationDeg: 0 },
   ],
   venueSizeM: 40,
 };
@@ -305,7 +305,7 @@ test.describe("存檔面板 - AC4/AC5 dirty 判定", () => {
 
     // 使工作區 dirty:新增一根柱子。
     await editor.columnTool();
-    await editor.placeColumn({ x: 10, y: 10 });
+    await editor.placeColumn({ x: 21, y: 21 });
     expect(await editor.columnCount()).toBe(1);
 
     await slots.open();

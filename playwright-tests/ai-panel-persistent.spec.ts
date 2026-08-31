@@ -94,7 +94,11 @@ const ADD_CHAIR_FIXTURE: MockResponse = {
         type: "tool_use",
         id: "toolu_add_chair_1",
         name: "add_furniture",
-        input: { kind: "chair", center: { x: 24, y: 24 }, rotationDeg: 0 },
+        // T4 起 schema 吃目錄代碼。這個 fixture、`src/lib/ai/tools.ts` 的
+        // schema、`PlanEditor` 的 handler 三者必須同時是同一種形狀 —— T3 只改
+        // 了這裡,結果 handler 拿到 undefined、丟例外、整個 applyActions 掛掉,
+        // 而測試只說「找不到 ai-action-summary」,指不到真正的原因。
+        input: { code: "CHR-45-90", center: { x: 24, y: 24 }, rotationDeg: 0 },
       },
     ],
     stopReason: "tool_use",
@@ -200,7 +204,7 @@ test.describe("AiPanel 跨步驟常駐 - AC5 preview 下指令即時反映 3D", 
     const ai = new AiPanelPage(page);
     await editor.navigate();
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.clickNextStep();
     await expect(editor.stepPreview).toBeVisible();
     await ai.open();
@@ -243,7 +247,7 @@ test.describe("AiPanel 跨步驟常駐 - AC7/AC6 手動 3D + AI 互不覆蓋、c
     await expect(editor.stepPreview).toBeVisible();
 
     // 手動在 3D 內放置一件家具(桌子)。
-    await page.getByTestId("furniture-place-table").click();
+    await editor.pickCatalogItem("TBL-120-75");
     const center = await canvasCenter(page);
     await clickFloor(page, center);
     await expect(editor.scene).toHaveAttribute(
@@ -270,9 +274,9 @@ test.describe("AiPanel 跨步驟常駐 - AC7/AC6 手動 3D + AI 互不覆蓋、c
     expect(latestUserText).toContain("[目前配置]");
     const appendixJson = JSON.parse(
       latestUserText.slice(latestUserText.indexOf("{")),
-    ) as { furniture: { kind: string }[] };
+    ) as { furniture: { code: string }[] };
     expect(appendixJson.furniture).toHaveLength(1);
-    expect(appendixJson.furniture[0].kind).toBe("table");
+    expect(appendixJson.furniture[0].code).toBe("TBL-120-75");
 
     // AI 回應套用後,手動放置的桌子仍在,AI 新增的椅子也在 — 互不覆蓋。
     await expect(ai.actionSummary).toContainText("已新增椅子");
@@ -286,8 +290,8 @@ test.describe("AiPanel 跨步驟常駐 - AC7/AC6 手動 3D + AI 互不覆蓋、c
     await expect(editor.stepEdit).toBeVisible();
     expect(await editor.editor.getAttribute("data-furniture-count")).toBe("2");
     const furnitureRaw = await editor.editor.getAttribute("data-furniture");
-    const furniture = JSON.parse(furnitureRaw ?? "[]") as { kind: string }[];
-    expect(furniture.map((f) => f.kind).sort()).toEqual(["chair", "table"]);
+    const furniture = JSON.parse(furnitureRaw ?? "[]") as { code: string }[];
+    expect(furniture.map((f) => f.code).sort()).toEqual(["CHR-45-90", "TBL-120-75"]);
   });
 });
 
@@ -312,7 +316,7 @@ test.describe("AiPanel 跨步驟常駐 - Edge case: preview pending 中切回 ed
 
     // 等待期間使用者在 edit 手動畫一面牆。
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     expect(await editor.wallCount()).toBe(1);
 
     // 回應到達後,applyActions 仍套用到正確(最新)的幾何 state:AI 新增

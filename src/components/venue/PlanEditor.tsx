@@ -1,9 +1,15 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Arrow, Circle, Layer, Line, Rect, Stage, Text } from "react-konva";
 import type Konva from "konva";
-import { ZoomIn, ZoomOut, Maximize } from "lucide-react";
+import {
+  ZoomIn,
+  ZoomOut,
+  Maximize,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from "lucide-react";
 import {
   BOOTH_PRESETS,
   DEFAULT_BOOTH,
@@ -13,7 +19,7 @@ import {
   GRID_MAJOR_M,
   GRID_MINOR_M,
   MIN_FLOOR_VERTICES,
-  PLAN_AREA_SIZE_M,
+  planAreaFor,
   VENUE_SIZE_M,
   WALL_THICKNESS_M,
   clampColumnCenter,
@@ -47,16 +53,18 @@ import {
   wallLengthM,
   type BoundarySide,
   type Column,
+  type FloorBounds,
   type FloorPolygon,
   type PlanPoint,
   type PlanSnapshot,
   type WallSegment,
 } from "@/lib/venue/plan";
 import {
-  FURNITURE_DEFAULTS,
+  furnitureFootprintM,
   translateFurniture,
   type FurnitureItem,
 } from "@/lib/venue/furniture";
+import { catalogItem, subCategoryLabel } from "@/lib/venue/catalog";
 import type {
   AiAction,
   AiActionResult,
@@ -65,10 +73,7 @@ import type {
 import { fromStoredConversation } from "@/lib/ai-panel/messages";
 import type { ChatTurn } from "./AiPanel";
 import AiPanel from "./AiPanel";
-import PlanSlotsDialog, {
-  type LoadedPlan,
-  type Slot,
-} from "./PlanSlotsDialog";
+import PlanSlotsDialog, { type LoadedPlan, type Slot } from "./PlanSlotsDialog";
 import PlanToolbar, { segmentClassName, type EditorMode } from "./PlanToolbar";
 import VenueSceneLoader from "./VenueSceneLoader";
 import RefinedSceneLoader from "./RefinedSceneLoader";
@@ -76,10 +81,14 @@ import {
   DEFAULT_SURFACE_SELECTION,
   FLOOR_PRESETS,
   WALL_PRESETS,
-  floorPreset,
-  wallPreset,
+  normalizeSurfaceSelection,
+  pruneWallOverrides,
+  wallPresetIdFor,
+  withWallOverride,
   type SurfaceSelection,
 } from "@/lib/venue/surfacePresets";
+import { EMPTY_SURFACE_UPLOADS, type SurfaceUploads } from "./SurfaceMaterials";
+import SurfacePicker, { SurfaceSwatch } from "./SurfacePicker";
 import { Button } from "@/components/ui/button";
 import {
   AlertDialog,
@@ -102,8 +111,10 @@ const MAX_SURFACE_UPLOAD_BYTES = 8 * 1024 * 1024;
 
 // 預設視圖 fit 尺寸(= VENUE_SIZE_M,與現行預設視覺逐像素一致的關鍵)。
 const DEFAULT_VIEW_SIZE_M = VENUE_SIZE_M;
-// zoom out 到底恰好完整容納 PLAN_AREA_SIZE_M(200)。
-const MIN_SCALE = DEFAULT_VIEW_SIZE_M / PLAN_AREA_SIZE_M;
+// 縮放下限固定 25%。可編輯範圍現在跟著攤位走(3×3 攤位只有 13×13m),不再
+// 需要為了「看得到整個 200m 平面」而綁定範圍大小 —— 這個下限現在純粹是
+// 使用者能縮多小的體感界線。
+const MIN_SCALE = 0.25;
 const MAX_SCALE = 4;
 const WHEEL_SCALE_FACTOR = 1.06;
 const BUTTON_SCALE_FACTOR = 1.25;
@@ -114,33 +125,71 @@ type SelectedObject = {
 } | null;
 type WizardStep = "edit" | "preview" | "refined";
 
-function buildGridLines(pxPerMeter: number, venueSizeM: number) {
+/**
+ * 可編輯範圍上的 1m 格線。範圍是任意軸對齊矩形(不再是從原點起算的正方形),
+ * 所以直線與橫線要各自照自己那一軸的公尺刻度跑,不能共用一個迴圈變數。
+ *
+ * 刻度對齊世界座標的整數公尺(而不是從 minX 起算),圖上的 5m 粗線才會落在
+ * 5 的倍數上 —— 攤位錨在 20m,邊距 5m,minX 是 15,兩者剛好一致;之後邊距
+ * 若改成非整數,粗線仍然對得上公尺刻度。
+ */
+function buildGridLines(pxPerMeter: number, area: FloorBounds) {
   const lines: {
     key: string;
     points: number[];
     stroke: string;
     strokeWidth: number;
   }[] = [];
-  const sizePx = venueSizeM * pxPerMeter;
 
-  for (let m = 0; m <= venueSizeM; m += GRID_MINOR_M) {
+  const x0 = area.minX * pxPerMeter;
+  const x1 = area.maxX * pxPerMeter;
+  const y0 = area.minY * pxPerMeter;
+  const y1 = area.maxY * pxPerMeter;
+
+  for (
+    let m = Math.ceil(area.minX / GRID_MINOR_M) * GRID_MINOR_M;
+    m <= area.maxX;
+    m += GRID_MINOR_M
+  ) {
     const isMajor = m % GRID_MAJOR_M === 0;
     const pos = m * pxPerMeter;
     lines.push({
       key: `v-${m}`,
-      points: [pos, 0, pos, sizePx],
+      points: [pos, y0, pos, y1],
       stroke: isMajor ? "#d6d3d1" : "#e7e5e4",
       strokeWidth: isMajor ? 1.5 : 1,
     });
+  }
+
+  for (
+    let m = Math.ceil(area.minY / GRID_MINOR_M) * GRID_MINOR_M;
+    m <= area.maxY;
+    m += GRID_MINOR_M
+  ) {
+    const isMajor = m % GRID_MAJOR_M === 0;
+    const pos = m * pxPerMeter;
     lines.push({
       key: `h-${m}`,
-      points: [0, pos, sizePx, pos],
+      points: [x0, pos, x1, pos],
       stroke: isMajor ? "#d6d3d1" : "#e7e5e4",
       strokeWidth: isMajor ? 1.5 : 1,
     });
   }
 
   return lines;
+}
+
+/** 座標尺上的 5m 標籤刻度(世界座標整數公尺)。 */
+function majorTicks(min: number, max: number): number[] {
+  const ticks: number[] = [];
+  for (
+    let m = Math.ceil(min / GRID_MAJOR_M) * GRID_MAJOR_M;
+    m <= max;
+    m += GRID_MAJOR_M
+  ) {
+    ticks.push(m);
+  }
+  return ticks;
 }
 
 const WIZARD_STEPS: { step: WizardStep; no: string; label: string }[] = [
@@ -207,6 +256,18 @@ export default function PlanEditor() {
   // 判斷是否放行 Stage 的 pan drag。
   const panBlockedRef = useRef(false);
   const [polygon, setPolygon] = useState<FloorPolygon>(DEFAULT_FLOOR);
+  /**
+   * 攤位本身的外接矩形 —— 可編輯範圍的錨。
+   *
+   * **刻意不從 `polygon` 即時推導。** 推導過的版本會在拖曳頂點時失控:範圍
+   * 跟著地板長大,長大的範圍又允許把地板拖得更遠,一次 8 步的拖曳就從 3m
+   * 攤位跑到 40m 外。範圍必須錨在「使用者選定的攤位尺寸」這個穩定的東西上,
+   * 只在真正重新定義攤位時才更新(換 preset / 自訂尺寸 / 讀檔 / AI 產生),
+   * 頂點的自由編輯則在那圈邊距內活動。
+   */
+  const [boothBounds, setBoothBounds] = useState(() =>
+    floorBoundsM(DEFAULT_FLOOR),
+  );
   const [selectedVertex, setSelectedVertex] = useState<number | null>(null);
 
   const [mode, setMode] = useState<EditorMode>("select");
@@ -228,11 +289,12 @@ export default function PlanEditor() {
   // 使用者上傳的材質圖。刻意只活在瀏覽器裡:blob URL,不進存檔、不上傳
   // 後端、重整就沒了 —— 這一輪的需求是「上傳材質來預覽」,持久化另立
   // story(需要新的上傳 API、檔案驗證、RLS 與配額)。
-  const [surfaceUploads, setSurfaceUploads] = useState<{
-    floor: string | null;
-    wall: string | null;
-  }>({ floor: null, wall: null });
+  const [surfaceUploads, setSurfaceUploads] = useState<SurfaceUploads>(
+    EMPTY_SURFACE_UPLOADS,
+  );
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // 步驟 03 的材質側欄開合。與步驟 02 的側欄一致:預設展開,收合後只留切換鈕。
+  const [refinedSidebarOpen, setRefinedSidebarOpen] = useState(true);
   const [customBooth, setCustomBooth] = useState({
     w: String(DEFAULT_BOOTH.w),
     h: String(DEFAULT_BOOTH.h),
@@ -302,7 +364,29 @@ export default function PlanEditor() {
   // 數值同現行預設(DEFAULT_VIEW_SIZE_M = VENUE_SIZE_M)— 預設視覺不變的
   // 關鍵:zoom/pan 是後面 Stage transform 這一層,與此無關。
   const pxPerMeter = computePxPerMeter(stagePx, DEFAULT_VIEW_SIZE_M);
-  const gridLines = buildGridLines(pxPerMeter, PLAN_AREA_SIZE_M);
+  /**
+   * 可編輯範圍 —— 由 `boothBounds` 外擴一圈邊距,前端所有 clamp 的依據。
+   *
+   * 錨的是 `boothBounds`(使用者選定的攤位尺寸),**不是** `polygon`(地板現況)。
+   * 兩者平時相等,但拖曳頂點只動 `polygon`,`boothBounds` 只在四個地方重錨:
+   * 初始化、讀檔、AI 重畫整塊地板、`applyBoothSize`。
+   *
+   * 這份看似重複的 state 不能省。改成從 `polygon` 即時推導會構成回饋迴圈:
+   * 拖大地板 → 範圍跟著變大 → 更大的範圍允許把頂點拖得更遠。實測一次 8 步
+   * 拖曳就把 3m 攤位拉到 40m 外。詳見 `planAreaFor` 的註解。
+   */
+  const planArea = useMemo(
+    () =>
+      planAreaFor(boothBounds.widthM, boothBounds.heightM, {
+        x: boothBounds.minX,
+        y: boothBounds.minY,
+      }),
+    [boothBounds],
+  );
+  const gridLines = useMemo(
+    () => buildGridLines(pxPerMeter, planArea),
+    [pxPerMeter, planArea],
+  );
 
   // Konva 官方滾輪錨點縮放食譜:以 anchor(螢幕座標系下的一點)為中心縮放,
   // 該點縮放前後的螢幕位置不變。newScale 靜默 clamp 到 [MIN_SCALE,
@@ -331,7 +415,9 @@ export default function PlanEditor() {
     const pointer = stage?.getPointerPosition();
     if (!pointer) return;
     zoomTo(
-      e.evt.deltaY > 0 ? view.scale / WHEEL_SCALE_FACTOR : view.scale * WHEEL_SCALE_FACTOR,
+      e.evt.deltaY > 0
+        ? view.scale / WHEEL_SCALE_FACTOR
+        : view.scale * WHEEL_SCALE_FACTOR,
       pointer,
     );
   }
@@ -360,24 +446,32 @@ export default function PlanEditor() {
       walls,
       columns,
       furniture,
-      venueSizeM: PLAN_AREA_SIZE_M,
+      venueSizeM: planArea.widthM,
       wallHeightM,
-      surfaces,
+      // 存檔前丟掉已刪除的牆留下的覆寫 —— 否則存檔會慢慢累積查不到對象的
+      // 設定,而 dirty 判定(序列化比對)也會因為這些幽靈欄位而誤報。
+      surfaces: pruneWallOverrides(
+        surfaces,
+        walls.map((wall) => wall.id),
+      ),
     };
   }
 
   // 序列化比對,不做逐操作 dirty flag(取捨見 architect-plan.md D5)。僅在
   // 讀檔前呼叫;存檔不檢查。
   function isDirty(): boolean {
-    return serializePlanSnapshot(getSnapshot()) !== (savedBaseline ?? EMPTY_PLAN_BASELINE);
+    return (
+      serializePlanSnapshot(getSnapshot()) !==
+      (savedBaseline ?? EMPTY_PLAN_BASELINE)
+    );
   }
 
   // 讀檔套用(architect-plan.md D4)。呼叫時機為 PlanSlotsDialog 的
   // GET /api/plans/[slot] 200 之後;非 200 情境該元件不會呼叫此函式,原地
   // 狀態不丟。
   function applyLoadedPlan(data: LoadedPlan) {
-    // rawPlan.venueSizeM(舊存檔任意值:40/50/>200/缺欄位)一律忽略 — 前端
-    // 固定以 PLAN_AREA_SIZE_M(200)為運算上限,天然涵蓋「舊檔相容 +
+    // rawPlan.venueSizeM(舊存檔任意值:40/50/200/缺欄位)一律忽略 — 可編輯
+    // 範圍由讀進來的 polygon 重新錨定攤位,天然涵蓋「舊檔相容 +
     // 缺欄位 fallback 不崩潰」,無需 fallback 分支。
     const rawPlan = data.plan as {
       polygon?: FloorPolygon;
@@ -385,7 +479,11 @@ export default function PlanEditor() {
       columns?: Column[];
       furniture?: FurnitureItem[];
       wallHeightM?: number;
-      surfaces?: SurfaceSelection;
+      surfaces?: {
+        floor?: string;
+        wall?: string;
+        wallOverrides?: Record<string, string>;
+      };
     };
     const loadedPolygon = rawPlan.polygon ?? DEFAULT_FLOOR;
     const loadedWalls = rawPlan.walls ?? [];
@@ -394,19 +492,25 @@ export default function PlanEditor() {
     // 缺欄位的舊存檔一律回預設牆高 —— 決議是舊檔作廢、不寫遷移,但讀到
     // 舊檔也不該炸,clampWallHeight 對 undefined 會回 DEFAULT_WALL_HEIGHT_M。
     const loadedWallHeightM = clampWallHeight(rawPlan.wallHeightM as number);
-    // 缺欄位或存了不存在的 preset id 時,floorPreset/wallPreset 會回第一個
-    // 選項,所以這裡不需要額外的驗證分支。
-    const loadedSurfaces: SurfaceSelection = {
-      floor: floorPreset(rawPlan.surfaces?.floor ?? "").id,
-      wall: wallPreset(rawPlan.surfaces?.wall ?? "").id,
-    };
+    // 缺欄位或存了不存在的 preset id 時,normalizeSurfaceSelection 會回第一個
+    // 選項,所以這裡不需要額外的驗證分支。逐面牆的覆寫(T9)再過一次 prune:
+    // 存檔裡可能留著已經不存在的牆,那些設定沒有對象,留著只會在下一次畫牆
+    // 撞上同一個 id 時冒出來歷不明的材質。
+    const loadedSurfaces = pruneWallOverrides(
+      normalizeSurfaceSelection(rawPlan.surfaces ?? {}),
+      loadedWalls.map((wall) => wall.id),
+    );
 
     setPolygon(loadedPolygon);
+    setBoothBounds(floorBoundsM(loadedPolygon));
     setWalls(loadedWalls);
     setColumns(loadedColumns);
     setFurniture(loadedFurniture);
     setWallHeightM(loadedWallHeightM);
     setSurfaces(loadedSurfaces);
+    // 上一份圖的自訂圖不能跟著留下來:blob URL 綁的是上一份圖的牆 id,留著
+    // 會貼到剛讀進來、恰好同 id 的牆上。上傳本來就不進存檔(第二輪決議)。
+    setSurfaceUploads(EMPTY_SURFACE_UPLOADS);
     setSelectedObject(null);
     setSelectedVertex(null);
 
@@ -422,7 +526,7 @@ export default function PlanEditor() {
         walls: loadedWalls,
         columns: loadedColumns,
         furniture: loadedFurniture,
-        venueSizeM: PLAN_AREA_SIZE_M,
+        venueSizeM: planArea.widthM,
         wallHeightM: loadedWallHeightM,
         surfaces: loadedSurfaces,
       }),
@@ -450,7 +554,7 @@ export default function PlanEditor() {
   ) {
     const node = e.target;
     const meterPoint = pxToMeters({ x: node.x(), y: node.y() }, pxPerMeter);
-    const next = moveVertex(polygon, index, meterPoint, PLAN_AREA_SIZE_M);
+    const next = moveVertex(polygon, index, meterPoint, planArea);
     setPolygon(next);
     const snappedPx = metersToPx(next[index], pxPerMeter);
     node.position(snappedPx);
@@ -462,7 +566,7 @@ export default function PlanEditor() {
   ) {
     const node = e.target;
     const meterPoint = pxToMeters({ x: node.x(), y: node.y() }, pxPerMeter);
-    const next = moveVertex(polygon, index, meterPoint, PLAN_AREA_SIZE_M);
+    const next = moveVertex(polygon, index, meterPoint, planArea);
     setPolygon(next);
     const snappedPx = metersToPx(next[index], pxPerMeter);
     node.position(snappedPx);
@@ -477,7 +581,7 @@ export default function PlanEditor() {
     const { edgeIndex, distance } = findClosestEdge(polygon, meterPoint);
     // 只有點在邊附近 (0.5m 內) 才插入頂點 — 點在多邊形內部深處不動作。
     if (distance > 0.5) return;
-    const next = insertVertexOnEdge(polygon, edgeIndex, meterPoint, PLAN_AREA_SIZE_M);
+    const next = insertVertexOnEdge(polygon, edgeIndex, meterPoint, planArea);
     setPolygon(next);
   }
 
@@ -605,7 +709,7 @@ export default function PlanEditor() {
     const meterPoint = pxToMeters(pointer, pxPerMeter);
 
     if (mode === "wall") {
-      const snapped = snapPoint(meterPoint, PLAN_AREA_SIZE_M);
+      const snapped = snapPoint(meterPoint, planArea);
       setDraftWall({ start: snapped, end: snapped });
       return;
     }
@@ -623,7 +727,7 @@ export default function PlanEditor() {
     const pointer = stage?.getRelativePointerPosition();
     if (!pointer) return;
     const meterPoint = pxToMeters(pointer, pxPerMeter);
-    const snapped = snapPoint(meterPoint, PLAN_AREA_SIZE_M);
+    const snapped = snapPoint(meterPoint, planArea);
     setDraftWall({ start: draftWall.start, end: snapped });
   }
 
@@ -632,7 +736,7 @@ export default function PlanEditor() {
   ) {
     if (mode === "wall") {
       if (draftWall) {
-        const wall = createWall(draftWall.start, draftWall.end, PLAN_AREA_SIZE_M);
+        const wall = createWall(draftWall.start, draftWall.end, planArea);
         if (wall) {
           setWalls((prev) => [...prev, wall]);
           setSelectedObject({ type: "wall", id: wall.id });
@@ -650,7 +754,7 @@ export default function PlanEditor() {
       const pointer = stage?.getRelativePointerPosition();
       if (!pointer) return;
       const meterPoint = pxToMeters(pointer, pxPerMeter);
-      const column = createColumn(meterPoint, PLAN_AREA_SIZE_M);
+      const column = createColumn(meterPoint, planArea);
       setColumns((prev) => [...prev, column]);
       setSelectedObject({ type: "column", id: column.id });
       setSelectedVertex(null);
@@ -667,7 +771,7 @@ export default function PlanEditor() {
     const originPx = metersToPx(wall.start, pxPerMeter);
     const deltaPx = { x: node.x() - originPx.x, y: node.y() - originPx.y };
     const deltaM = pxToMeters(deltaPx, pxPerMeter);
-    const updated = translateWall(wall, deltaM, PLAN_AREA_SIZE_M);
+    const updated = translateWall(wall, deltaM, planArea);
     setWalls((prev) => prev.map((w) => (w.id === wall.id ? updated : w)));
     const snappedPx = metersToPx(updated.start, pxPerMeter);
     node.position(snappedPx);
@@ -681,7 +785,7 @@ export default function PlanEditor() {
     const originPx = metersToPx(column.center, pxPerMeter);
     const deltaPx = { x: node.x() - originPx.x, y: node.y() - originPx.y };
     const deltaM = pxToMeters(deltaPx, pxPerMeter);
-    const updated = translateColumn(column, deltaM, PLAN_AREA_SIZE_M);
+    const updated = translateColumn(column, deltaM, planArea);
     setColumns((prev) => prev.map((c) => (c.id === column.id ? updated : c)));
     const snappedPx = metersToPx(updated.center, pxPerMeter);
     node.position(snappedPx);
@@ -694,7 +798,7 @@ export default function PlanEditor() {
   ) {
     const node = e.target;
     const meterPoint = pxToMeters({ x: node.x(), y: node.y() }, pxPerMeter);
-    const updated = moveWallEndpoint(wall, which, meterPoint, PLAN_AREA_SIZE_M);
+    const updated = moveWallEndpoint(wall, which, meterPoint, planArea);
     setWalls((prev) => prev.map((w) => (w.id === wall.id ? updated : w)));
     const snappedPx = metersToPx(updated[which], pxPerMeter);
     node.position(snappedPx);
@@ -707,7 +811,7 @@ export default function PlanEditor() {
   ) {
     const node = e.target;
     const meterPoint = pxToMeters({ x: node.x(), y: node.y() }, pxPerMeter);
-    const updated = resizeColumnCorner(column, corner, meterPoint, PLAN_AREA_SIZE_M);
+    const updated = resizeColumnCorner(column, corner, meterPoint, planArea);
     setColumns((prev) => prev.map((c) => (c.id === column.id ? updated : c)));
     const cornerMeter = {
       x: updated.center.x + (corner.x * updated.w) / 2,
@@ -749,7 +853,7 @@ export default function PlanEditor() {
       switch (action.type) {
         case "generate_plan": {
           const floorPoints = action.input.floor.map((p) =>
-            snapPoint(p, PLAN_AREA_SIZE_M),
+            snapPoint(p, planArea),
           );
           if (floorPoints.length < MIN_FLOOR_VERTICES) {
             results.push({
@@ -760,36 +864,42 @@ export default function PlanEditor() {
             break;
           }
           const generatedWalls = action.input.walls
-            .map((w) => createWall(w.start, w.end, PLAN_AREA_SIZE_M))
+            .map((w) => createWall(w.start, w.end, planArea))
             .filter((w): w is WallSegment => w !== null);
           const generatedColumns: Column[] = action.input.columns.map((c) => ({
             id: createObjectId(),
             center: clampColumnCenter(
-              snapPoint(c.center, PLAN_AREA_SIZE_M),
+              snapPoint(c.center, planArea),
               c.w,
               c.h,
-              PLAN_AREA_SIZE_M,
+              planArea,
             ),
             w: c.w,
             h: c.h,
           }));
-          const generatedFurniture: FurnitureItem[] =
-            action.input.furniture.map((f) => {
-              const defaults = FURNITURE_DEFAULTS[f.kind];
-              return {
-                id: createObjectId(),
-                kind: f.kind,
-                center: clampColumnCenter(
-                  snapPoint(f.center, PLAN_AREA_SIZE_M),
-                  defaults.w,
-                  defaults.h,
-                  PLAN_AREA_SIZE_M,
-                ),
-                w: defaults.w,
-                h: defaults.h,
-                rotationDeg: normalizeRotationDeg(f.rotationDeg),
-              };
+          // 目錄代碼是模型送來的自由字串(schema 不用 enum,理由見
+          // src/lib/ai/tools.ts)。查不到的代碼跳過該件、記下來,其餘照放 ——
+          // 一件寫錯不該讓整份配置生不出來。
+          const unknownCodes: string[] = [];
+          const generatedFurniture: FurnitureItem[] = [];
+          for (const f of action.input.furniture) {
+            const entry = catalogItem(f.code);
+            if (!entry) {
+              unknownCodes.push(f.code);
+              continue;
+            }
+            generatedFurniture.push({
+              id: createObjectId(),
+              code: entry.code,
+              center: clampColumnCenter(
+                snapPoint(f.center, planArea),
+                entry.w,
+                entry.d,
+                planArea,
+              ),
+              rotationDeg: normalizeRotationDeg(f.rotationDeg),
             });
+          }
           nextPolygon = floorPoints;
           nextWalls = generatedWalls;
           nextColumns = generatedColumns;
@@ -804,33 +914,45 @@ export default function PlanEditor() {
             parts.push(`${generatedColumns.length} 根柱子`);
           if (generatedFurniture.length > 0)
             parts.push(`${generatedFurniture.length} 件家具`);
+          const skipped =
+            unknownCodes.length > 0
+              ? `;${unknownCodes.length} 件家具的代碼不在目錄裡,已跳過(${unknownCodes.join("、")})`
+              : "";
           results.push({
             toolUseId: action.toolUseId,
             ok: true,
-            message: `已產生配置:${parts.join("、")}`,
+            message: `已產生配置:${parts.join("、")}${skipped}`,
           });
           break;
         }
         case "add_furniture": {
-          const defaults = FURNITURE_DEFAULTS[action.input.kind];
+          // 代碼查不到就拒絕這一個 action,並繼續處理同一批的其他 action ——
+          // 與 move_item / remove_item 的「已跳過」模式一致。
+          const entry = catalogItem(action.input.code);
+          if (!entry) {
+            results.push({
+              toolUseId: action.toolUseId,
+              ok: false,
+              message: `代碼 ${action.input.code} 不在家具目錄裡,已跳過新增`,
+            });
+            break;
+          }
           const item: FurnitureItem = {
             id: createObjectId(),
-            kind: action.input.kind,
+            code: entry.code,
             center: clampColumnCenter(
-              snapPoint(action.input.center, PLAN_AREA_SIZE_M),
-              defaults.w,
-              defaults.h,
-              PLAN_AREA_SIZE_M,
+              snapPoint(action.input.center, planArea),
+              entry.w,
+              entry.d,
+              planArea,
             ),
-            w: defaults.w,
-            h: defaults.h,
             rotationDeg: normalizeRotationDeg(action.input.rotationDeg),
           };
           nextFurniture = [...nextFurniture, item];
           results.push({
             toolUseId: action.toolUseId,
             ok: true,
-            message: `已新增${defaults.label}`,
+            message: `已新增${subCategoryLabel(entry.subCategory)}`,
           });
           break;
         }
@@ -853,7 +975,7 @@ export default function PlanEditor() {
             const updated = translateWall(
               wall,
               { x: center.x - mid.x, y: center.y - mid.y },
-              PLAN_AREA_SIZE_M,
+              planArea,
             );
             nextWalls = nextWalls.map((w, i) => (i === index ? updated : w));
           } else if (itemType === "column") {
@@ -869,7 +991,7 @@ export default function PlanEditor() {
             const updated = translateColumn(
               col,
               { x: center.x - col.center.x, y: center.y - col.center.y },
-              PLAN_AREA_SIZE_M,
+              planArea,
             );
             nextColumns = nextColumns.map((c, i) =>
               i === index ? updated : c,
@@ -887,7 +1009,7 @@ export default function PlanEditor() {
             const updated = translateFurniture(
               item,
               { x: center.x - item.center.x, y: center.y - item.center.y },
-              PLAN_AREA_SIZE_M,
+              planArea,
             );
             nextFurniture = nextFurniture.map((f, i) =>
               i === index ? updated : f,
@@ -941,9 +1063,7 @@ export default function PlanEditor() {
           break;
         }
         case "resize_floor": {
-          const points = action.input.points.map((p) =>
-            snapPoint(p, PLAN_AREA_SIZE_M),
-          );
+          const points = action.input.points.map((p) => snapPoint(p, planArea));
           if (points.length < MIN_FLOOR_VERTICES) {
             results.push({
               toolUseId: action.toolUseId,
@@ -969,6 +1089,8 @@ export default function PlanEditor() {
     // 第一次呼叫剛寫入的結果,而不是等到 effect 才同步的舊值。
     if (nextPolygon !== polygonRef.current) {
       setPolygon(nextPolygon);
+      // AI 換掉整塊地板 = 重新定義攤位,範圍跟著重錨。
+      setBoothBounds(floorBoundsM(nextPolygon));
       polygonRef.current = nextPolygon;
     }
     if (nextWalls !== wallsRef.current) {
@@ -1036,27 +1158,65 @@ export default function PlanEditor() {
   // 換尺寸會把地板換成以 BOOTH_ORIGIN 為左上角的矩形。原本擺在外圍的柱子/
   // 家具/牆會落到新場地外,所以先數出件數;有東西會被搬動就先問過使用者,
   // 沒有就直接套用(不為了「一致」而多一個沒有資訊量的對話框)。
+  /**
+   * 換攤位尺寸後會落在**可編輯範圍**外的物件數。
+   *
+   * 量的是可編輯範圍而不是攤位本身:攤位外那圈邊距是合法的暫存區(見
+   * `PLAN_AREA_MARGIN_M`),擺在那裡的東西沒有「超出」。攤位縮小時範圍跟著
+   * 縮,原本在邊距裡的東西才可能真的被擠出去 —— 那才是要提示的情況。
+   */
+  /**
+   * 每件家具的平面矩形(公尺)。**繪製與探針共用同一份**——分開算就會有一份
+   * 「回報的尺寸」與一份「畫出來的尺寸」,而那正是這一輪要消滅的東西。
+   */
+  const furnitureRects = useMemo(
+    () =>
+      furniture.map((item) => ({
+        id: item.id,
+        ...furnitureFootprintM(item),
+      })),
+    [furniture],
+  );
+
+  /**
+   * 家具的矩形視圖(`center` + 目錄查來的 `w`/`h`)。
+   *
+   * `isRectOutsideBounds` / `clampRectCenterToBounds` 吃的是「有寬高的矩形」,
+   * 而家具現在只存代碼 —— 這裡把查表收在一處,免得每個呼叫點各自展開一次。
+   */
+  function furnitureRect(item: FurnitureItem) {
+    const { w, h } = furnitureFootprintM(item);
+    return { center: item.center, w, h };
+  }
+
   function outsideCountFor(widthM: number, heightM: number): number {
-    const nextBounds = floorBoundsM(createBoothFloor(widthM, heightM));
+    const nextArea = planAreaFor(widthM, heightM);
     return (
-      columns.filter((c) => isRectOutsideBounds(c, nextBounds)).length +
-      furniture.filter((f) => isRectOutsideBounds(f, nextBounds)).length +
-      walls.filter((w) => isWallOutsideBounds(w, nextBounds)).length
+      columns.filter((c) => isRectOutsideBounds(c, nextArea)).length +
+      furniture.filter((f) => isRectOutsideBounds(furnitureRect(f), nextArea))
+        .length +
+      walls.filter((w) => isWallOutsideBounds(w, nextArea)).length
     );
   }
 
   function applyBoothSize(widthM: number, heightM: number) {
     const nextPolygon = createBoothFloor(widthM, heightM);
-    const nextBounds = floorBoundsM(nextPolygon);
+    // 夾進新的可編輯範圍(攤位 + 邊距),不是夾進攤位 —— 否則本來刻意放在
+    // 邊距暫存區的家具會在改尺寸時被一起吸回攤位裡。
+    const nextArea = planAreaFor(widthM, heightM);
 
     setPolygon(nextPolygon);
+    setBoothBounds(floorBoundsM(nextPolygon));
     setColumns((prev) =>
-      prev.map((c) => ({ ...c, center: clampRectCenterToBounds(c, nextBounds) })),
+      prev.map((c) => ({ ...c, center: clampRectCenterToBounds(c, nextArea) })),
     );
     setFurniture((prev) =>
-      prev.map((f) => ({ ...f, center: clampRectCenterToBounds(f, nextBounds) })),
+      prev.map((f) => ({
+        ...f,
+        center: clampRectCenterToBounds(furnitureRect(f), nextArea),
+      })),
     );
-    setWalls((prev) => prev.map((w) => clampWallToBounds(w, nextBounds)));
+    setWalls((prev) => prev.map((w) => clampWallToBounds(w, nextArea)));
     setSelectedVertex(null);
     fitViewTo(widthM, heightM);
   }
@@ -1111,6 +1271,37 @@ export default function PlanEditor() {
     setSurfaceUploads((prev) => {
       if (prev[surface]) URL.revokeObjectURL(prev[surface]!);
       return { ...prev, [surface]: null };
+    });
+  }
+
+  /** 某一面牆自己的自訂圖(T9)。驗證與釋放的規則與上面那組完全相同。 */
+  function handleWallSurfaceUpload(wallId: string, file: File | null) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setUploadError("只接受圖片檔");
+      return;
+    }
+    if (file.size > MAX_SURFACE_UPLOAD_BYTES) {
+      setUploadError("圖片超過 8MB");
+      return;
+    }
+    setUploadError(null);
+    setSurfaceUploads((prev) => {
+      if (prev.walls[wallId]) URL.revokeObjectURL(prev.walls[wallId]);
+      return {
+        ...prev,
+        walls: { ...prev.walls, [wallId]: URL.createObjectURL(file) },
+      };
+    });
+  }
+
+  function clearWallSurfaceUpload(wallId: string) {
+    setSurfaceUploads((prev) => {
+      if (!prev.walls[wallId]) return prev;
+      URL.revokeObjectURL(prev.walls[wallId]);
+      const walls = { ...prev.walls };
+      delete walls[wallId];
+      return { ...prev, walls };
     });
   }
 
@@ -1171,10 +1362,15 @@ export default function PlanEditor() {
       data-selected-type={selectedObject?.type ?? ""}
       data-objects={JSON.stringify({ walls, columns })}
       data-furniture={JSON.stringify(furniture)}
+      data-furniture-rects={JSON.stringify(furnitureRects)}
       data-column-label={columnLabelText}
       data-wall-label={wallLabelText}
       data-edge-labels={JSON.stringify(edgeLabelTexts)}
       data-venue-size-cm={JSON.stringify(venueSizeCm)}
+      data-plan-area-w-m={planArea.widthM}
+      data-plan-area-h-m={planArea.heightM}
+      data-plan-area={JSON.stringify(planArea)}
+      data-grid-line-count={gridLines.length}
       data-plan-surfaces={JSON.stringify(surfaces)}
       data-column-offsets-cm={
         columnOffsetsCm ? JSON.stringify(columnOffsetsCm) : undefined
@@ -1300,7 +1496,10 @@ export default function PlanEditor() {
                       step={0.5}
                       value={customBooth.w}
                       onChange={(e) =>
-                        setCustomBooth((prev) => ({ ...prev, w: e.target.value }))
+                        setCustomBooth((prev) => ({
+                          ...prev,
+                          w: e.target.value,
+                        }))
                       }
                       className="w-14 rounded border border-stone-300 bg-card px-1 py-0.5 text-right text-foreground"
                     />
@@ -1312,7 +1511,10 @@ export default function PlanEditor() {
                       step={0.5}
                       value={customBooth.h}
                       onChange={(e) =>
-                        setCustomBooth((prev) => ({ ...prev, h: e.target.value }))
+                        setCustomBooth((prev) => ({
+                          ...prev,
+                          h: e.target.value,
+                        }))
                       }
                       className="w-14 rounded border border-stone-300 bg-card px-1 py-0.5 text-right text-foreground"
                     />
@@ -1369,7 +1571,10 @@ export default function PlanEditor() {
                           }
                           onKeyDown={(e) => {
                             if (e.key !== "Enter") return;
-                            setColumnOffsetCm(side, e.currentTarget.valueAsNumber);
+                            setColumnOffsetCm(
+                              side,
+                              e.currentTarget.valueAsNumber,
+                            );
                           }}
                           className="w-20 rounded border border-stone-300 bg-card px-1 py-0.5 text-right text-foreground"
                         />
@@ -1380,7 +1585,8 @@ export default function PlanEditor() {
                       data-testid="column-offset-hint"
                       className="text-muted-foreground"
                     >
-                      輸入值不受 50cm 吸附限制;之後拖曳以 50cm 為單位移動,會保留這個尾數
+                      輸入值不受 50cm 吸附限制;之後拖曳以 50cm
+                      為單位移動,會保留這個尾數
                     </span>
                   </div>
                 )}
@@ -1404,10 +1610,10 @@ export default function PlanEditor() {
                 >
                   <Layer listening={false}>
                     <Rect
-                      x={0}
-                      y={0}
-                      width={PLAN_AREA_SIZE_M * pxPerMeter}
-                      height={PLAN_AREA_SIZE_M * pxPerMeter}
+                      x={planArea.minX * pxPerMeter}
+                      y={planArea.minY * pxPerMeter}
+                      width={planArea.widthM * pxPerMeter}
+                      height={planArea.heightM * pxPerMeter}
                       fill="#fafaf9"
                       stroke="#a8a29e"
                       strokeWidth={1}
@@ -1422,10 +1628,7 @@ export default function PlanEditor() {
                     ))}
                   </Layer>
                   <Layer listening={false}>
-                    {Array.from(
-                      { length: PLAN_AREA_SIZE_M / GRID_MAJOR_M + 1 },
-                      (_, i) => i * GRID_MAJOR_M,
-                    ).map((m) => (
+                    {majorTicks(planArea.minX, planArea.maxX).map((m) => (
                       <Text
                         key={`label-top-${m}`}
                         x={m * pxPerMeter + 2}
@@ -1435,10 +1638,7 @@ export default function PlanEditor() {
                         fill="#78716c"
                       />
                     ))}
-                    {Array.from(
-                      { length: PLAN_AREA_SIZE_M / GRID_MAJOR_M + 1 },
-                      (_, i) => i * GRID_MAJOR_M,
-                    ).map((m) => (
+                    {majorTicks(planArea.minY, planArea.maxY).map((m) => (
                       <Text
                         key={`label-left-${m}`}
                         x={2}
@@ -1494,7 +1694,9 @@ export default function PlanEditor() {
                           x={px.x}
                           y={px.y}
                           radius={6}
-                          fill={selectedVertex === index ? "#1F4E79" : "#ffffff"}
+                          fill={
+                            selectedVertex === index ? "#1F4E79" : "#ffffff"
+                          }
                           stroke="#1F4E79"
                           strokeWidth={2}
                           hitStrokeWidth={16}
@@ -1509,7 +1711,9 @@ export default function PlanEditor() {
                           }}
                           onDragMove={(e) => handleVertexDragMove(index, e)}
                           onDragEnd={(e) => handleVertexDragEnd(index, e)}
-                          onContextMenu={(e) => handleVertexContextMenu(index, e)}
+                          onContextMenu={(e) =>
+                            handleVertexContextMenu(index, e)
+                          }
                         />
                       );
                     })}
@@ -1628,7 +1832,10 @@ export default function PlanEditor() {
                                 suppressObjectClickRef.current = false;
                                 return;
                               }
-                              setSelectedObject({ type: "column", id: column.id });
+                              setSelectedObject({
+                                type: "column",
+                                id: column.id,
+                              });
                               setSelectedVertex(null);
                             }}
                             onTap={() => {
@@ -1636,7 +1843,10 @@ export default function PlanEditor() {
                                 suppressObjectClickRef.current = false;
                                 return;
                               }
-                              setSelectedObject({ type: "column", id: column.id });
+                              setSelectedObject({
+                                type: "column",
+                                id: column.id,
+                              });
                               setSelectedVertex(null);
                             }}
                             onDragMove={(e) => handleColumnBodyDrag(column, e)}
@@ -1657,15 +1867,19 @@ export default function PlanEditor() {
                         </Fragment>
                       );
                     })}
-                    {furniture.map((item) => {
+                    {furniture.map((item, index) => {
                       const isSelected =
                         selectedObject?.type === "furniture" &&
                         selectedObject.id === item.id;
                       const centerPx = metersToPx(item.center, pxPerMeter);
-                      const widthPx = item.w * pxPerMeter;
-                      const heightPx = item.h * pxPerMeter;
-                      const defaults = FURNITURE_DEFAULTS[item.kind];
-                      const itemColor = isSelected ? "#1F4E79" : defaults.color;
+                      // 與 data-furniture-rects 同一份 —— 見 furnitureRects。
+                      const footprint = furnitureRects[index];
+                      const widthPx = footprint.w * pxPerMeter;
+                      const heightPx = footprint.h * pxPerMeter;
+                      const entry = catalogItem(item.code);
+                      const itemColor = isSelected
+                        ? "#1F4E79"
+                        : (entry?.color ?? "#808080");
                       return (
                         <Fragment key={item.id}>
                           <Rect
@@ -1677,16 +1891,22 @@ export default function PlanEditor() {
                             offsetX={widthPx / 2}
                             offsetY={heightPx / 2}
                             rotation={item.rotationDeg}
-                            fill={defaults.color}
+                            fill={entry?.color ?? "#808080"}
                             opacity={0.6}
                             stroke={itemColor}
                             strokeWidth={isSelected ? 3 : 1.5}
                             onClick={() => {
-                              setSelectedObject({ type: "furniture", id: item.id });
+                              setSelectedObject({
+                                type: "furniture",
+                                id: item.id,
+                              });
                               setSelectedVertex(null);
                             }}
                             onTap={() => {
-                              setSelectedObject({ type: "furniture", id: item.id });
+                              setSelectedObject({
+                                type: "furniture",
+                                id: item.id,
+                              });
                               setSelectedVertex(null);
                             }}
                           />
@@ -1696,7 +1916,11 @@ export default function PlanEditor() {
                               x={centerPx.x}
                               y={centerPx.y}
                               rotation={item.rotationDeg}
-                              text={defaults.label}
+                              text={
+                                entry
+                                  ? subCategoryLabel(entry.subCategory)
+                                  : item.code
+                              }
                               fontSize={11}
                               fill={itemColor}
                               offsetX={11}
@@ -1831,28 +2055,48 @@ export default function PlanEditor() {
                         }[] = [
                           {
                             key: "left",
-                            points: [min.x, center.y, center.x - halfW, center.y],
+                            points: [
+                              min.x,
+                              center.y,
+                              center.x - halfW,
+                              center.y,
+                            ],
                             text: `${columnOffsetsCm.left}cm`,
                             labelX: (min.x + center.x - halfW) / 2,
                             labelY: center.y - 14,
                           },
                           {
                             key: "right",
-                            points: [center.x + halfW, center.y, max.x, center.y],
+                            points: [
+                              center.x + halfW,
+                              center.y,
+                              max.x,
+                              center.y,
+                            ],
                             text: `${columnOffsetsCm.right}cm`,
                             labelX: (center.x + halfW + max.x) / 2,
                             labelY: center.y - 14,
                           },
                           {
                             key: "top",
-                            points: [center.x, min.y, center.x, center.y - halfH],
+                            points: [
+                              center.x,
+                              min.y,
+                              center.x,
+                              center.y - halfH,
+                            ],
                             text: `${columnOffsetsCm.top}cm`,
                             labelX: center.x + 4,
                             labelY: (min.y + center.y - halfH) / 2,
                           },
                           {
                             key: "bottom",
-                            points: [center.x, center.y + halfH, center.x, max.y],
+                            points: [
+                              center.x,
+                              center.y + halfH,
+                              center.x,
+                              max.y,
+                            ],
                             text: `${columnOffsetsCm.bottom}cm`,
                             labelX: center.x + 4,
                             labelY: (center.y + halfH + max.y) / 2,
@@ -1982,7 +2226,9 @@ export default function PlanEditor() {
                           x={metersToPx(selectedWall.start, pxPerMeter).x}
                           y={metersToPx(selectedWall.start, pxPerMeter).y}
                           radius={6}
-                          fill={draggingHandle === "start" ? "#1F4E79" : "#ffffff"}
+                          fill={
+                            draggingHandle === "start" ? "#1F4E79" : "#ffffff"
+                          }
                           stroke="#1F4E79"
                           strokeWidth={2}
                           hitStrokeWidth={16}
@@ -2001,7 +2247,9 @@ export default function PlanEditor() {
                           x={metersToPx(selectedWall.end, pxPerMeter).x}
                           y={metersToPx(selectedWall.end, pxPerMeter).y}
                           radius={6}
-                          fill={draggingHandle === "end" ? "#1F4E79" : "#ffffff"}
+                          fill={
+                            draggingHandle === "end" ? "#1F4E79" : "#ffffff"
+                          }
                           stroke="#1F4E79"
                           strokeWidth={2}
                           hitStrokeWidth={16}
@@ -2047,7 +2295,8 @@ export default function PlanEditor() {
                 walls={walls}
                 columns={columns}
                 furniture={furniture}
-                venueSizeM={PLAN_AREA_SIZE_M}
+                venueSizeM={planArea.widthM}
+                planArea={planArea}
                 viewFitSizeM={sceneFit.sizeM}
                 viewCenterM={sceneFit.center}
                 wallHeightM={wallHeightM}
@@ -2067,96 +2316,219 @@ export default function PlanEditor() {
               >
                 上一步
               </Button>
-              <div
-                data-testid="surface-picker"
-                className="mb-2 flex flex-wrap items-center gap-3 rounded-md border border-stone-300 bg-card px-2 py-1.5 text-xs"
-              >
-                <label className="flex items-center gap-1 text-muted-foreground">
-                  地板
-                  <select
-                    data-testid="surface-floor-select"
-                    value={surfaces.floor}
-                    onChange={(e) =>
-                      setSurfaces((prev) => ({ ...prev, floor: e.target.value }))
-                    }
-                    className="rounded border border-stone-300 bg-card px-1 py-0.5 text-foreground"
+              {/*
+                材質控制項移到左側欄(第四輪)—— 與步驟 02 的家具目錄同一個
+                位置與同一套開合行為。原本橫躺在場景上方,縮圖化之後那一條會
+                佔掉畫面高度,而使用者在步驟 03 要看的是場景本身。
+              */}
+              <div className="flex items-start gap-3">
+                <aside
+                  data-testid="refined-sidebar"
+                  data-open={refinedSidebarOpen}
+                  className={
+                    (refinedSidebarOpen ? "w-64" : "w-11") +
+                    " shrink-0 rounded-md border border-stone-300 bg-card p-2"
+                  }
+                >
+                  <button
+                    type="button"
+                    data-testid="refined-sidebar-toggle"
+                    aria-label={refinedSidebarOpen ? "收合側欄" : "展開側欄"}
+                    aria-expanded={refinedSidebarOpen}
+                    onClick={() => setRefinedSidebarOpen((prev) => !prev)}
+                    className="flex h-7 w-full items-center justify-center rounded text-blueprint hover:bg-blueprint-wash [&_svg]:size-4"
                   >
-                    {FLOOR_PRESETS.map((preset) => (
-                      <option key={preset.id} value={preset.id}>
-                        {preset.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex items-center gap-1 text-muted-foreground">
-                  牆面
-                  <select
-                    data-testid="surface-wall-select"
-                    value={surfaces.wall}
-                    onChange={(e) =>
-                      setSurfaces((prev) => ({ ...prev, wall: e.target.value }))
-                    }
-                    className="rounded border border-stone-300 bg-card px-1 py-0.5 text-foreground"
-                  >
-                    {WALL_PRESETS.map((preset) => (
-                      <option key={preset.id} value={preset.id}>
-                        {preset.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {(["floor", "wall"] as const).map((surface) => (
-                  <label
-                    key={surface}
-                    className="flex items-center gap-1 text-muted-foreground"
-                  >
-                    {surface === "floor" ? "自訂地板圖" : "自訂牆面圖"}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      data-testid={`surface-${surface}-upload`}
-                      onChange={(e) =>
-                        handleSurfaceUpload(surface, e.target.files?.[0] ?? null)
-                      }
-                      className="w-40 text-[11px]"
-                    />
-                    {surfaceUploads[surface] && (
-                      <button
-                        type="button"
-                        data-testid={`surface-${surface}-upload-clear`}
-                        onClick={() => clearSurfaceUpload(surface)}
-                        className="rounded border border-stone-300 px-1"
-                      >
-                        清除
-                      </button>
+                    {refinedSidebarOpen ? (
+                      <PanelLeftClose />
+                    ) : (
+                      <PanelLeftOpen />
                     )}
-                  </label>
-                ))}
-                {uploadError && (
-                  <span
-                    role="alert"
-                    data-testid="surface-upload-error"
-                    className="text-destructive"
-                  >
-                    {uploadError}
-                  </span>
-                )}
-                <span className="text-muted-foreground">
-                  柱子跟隨牆面材質;上傳的圖只當顏色用,不產生凹凸
-                </span>
+                  </button>
+                  {refinedSidebarOpen && (
+                    <div className="mt-2 flex max-h-[460px] flex-col gap-3 overflow-y-auto pr-0.5">
+                      <div
+                        data-testid="surface-picker"
+                        className="flex flex-col gap-3 text-xs"
+                      >
+                        <SurfacePicker
+                          surface="floor"
+                          label="地板"
+                          presets={FLOOR_PRESETS}
+                          value={surfaces.floor}
+                          onChange={(floor) =>
+                            setSurfaces((prev) => ({ ...prev, floor }))
+                          }
+                        />
+                        <SurfacePicker
+                          surface="wall"
+                          label="預設牆面"
+                          presets={WALL_PRESETS}
+                          value={surfaces.wall}
+                          onChange={(wall) =>
+                            setSurfaces((prev) => ({ ...prev, wall }))
+                          }
+                        />
+                        {(["floor", "wall"] as const).map((surface) => (
+                          <label
+                            key={surface}
+                            className="flex items-center gap-1 text-muted-foreground"
+                          >
+                            {surface === "floor" ? "自訂地板圖" : "自訂牆面圖"}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              data-testid={`surface-${surface}-upload`}
+                              onChange={(e) =>
+                                handleSurfaceUpload(
+                                  surface,
+                                  e.target.files?.[0] ?? null,
+                                )
+                              }
+                              className="w-40 text-[11px]"
+                            />
+                            {surfaceUploads[surface] && (
+                              <button
+                                type="button"
+                                data-testid={`surface-${surface}-upload-clear`}
+                                onClick={() => clearSurfaceUpload(surface)}
+                                className="rounded border border-stone-300 px-1"
+                              >
+                                清除
+                              </button>
+                            )}
+                          </label>
+                        ))}
+                        {uploadError && (
+                          <span
+                            role="alert"
+                            data-testid="surface-upload-error"
+                            className="text-destructive"
+                          >
+                            {uploadError}
+                          </span>
+                        )}
+                        <span className="text-muted-foreground">
+                          柱子跟隨預設牆面材質;上傳的圖只當顏色用,不產生凹凸
+                        </span>
+                      </div>
+                      {/*
+                逐面牆各自設定(T9)。**沒有牆時整段不渲染** —— 空的選單比沒有
+                選單更難懂:使用者會以為功能壞了,而不是「還沒畫牆」。
+              */}
+                      {walls.length > 0 && (
+                        <div
+                          data-testid="wall-surface-list"
+                          data-wall-count={walls.length}
+                          className="flex flex-col gap-1 border-t border-stone-200 pt-2 text-xs"
+                        >
+                          <span className="font-bold text-muted-foreground">
+                            個別牆面({walls.length} 面)
+                          </span>
+                          {walls.map((wall, index) => {
+                            const override = surfaces.wallOverrides[wall.id];
+                            const upload = surfaceUploads.walls[wall.id];
+                            return (
+                              <div
+                                key={wall.id}
+                                data-testid={`wall-surface-row-${index + 1}`}
+                                data-wall-id={wall.id}
+                                // 實際生效的款式 —— 有覆寫就是覆寫,沒有就是預設。
+                                // 這是**設定值**的回音,場景裡真正掛了什麼要問探針
+                                // (RefinedSceneProbe 的 walls)。
+                                data-wall-preset={wallPresetIdFor(
+                                  surfaces,
+                                  wall.id,
+                                )}
+                                data-wall-upload={upload ? "upload" : ""}
+                                className="flex flex-wrap items-center gap-2"
+                              >
+                                <span className="w-12 text-muted-foreground">
+                                  牆 {index + 1}
+                                </span>
+                                {/*
+                          這一面牆目前實際套用的款式縮圖。逐面牆的清單會隨牆數
+                          長大,每一列都攤開六個縮圖會把面板撐爆 —— 所以列上只
+                          放「現在是什麼」,要換仍然用選單。
+                        */}
+                                <span className="size-7 shrink-0 overflow-hidden rounded-sm border border-stone-300">
+                                  <SurfaceSwatch
+                                    surface="wall"
+                                    presetId={wallPresetIdFor(
+                                      surfaces,
+                                      wall.id,
+                                    )}
+                                  />
+                                </span>
+                                <select
+                                  data-testid={`wall-surface-select-${index + 1}`}
+                                  value={override ?? ""}
+                                  onChange={(e) =>
+                                    setSurfaces((prev) =>
+                                      withWallOverride(
+                                        prev,
+                                        wall.id,
+                                        e.target.value === ""
+                                          ? null
+                                          : e.target.value,
+                                      ),
+                                    )
+                                  }
+                                  className="rounded border border-stone-300 bg-card px-1 py-0.5 text-foreground"
+                                >
+                                  <option value="">同預設</option>
+                                  {WALL_PRESETS.map((preset) => (
+                                    <option key={preset.id} value={preset.id}>
+                                      {preset.label}
+                                    </option>
+                                  ))}
+                                </select>
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  data-testid={`wall-surface-upload-${index + 1}`}
+                                  onChange={(e) =>
+                                    handleWallSurfaceUpload(
+                                      wall.id,
+                                      e.target.files?.[0] ?? null,
+                                    )
+                                  }
+                                  className="w-36 text-[11px]"
+                                />
+                                {upload && (
+                                  <button
+                                    type="button"
+                                    data-testid={`wall-surface-upload-clear-${index + 1}`}
+                                    onClick={() =>
+                                      clearWallSurfaceUpload(wall.id)
+                                    }
+                                    className="rounded border border-stone-300 px-1"
+                                  >
+                                    清除
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </aside>
+                <div className="min-w-0 flex-1">
+                  <RefinedSceneLoader
+                    polygon={polygon}
+                    walls={walls}
+                    columns={columns}
+                    furniture={furniture}
+                    venueSizeM={planArea.widthM}
+                    viewFitSizeM={sceneFit.sizeM}
+                    viewCenterM={sceneFit.center}
+                    surfaces={surfaces}
+                    surfaceUploads={surfaceUploads}
+                    wallHeightM={wallHeightM}
+                  />
+                </div>
               </div>
-              <RefinedSceneLoader
-                polygon={polygon}
-                walls={walls}
-                columns={columns}
-                furniture={furniture}
-                venueSizeM={PLAN_AREA_SIZE_M}
-                viewFitSizeM={sceneFit.sizeM}
-                viewCenterM={sceneFit.center}
-                surfaces={surfaces}
-                surfaceUploads={surfaceUploads}
-                wallHeightM={wallHeightM}
-              />
             </div>
           )}
         </div>

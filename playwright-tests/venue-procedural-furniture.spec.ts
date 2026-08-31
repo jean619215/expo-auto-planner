@@ -24,9 +24,9 @@ import { PlanEditorPage } from "./pages/PlanEditorPage";
 // 全部走 [data-testid="refined-scene"] 的 data-* 契約,不做像素比對。
 
 const KINDS = [
-  { kind: "counter", target: [1.0, 1.1, 0.5] },
-  { kind: "bannerStand", target: [0.8, 2.0, 0.3] },
-  { kind: "podium", target: [0.6, 1.1, 0.5] },
+  { code: "CNT-100-110", target: [1.0, 1.1, 0.5] },
+  { code: "BNR-80-200", target: [0.8, 2.0, 0.3] },
+  { code: "POD-60-110", target: [0.6, 1.1, 0.5] },
 ] as const;
 
 async function waitForRefinedReady(editor: PlanEditorPage) {
@@ -56,11 +56,11 @@ async function step2CanvasCenter(page: Page) {
 async function placeFurnitureOnStep2(
   page: Page,
   editor: PlanEditorPage,
-  kind: string,
+  code: string,
   offsetPx: { x: number; y: number } = { x: 0, y: 0 },
 ) {
   const before = await editor.furnitureCount();
-  await page.getByTestId(`furniture-place-${kind}`).click();
+  await editor.pickCatalogItem(code);
   const center = await step2CanvasCenter(page);
   await page.mouse.move(center.x + offsetPx.x, center.y + offsetPx.y);
   await page.waitForTimeout(100);
@@ -70,7 +70,7 @@ async function placeFurnitureOnStep2(
   await expect
     .poll(() => editor.furnitureCount(), {
       timeout: 5_000,
-      message: `${kind} 沒有放上去 — 偏移 (${offsetPx.x}, ${offsetPx.y}) 可能點在地板之外`,
+      message: `${code} 沒有放上去 — 偏移 (${offsetPx.x}, ${offsetPx.y}) 可能點在地板之外`,
     })
     .toBe(before + 1);
 }
@@ -99,7 +99,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 6: 展場家具程序化幾�
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
     for (const [index, entry] of KINDS.entries()) {
-      await placeFurnitureOnStep2(page, editor, entry.kind, SPREAD[index]);
+      await placeFurnitureOnStep2(page, editor, entry.code, SPREAD[index]);
     }
 
     await editor.goToRefined();
@@ -112,11 +112,11 @@ test.describe("精密 3D 場景 (步驟 03) - Task 6: 展場家具程序化幾�
       .toBe(KINDS.length);
 
     for (const entry of KINDS) {
-      const report = await editor.refinedProceduralFurnitureReport(entry.kind);
-      expect(report, `${entry.kind} 應該由程序化幾何繪製`).toBeDefined();
+      const report = await editor.refinedProceduralFurnitureReport(entry.code);
+      expect(report, `${entry.code} 應該由程序化幾何繪製`).toBeDefined();
       if (!report) continue;
 
-      expect(report.targetM, `${entry.kind} 標稱尺寸應取自 FURNITURE_DEFAULTS`)
+      expect(report.targetM, `${entry.code} 標稱尺寸應取自 FURNITURE_DEFAULTS`)
         .toEqual([...entry.target]);
 
       // 1mm 容差。刻意用「等於」而不是「不超過」:程序化造型的尺寸是我們自己
@@ -126,7 +126,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 6: 展場家具程序化幾�
       for (let axis = 0; axis < 3; axis++) {
         expect(
           report.sizeM[axis],
-          `${entry.kind} 第 ${axis} 軸外廓 ${report.sizeM[axis]} 與標稱 ${report.targetM[axis]} 不符`,
+          `${entry.code} 第 ${axis} 軸外廓 ${report.sizeM[axis]} 與標稱 ${report.targetM[axis]} 不符`,
         ).toBeCloseTo(report.targetM[axis], 3);
       }
     }
@@ -136,7 +136,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 6: 展場家具程序化幾�
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
     for (const [index, entry] of KINDS.entries()) {
-      await placeFurnitureOnStep2(page, editor, entry.kind, SPREAD[index]);
+      await placeFurnitureOnStep2(page, editor, entry.code, SPREAD[index]);
     }
 
     await editor.goToRefined();
@@ -149,12 +149,12 @@ test.describe("精密 3D 場景 (步驟 03) - Task 6: 展場家具程序化幾�
       .toBe(KINDS.length);
 
     for (const entry of KINDS) {
-      const report = await editor.refinedProceduralFurnitureReport(entry.kind);
+      const report = await editor.refinedProceduralFurnitureReport(entry.code);
       // story 驗收條件要的是「可辨識的程序化造型」。零件數 > 1 是這件事最低限度
       // 的可斷言代理:單一 box 退回去的話這條立刻紅。
       expect(
         report?.partCount ?? 0,
-        `${entry.kind} 只有 ${report?.partCount} 個零件 — 退回單一方塊了?`,
+        `${entry.code} 只有 ${report?.partCount} 個零件 — 退回單一方塊了?`,
       ).toBeGreaterThan(1);
     }
   });
@@ -162,9 +162,11 @@ test.describe("精密 3D 場景 (步驟 03) - Task 6: 展場家具程序化幾�
   test("P3: 程序化與匯入模型互斥,同一件家具不會被畫兩次", async ({ page }) => {
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
-    // 一件程序化(counter)+ 一件匯入模型(table),兩條路同時活著。
-    await placeFurnitureOnStep2(page, editor, "counter", { x: -30, y: 0 });
-    await placeFurnitureOnStep2(page, editor, "table", { x: 30, y: 0 });
+    // 一件程序化(counter)+ 一件匯入模型,兩條路同時活著。
+    // T5 之後桌子改走程序化,匯入模型那一半必須換成仍是 GLB 的椅子 ——
+    // 用桌子的話兩件都是程序化,這條「互斥」根本沒被測到。
+    await placeFurnitureOnStep2(page, editor, "CNT-100-110", { x: -30, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "CHR-45-90", { x: 30, y: 0 });
 
     await editor.goToRefined();
     await waitForRefinedReady(editor);
@@ -176,8 +178,8 @@ test.describe("精密 3D 場景 (步驟 03) - Task 6: 展場家具程序化幾�
 
     const procedural = await editor.refinedProceduralFurnitureReports();
     const models = await editor.refinedFurnitureModelReports();
-    expect(procedural.map((r) => r.kind)).toEqual(["counter"]);
-    expect(models.map((r) => r.kind)).toEqual(["table"]);
+    expect(procedural.map((r) => r.code)).toEqual(["CNT-100-110"]);
+    expect(models.map((r) => r.code)).toEqual(["CHR-45-90"]);
 
     // 兩件家具、兩種來源,件數就是 2 —— 若某一件被兩條路各畫一次,這裡會是 3。
     await expect
@@ -189,13 +191,13 @@ test.describe("精密 3D 場景 (步驟 03) - Task 6: 展場家具程序化幾�
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.columnTool();
     await editor.placeColumn({ x: 15, y: 15 });
     await editor.clickNextStep();
 
     for (const [index, entry] of KINDS.entries()) {
-      await placeFurnitureOnStep2(page, editor, entry.kind, SPREAD[index]);
+      await placeFurnitureOnStep2(page, editor, entry.code, SPREAD[index]);
     }
 
     await editor.goToRefined();
@@ -221,7 +223,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 6: 展場家具程序化幾�
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
     for (const [index, entry] of KINDS.entries()) {
-      await placeFurnitureOnStep2(page, editor, entry.kind, SPREAD[index]);
+      await placeFurnitureOnStep2(page, editor, entry.code, SPREAD[index]);
     }
 
     await editor.goToRefined();
@@ -247,7 +249,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 6: 展場家具程序化幾�
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
     for (const [index, entry] of KINDS.entries()) {
-      await placeFurnitureOnStep2(page, editor, entry.kind, SPREAD[index]);
+      await placeFurnitureOnStep2(page, editor, entry.code, SPREAD[index]);
     }
 
     await editor.goToRefined();
@@ -317,7 +319,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 6: 展場家具程序化幾�
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
     for (const [index, entry] of KINDS.entries()) {
-      await placeFurnitureOnStep2(page, editor, entry.kind, SPREAD[index]);
+      await placeFurnitureOnStep2(page, editor, entry.code, SPREAD[index]);
     }
 
     await editor.goToRefined();
@@ -367,9 +369,9 @@ test.describe("精密 3D 場景 (步驟 03) - Task 6: 展場家具程序化幾�
   test("P7: 同 kind 多件共用一組 <Instances>", async ({ page }) => {
     const editor = new PlanEditorPage(page);
     await toStep2(editor);
-    await placeFurnitureOnStep2(page, editor, "podium", { x: -40, y: 0 });
-    await placeFurnitureOnStep2(page, editor, "podium", { x: 0, y: 0 });
-    await placeFurnitureOnStep2(page, editor, "podium", { x: 40, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "POD-60-110", { x: -40, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "POD-60-110", { x: 0, y: 0 });
+    await placeFurnitureOnStep2(page, editor, "POD-60-110", { x: 40, y: 0 });
 
     await editor.goToRefined();
     await waitForRefinedReady(editor);
@@ -380,7 +382,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 6: 展場家具程序化幾�
         { timeout: 15_000 },
       )
       .toBe(1);
-    const report = await editor.refinedProceduralFurnitureReport("podium");
+    const report = await editor.refinedProceduralFurnitureReport("POD-60-110");
     expect(report?.instanceCount).toBe(3);
 
     await expect

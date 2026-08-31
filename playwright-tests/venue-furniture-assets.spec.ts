@@ -27,12 +27,12 @@ import { PlanEditorPage } from "./pages/PlanEditorPage";
  * LFS 指標)、或幾十 MB(忘了壓縮就 commit)。
  */
 const EXPECTED_MODELS = [
-  { kind: "table", minBytes: 50_000, maxBytes: 3_000_000 },
-  { kind: "chair", minBytes: 50_000, maxBytes: 3_000_000 },
-  { kind: "cabinet", minBytes: 50_000, maxBytes: 3_000_000 },
-  { kind: "sofa", minBytes: 50_000, maxBytes: 3_000_000 },
-  { kind: "plant", minBytes: 50_000, maxBytes: 4_000_000 },
-  { kind: "display", minBytes: 50_000, maxBytes: 3_000_000 },
+  { file: "table", minBytes: 50_000, maxBytes: 3_000_000 },
+  { file: "chair", minBytes: 50_000, maxBytes: 3_000_000 },
+  { file: "cabinet", minBytes: 50_000, maxBytes: 3_000_000 },
+  { file: "sofa", minBytes: 50_000, maxBytes: 3_000_000 },
+  { file: "plant", minBytes: 50_000, maxBytes: 4_000_000 },
+  { file: "display", minBytes: 50_000, maxBytes: 3_000_000 },
 ];
 
 const MODEL_BASE_PATH = "/models/venue";
@@ -74,25 +74,25 @@ test.describe("精密 3D 場景 (步驟 03) - Task 4: 家具模型 asset pipelin
     let total = 0;
 
     for (const model of EXPECTED_MODELS) {
-      const url = `${baseURL}${MODEL_BASE_PATH}/${model.kind}.glb`;
+      const url = `${baseURL}${MODEL_BASE_PATH}/${model.file}.glb`;
       const response = await request.get(url);
 
-      expect(response.status(), `${model.kind}.glb 應可取得`).toBe(200);
+      expect(response.status(), `${model.file}.glb 應可取得`).toBe(200);
 
       const body = await response.body();
       total += body.byteLength;
 
       // GLB header:magic(uint32) / version(uint32) / length(uint32),全小端。
-      expect(body.byteLength, `${model.kind}.glb 太小,不足以容納 GLB header`)
+      expect(body.byteLength, `${model.file}.glb 太小,不足以容納 GLB header`)
         .toBeGreaterThan(12);
-      expect(body.readUInt32LE(0), `${model.kind}.glb magic 不是 "glTF"`).toBe(
+      expect(body.readUInt32LE(0), `${model.file}.glb magic 不是 "glTF"`).toBe(
         GLB_MAGIC
       );
-      expect(body.readUInt32LE(4), `${model.kind}.glb 應為 glTF 2.0`).toBe(2);
+      expect(body.readUInt32LE(4), `${model.file}.glb 應為 glTF 2.0`).toBe(2);
       // 宣告長度必須等於實際長度 —— 抓截斷檔。
       expect(
         body.readUInt32LE(8),
-        `${model.kind}.glb header 宣告長度與實際位元組數不符(檔案被截斷?)`
+        `${model.file}.glb header 宣告長度與實際位元組數不符(檔案被截斷?)`
       ).toBe(body.byteLength);
 
       expect(body.byteLength).toBeGreaterThan(model.minBytes);
@@ -112,14 +112,14 @@ test.describe("精密 3D 場景 (步驟 03) - Task 4: 家具模型 asset pipelin
     // 完整解析。若哪天壓縮步驟被拿掉,extensionsRequired 就不會有這兩個名字。
     for (const model of EXPECTED_MODELS) {
       const response = await request.get(
-        `${baseURL}${MODEL_BASE_PATH}/${model.kind}.glb`
+        `${baseURL}${MODEL_BASE_PATH}/${model.file}.glb`
       );
       const text = (await response.body()).toString("latin1");
 
-      expect(text, `${model.kind}.glb 未套用 Draco 幾何壓縮`).toContain(
+      expect(text, `${model.file}.glb 未套用 Draco 幾何壓縮`).toContain(
         "KHR_draco_mesh_compression"
       );
-      expect(text, `${model.kind}.glb 貼圖未轉成 WebP`).toContain(
+      expect(text, `${model.file}.glb 貼圖未轉成 WebP`).toContain(
         "EXT_texture_webp"
       );
     }
@@ -139,7 +139,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 4: 家具模型 asset pipelin
     expect(text).toContain("polyhaven.com");
 
     for (const model of EXPECTED_MODELS) {
-      expect(text, `授權記錄缺少 ${model.kind}`).toContain(model.kind);
+      expect(text, `授權記錄缺少 ${model.file}`).toContain(model.file);
     }
   });
 
@@ -149,7 +149,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 4: 家具模型 asset pipelin
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.columnTool();
     await editor.placeColumn({ x: 15, y: 15 });
 
@@ -175,7 +175,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 4: 家具模型 asset pipelin
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.clickNextStep();
 
     expect(await editor.currentStep()).toBe("preview");
@@ -194,7 +194,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 4: 家具模型 asset pipelin
     const editor = new PlanEditorPage(page);
     await editor.navigate();
     await editor.wallTool();
-    await editor.drawWall({ x: 5, y: 5 }, { x: 10, y: 5 });
+    await editor.drawWall({ x: 20, y: 20 }, { x: 25, y: 20 });
     await editor.clickNextStep();
     await expect.poll(() => editor.sceneGenerated(), { timeout: 15_000 }).toBe(true);
     await editor.clickBackToEdit();

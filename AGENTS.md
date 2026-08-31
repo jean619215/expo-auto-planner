@@ -113,3 +113,36 @@ Use the `notion-assistant` subagent to update the card matching the **current ta
 - When the **last** task of a story completes, also update the story's own row in the Stories database: set its `狀態` to `已完成`.
 
 This applies at every stage transition, including pauses (architect awaiting approval, review critical-issue pause, QA escalation) — the Notion card should always reflect current reality even while the pipeline is paused for human input.
+
+---
+
+## Documentation Lookup (project-owned — not touched by scanner)
+
+- **Next.js:一律讀 `node_modules/next/dist/docs/`(423 份 md)。不要查 Context7、不要憑訓練資料。** 這個 build 有 breaking changes,線上文件對它可能是錯的 —— 而且錯得很有說服力:格式正確、語氣權威、內容不符。那比沒有文件更糟。
+- 其餘套件(`three` / `@react-three/fiber` / `@react-three/drei` / `konva` / `@supabase/ssr` / `tailwindcss` v4)本機只附 README,可用 Context7 MCP 查,**查的時候指定版本**(見 `package.json`)。
+- Context7 是 user scope 的 MCP(`https://mcp.context7.com/mcp`),四個專案共用,匿名層每月 1000 次。
+
+---
+
+## 場地規劃器:第二輪定案的約束(project-owned — not touched by scanner)
+
+第二輪回饋(`stories/venue-feedback-round2-draft.md`)實作後定案的規則。掃描器偵測不到
+這些,但違反了會在很久以後才以難查的形式爆出來,所以寫在這裡。
+
+- **尺寸標註單位一律公分**(台灣建築圖慣例),但**只有顯示層** —— 內部幾何、存檔、
+  AI tool schema 全部維持公尺。新增任何標註時照 `edgeLabels()` / `columnLabel()` /
+  `wallLabel()` 的既有做法轉換,不要讓公分外洩進運算。
+- **牆高常數住在 `src/lib/venue/plan.ts`**,元件不得自行宣告第二份。這條有測試在守
+  (`venue-wall-height` 案例7 直接 grep `src/components/`),因為它原本就是硬編兩份
+  才被抓出來的。
+- **步驟 02 與 03 共用同一份家具幾何**(`useNormalizedFurnitureModel` / 程序化模組層
+  快取),差別只在材質:02 是單色、零貼圖,03 才上材質。不要為了某一步「方便」而
+  複製一份幾何,那會讓跨步驟快取失效,也讓兩個畫面慢慢長歪。
+- **探針(`data-*`)必須回報場景/GPU 的實際狀態,不能是 prop 的回音。** 第二輪有
+  三次「測試全綠但實作已經壞掉」,全是守衛在讀自己傳進去的值。要斷言幾何就量包圍盒、
+  要斷言材質就從 GPU 讀回烘焙結果,不要讀那個剛剛才傳下去的 prop。
+- **重量級 3D 測試要明確編列 timeout 預算。** 沒有 GPU 的環境(CI 容器走 SwiftShader
+  軟體算圖)比開發機慢 3–4 倍,壓在預設 30s 邊緣的測試會偽裝成隨機 flake —— 同一份
+  程式換台機器就翻面,查起來極耗時。往返多趟或拍截圖的測試一律 `test.slow()`,更重的
+  用 `test.setTimeout()` 並在註解寫下實測耗時。現有範例:`venue-procedural-furniture`
+  的 P6 / P8、`venue-refined-lighting` 案例12 / 14、`venue-refined-materials` T14。

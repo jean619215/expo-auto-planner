@@ -84,7 +84,7 @@ async function placeFurnitureOnStep2(
   page: Page,
   offsetPx: { x: number; y: number } = { x: 0, y: 0 },
 ) {
-  await page.getByTestId("furniture-place-table").click();
+  await new PlanEditorPage(page).pickCatalogItem("TBL-120-75");
   const center = await canvasCenter(page);
   await clickFloor(page, { x: center.x + offsetPx.x, y: center.y + offsetPx.y });
 }
@@ -211,7 +211,7 @@ test.describe("精密 3D 場景 (步驟 03) - Task 1: wizard skeleton + read-onl
       "true",
     );
     await expect(
-      page.locator('[data-testid="furniture-place-table"]'),
+      page.locator('[data-testid="furniture-place-TBL-120-75"]'),
     ).toHaveCount(0);
     await expect(page.locator('[data-testid="venue-sidebar"]')).toHaveCount(
       0,

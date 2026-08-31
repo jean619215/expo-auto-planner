@@ -15,10 +15,13 @@ function snapToGrid(v: number): number {
   return Math.round(v / 0.5) * 0.5;
 }
 
-// PLAN_AREA_SIZE_M(src/lib/venue/plan.ts)— clamp 上限,zoom/pan 任務將可規劃
-// 範圍由 50 擴大為 200(architect-plan.md 2D 畫布 zoom/pan)。
+// 可編輯範圍(第三輪 T1)= 攤位 + 5m 邊距。攤位錨在 (20,20),預設 3×3,
+// 所以範圍是 [15,28] —— 不再是固定的 0~200。
+const AREA_MIN_M = 15;
+const AREA_MAX_M = 28;
+
 function clampToBounds(v: number): number {
-  return Math.min(200, Math.max(0, v));
+  return Math.min(AREA_MAX_M, Math.max(AREA_MIN_M, v));
 }
 
 test.describe("Venue Plan Editor - Task 1 acceptance", () => {
@@ -87,7 +90,7 @@ test.describe("Venue Plan Editor - Task 1 acceptance", () => {
     expect(await editor.vertexCount()).toBe(4);
   });
 
-  test("AC7 (bounds): dragging a vertex far outside 200x200m clamps to nearest in-bounds point", async ({
+  test("AC7 (bounds): 把頂點拖到可編輯範圍外會夾到最近的合法點", async ({
     page,
   }) => {
     const editor = new PlanEditorPage(page);
@@ -97,8 +100,8 @@ test.describe("Venue Plan Editor - Task 1 acceptance", () => {
     await editor.dragVertexTo(2, farOutside);
 
     const verts = await editor.vertices();
-    expect(verts[2].x).toBeCloseTo(200, 5); // clamped to max bound (PLAN_AREA_SIZE_M)
-    expect(verts[2].y).toBeCloseTo(0, 5); // clamped to min bound
+    expect(verts[2].x).toBeCloseTo(AREA_MAX_M, 5); // 夾到範圍右緣
+    expect(verts[2].y).toBeCloseTo(AREA_MIN_M, 5); // 夾到範圍上緣
     expect(Number.isNaN(verts[2].x)).toBe(false);
     expect(Number.isNaN(verts[2].y)).toBe(false);
   });

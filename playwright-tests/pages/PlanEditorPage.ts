@@ -60,7 +60,7 @@ export interface SurfaceTextureDiagnostics {
 // FurnitureModelReport shape. Kept independent of the app source (same
 // convention as the material types below).
 export interface FurnitureModelReport {
-  kind: string;
+  code: string;
   /**
    * 等比縮放倍率。**單一數字**這件事本身就是「三軸同倍率、沒有非等比拉伸」
    * 的證據 —— 非等比縮放無法用一個純量表示(AGENTS.md 的家具尺寸規則)。
@@ -68,25 +68,25 @@ export interface FurnitureModelReport {
   scale: number;
   /** 縮放後的實際包圍盒尺寸(公尺,已套用模型方位修正 rotationY)。 */
   fittedM: [number, number, number];
-  /** `FURNITURE_DEFAULTS` 的目標尺寸(公尺)。 */
+  /** 目錄宣告的目標尺寸(公尺)。 */
   targetM: [number, number, number];
-  /** 這個 kind 被拆成幾個 instanced mesh(GLB 內的 mesh 數)。 */
+  /** 這個品項被拆成幾個 instanced mesh(GLB 內的 mesh 數)。 */
   partCount: number;
-  /** 目前場上這個 kind 有幾件。 */
+  /** 目前場上這個品項有幾件。 */
   instanceCount: number;
 }
 
 // task 6 (procedural exhibition furniture) — mirrors proceduralFurniture.tsx's
 // ProceduralFurnitureReport shape.
 export interface ProceduralFurnitureReport {
-  kind: string;
+  code: string;
   /** 程序化零件拼出來的實際外廓(公尺)。 */
   sizeM: [number, number, number];
-  /** `FURNITURE_DEFAULTS` 的標稱尺寸(公尺)。 */
+  /** 目錄宣告的標稱尺寸(公尺)。 */
   targetM: [number, number, number];
   /** 這件家具由幾個零件組成。 */
   partCount: number;
-  /** 目前場上這個 kind 有幾件。 */
+  /** 目前場上這個品項有幾件。 */
   instanceCount: number;
 }
 
@@ -117,6 +117,19 @@ export interface NormalReadback {
   varianceXY: number;
 }
 
+/**
+ * 一面牆實際掛著的材質(T9)。鏡射 RefinedSceneProbe 的 `WallSurfaceReport`。
+ *
+ * `materialUuid` 是場景裡那個材質物件的身分,`albedoMean` 是它的貼圖從 GPU
+ * 讀回來的平均亮度 —— 兩者都不是選單的回音。
+ */
+export interface WallSurfaceReport {
+  wallId: string;
+  materialUuid: string;
+  mapUuid: string;
+  albedoMean: number | null;
+}
+
 export interface MaterialProbeReport {
   ready: boolean;
   maxAnisotropy: number | null;
@@ -129,6 +142,8 @@ export interface MaterialProbeReport {
   columnAlbedo: AlbedoReadback | null;
   floorUvMeterError: number | null;
   wallUvMeterError: number | null;
+  /** 逐面牆的實際材質(T9),依 wallId 排序;沒有牆時是空陣列。 */
+  walls: WallSurfaceReport[];
   liveSurfaceTargets: number | null;
   totalSurfaceBakes: number | null;
 }
@@ -330,6 +345,36 @@ export class PlanEditorPage {
   async furnitureCount(): Promise<number> {
     const raw = await this.editor.getAttribute("data-furniture-count");
     return Number(raw);
+  }
+
+  /**
+   * 場上的家具(`data-furniture`)。
+   *
+   * T2 之後品項只存目錄代碼,尺寸要查目錄 —— 這裡不再回傳 `w`/`h`。
+   */
+  async furniture(): Promise<
+    { id: string; code: string; center: PlanPoint; rotationDeg: number }[]
+  > {
+    const raw = await this.editor.getAttribute("data-furniture");
+    return JSON.parse(raw ?? "[]");
+  }
+
+  /**
+   * 平面圖上每件家具的矩形尺寸(公尺)。
+   *
+   * 這是 Konva `<Rect>` 實際吃到的那一份寬高(`data-furniture-rects` 與繪製
+   * 共用同一個 memo),不是品項身上另存的欄位 —— 品項身上已經沒有尺寸可存。
+   */
+  async furnitureRects(): Promise<{ id: string; w: number; h: number }[]> {
+    const raw = await this.editor.getAttribute("data-furniture-rects");
+    return JSON.parse(raw ?? "[]");
+  }
+
+  /** 指定家具的平面矩形;找不到就丟例外,不要讓呼叫端拿到 undefined 繼續跑。 */
+  async furnitureRectM(id: string): Promise<{ w: number; h: number }> {
+    const rect = (await this.furnitureRects()).find((r) => r.id === id);
+    if (!rect) throw new Error(`data-furniture-rects 裡沒有 id=${id}`);
+    return { w: rect.w, h: rect.h };
   }
 
   async columnCount(): Promise<number> {
@@ -622,12 +667,42 @@ export class PlanEditorPage {
 
   // --- R6 步驟 03 材質選擇(feedback round 2, T8)------------------------
 
+  // 第四輪:下拉選單換成縮圖選擇器,所以是「點那一格」而不是 selectOption。
   async selectFloorSurface(id: string) {
-    await this.page.getByTestId("surface-floor-select").selectOption(id);
+    await this.page.getByTestId(`surface-option-floor-${id}`).click();
   }
 
   async selectWallSurface(id: string) {
-    await this.page.getByTestId("surface-wall-select").selectOption(id);
+    await this.page.getByTestId(`surface-option-wall-${id}`).click();
+  }
+
+  /** 某一組材質選擇器提供的款式數(縮圖格數)。 */
+  async surfaceOptionCount(surface: "floor" | "wall"): Promise<number> {
+    return this.page
+      .locator(`[data-testid^="surface-option-${surface}-"]`)
+      .count();
+  }
+
+  /** 某一組材質選擇器目前選中的款式 id。 */
+  async selectedSurface(surface: "floor" | "wall"): Promise<string> {
+    return (
+      (await this.page
+        .getByTestId(`surface-picker-${surface}`)
+        .getAttribute("data-selected")) ?? ""
+    );
+  }
+
+  /** 某一格縮圖的圖片來源(dataURL 或貼圖檔路徑)。 */
+  async surfaceSwatchSource(
+    surface: "floor" | "wall",
+    presetId: string,
+  ): Promise<string> {
+    return (
+      (await this.page
+        .getByTestId(`surface-swatch-${surface}-${presetId}`)
+        .first()
+        .getAttribute("src")) ?? ""
+    );
   }
 
   /** 步驟 03 場景實際套用中的地板材質 id。 */
@@ -660,19 +735,28 @@ export class PlanEditorPage {
   }
 
   /** 存檔快照裡記的材質選擇。 */
-  async planSnapshotSurfaces(): Promise<{ floor: string; wall: string }> {
+  async planSnapshotSurfaces(): Promise<{
+    floor: string;
+    wall: string;
+    /** 逐面牆的款式覆寫(T9)。沒有任何覆寫時是空物件,不是 undefined。 */
+    wallOverrides: Record<string, string>;
+  }> {
     const raw = await this.editor.getAttribute("data-plan-surfaces");
     return JSON.parse(raw ?? "null");
   }
 
   // --- R5 步驟 02 家具外型(feedback round 2, T7)------------------------
 
-  /** 步驟 02 場上各種家具的幾何/材質摘要(探針量的,不是原始碼字面值)。 */
+  /** 步驟 02 場上各品項的幾何/材質摘要(探針量的,不是原始碼字面值)。 */
   async sceneFurnitureShapes(): Promise<
     {
-      kind: string;
+      code: string;
       partCount: number;
+      /** 這個代碼在場上有幾**件**(數場景圖裡的根 group)。 */
+      instances: number;
       triangles: number;
+      /** 實際幾何外廓(公尺),未套用擺放位置與旋轉。 */
+      sizeM: [number, number, number];
       hasMap: boolean;
       hasNormalMap: boolean;
     }[]
@@ -713,6 +797,44 @@ export class PlanEditorPage {
     await this.page.getByTestId("booth-custom-apply").click();
   }
 
+  /**
+   * 在步驟 02 的家具目錄裡選一個品項(進入放置模式)。
+   *
+   * T7 之後目錄是三層收合式的,品項卡預設藏在收合的分支底下 —— 直接
+   * `getByTestId("furniture-place-XXX").click()` 會找不到元素。這裡走搜尋:
+   * 代碼是唯一的,填進搜尋框就一定只剩那張卡,不必知道它屬於哪個大類/子類。
+   *
+   * 選完把搜尋清掉,讓面板回到三層導覽 —— 否則下一次呼叫會疊在上一次的
+   * 搜尋結果上,而那是一種很難看出來的耦合。
+   */
+  async pickCatalogItem(code: string) {
+    const search = this.page.getByTestId("catalog-search");
+    await search.fill(code);
+    const card = this.page.getByTestId(`furniture-place-${code}`);
+    await card.waitFor({ state: "visible" });
+    await card.click();
+    await this.page.getByTestId("catalog-search-clear").click();
+  }
+
+  /** 可編輯範圍(攤位 + 邊距)。探針讀的是實作算出來的矩形,不是回音。 */
+  async planArea(): Promise<{
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+    widthM: number;
+    heightM: number;
+  }> {
+    const raw = await this.editor.getAttribute("data-plan-area");
+    return JSON.parse(raw ?? "{}");
+  }
+
+  /** 實際畫出來的格線條數(直線 + 橫線)。 */
+  async gridLineCount(): Promise<number> {
+    const raw = await this.editor.getAttribute("data-grid-line-count");
+    return Number(raw);
+  }
+
   /** 確認對話框上顯示的「會超出場地的件數」。 */
   async boothOutsideCount(): Promise<number> {
     const raw = await this.boothSizeConfirmDialog.getAttribute(
@@ -727,6 +849,41 @@ export class PlanEditorPage {
 
   async cancelBoothSize() {
     await this.page.getByTestId("booth-size-confirm-cancel").click();
+  }
+
+  /**
+   * 報價面板上顯示的合計,解析成數字。
+   *
+   * **讀的是畫面文字**,不是某個 `data-total` 屬性 —— T8 要驗的就是「使用者
+   * 看到的金額對不對」,中間多一層探針屬性只會讓兩者可以各自漂移。
+   */
+  async quoteTotal(): Promise<number> {
+    return parseTwd(await this.page.getByTestId("quote-total").innerText());
+  }
+
+  /** 報價面板自己數的件數(用來與場景探針的件數交叉比對)。 */
+  async quoteItemCount(): Promise<number> {
+    const text = await this.page.getByTestId("quote-item-count").innerText();
+    return Number(text.replace(/[^0-9]/g, ""));
+  }
+
+  /** 某一個品項那一列的明細:名稱、數量、單價、小計。 */
+  async quoteLine(code: string): Promise<{
+    name: string;
+    quantity: number;
+    unitPrice: number;
+    subtotal: number;
+  }> {
+    const text = async (testId: string) =>
+      (await this.page.getByTestId(testId).innerText()).trim();
+    return {
+      name: await text(`quote-line-name-${code}`),
+      quantity: Number(
+        (await text(`quote-line-quantity-${code}`)).replace(/[^0-9]/g, ""),
+      ),
+      unitPrice: parseTwd(await text(`quote-line-unit-${code}`)),
+      subtotal: parseTwd(await text(`quote-line-subtotal-${code}`)),
+    };
   }
 
   // --- R4 步驟 02 刪除(feedback round 2, T2)---------------------------
@@ -848,7 +1005,7 @@ export class PlanEditorPage {
    *
    * Prefer these over `refinedShadowCasterMeshCount()` for AC2: since task 5
    * imports real GLBs, mesh count and item count diverge — N items of one
-   * kind share a single `InstancedMesh`, and a multi-mesh GLB (cabinet: 5)
+   * catalogue code share a single `InstancedMesh`, and a multi-mesh GLB (cabinet: 5)
    * becomes that many `InstancedMesh`es.
    */
   async refinedShadowCasterWallCount(): Promise<number> {
@@ -983,6 +1140,51 @@ export class PlanEditorPage {
     return JSON.parse(raw ?? "null") as MaterialProbeReport;
   }
 
+  /**
+   * 逐面牆實際掛著的材質(T9),依 wallId 排序。
+   *
+   * **這是探針從場景圖與 GPU 讀回來的**,不是選單的值 —— 要斷言「兩面牆真的
+   * 不一樣」就比這裡的 `materialUuid` 與 `albedoMean`,不要比 `data-wall-preset`
+   * (那是設定值的回音,實作壞掉時它照樣是對的)。
+   */
+  async refinedWallSurfaces(): Promise<WallSurfaceReport[]> {
+    const diagnostics = await this.refinedMaterialDiagnostics();
+    return diagnostics?.walls ?? [];
+  }
+
+  /** 步驟 03 個別牆面清單有幾列(沒有牆時清單整個不存在,回 0)。 */
+  async wallSurfaceRowCount(): Promise<number> {
+    const list = this.page.getByTestId("wall-surface-list");
+    if ((await list.count()) === 0) return 0;
+    return Number(await list.getAttribute("data-wall-count"));
+  }
+
+  /** 把第 n 面牆(1-based,與畫面上的「牆 N」一致)設成某個款式。 */
+  async setWallSurface(index: number, presetId: string) {
+    await this.page
+      .getByTestId(`wall-surface-select-${index}`)
+      .selectOption(presetId);
+  }
+
+  /** 第 n 面牆那一列對應的 `WallSegment.id` —— 用來與探針的回報對上。 */
+  async wallSurfaceRowId(index: number): Promise<string> {
+    return (
+      (await this.page
+        .getByTestId(`wall-surface-row-${index}`)
+        .getAttribute("data-wall-id")) ?? ""
+    );
+  }
+
+  /** 給第 n 面牆上傳一張自訂圖。 */
+  async uploadWallSurfaceImage(
+    index: number,
+    file: { name: string; mimeType: string; buffer: Buffer },
+  ) {
+    await this.page
+      .getByTestId(`wall-surface-upload-${index}`)
+      .setInputFiles(file);
+  }
+
   // --- venue-refined-3d task 5: imported furniture model diagnostics ----
   //
   // GLB 載入是非同步的(fetch + Draco worker 解碼),完成時間遠晚於
@@ -997,7 +1199,7 @@ export class PlanEditorPage {
     return raw === "true";
   }
 
-  /** Parsed `data-furniture-model-reports` — one entry per kind currently on the plan. */
+  /** Parsed `data-furniture-model-reports` — one entry per catalogue code currently on the plan. */
   async refinedFurnitureModelReports(): Promise<FurnitureModelReport[]> {
     const raw = await this.refinedScene.getAttribute(
       "data-furniture-model-reports",
@@ -1005,15 +1207,15 @@ export class PlanEditorPage {
     return JSON.parse(raw ?? "[]") as FurnitureModelReport[];
   }
 
-  /** The single report for `kind`, or `undefined` if that kind isn't drawn from a model. */
+  /** The single report for `code`, or `undefined` if that item isn't drawn from a model. */
   async refinedFurnitureModelReport(
-    kind: string,
+    code: string,
   ): Promise<FurnitureModelReport | undefined> {
     const reports = await this.refinedFurnitureModelReports();
-    return reports.find((report) => report.kind === kind);
+    return reports.find((report) => report.code === code);
   }
 
-  /** Parsed `data-furniture-procedural-reports` — one entry per procedurally-drawn kind on the plan. */
+  /** Parsed `data-furniture-procedural-reports` — one entry per procedurally-drawn catalogue code. */
   async refinedProceduralFurnitureReports(): Promise<ProceduralFurnitureReport[]> {
     const raw = await this.refinedScene.getAttribute(
       "data-furniture-procedural-reports",
@@ -1041,7 +1243,7 @@ export class PlanEditorPage {
    * Cache/build counts for the imported-GLB path (`data-furniture-model-stats`).
    *
    * The counterpart to `refinedProceduralFurnitureStats()`. `totalBuilds` is
-   * what proves the per-kind cache is actually being reused: a flat
+   * what proves the per-code cache is actually being reused: a flat
    * `liveGeometries` across round-trips is also consistent with "nothing was
    * drawn at all", whereas `totalBuilds` staying put while models are visibly
    * on screen is not.
@@ -1053,12 +1255,12 @@ export class PlanEditorPage {
     return JSON.parse(raw ?? "null") as FurnitureModelStats;
   }
 
-  /** The single procedural report for `kind`, or `undefined`. */
+  /** The single procedural report for `code`, or `undefined`. */
   async refinedProceduralFurnitureReport(
-    kind: string,
+    code: string,
   ): Promise<ProceduralFurnitureReport | undefined> {
     const reports = await this.refinedProceduralFurnitureReports();
-    return reports.find((report) => report.kind === kind);
+    return reports.find((report) => report.code === code);
   }
 
   // --- zoom/pan --------------------------------------------------------
@@ -1100,4 +1302,11 @@ export class PlanEditorPage {
     await this.page.mouse.move(end.x, end.y, { steps: 8 });
     await this.page.mouse.up();
   }
+}
+
+/** `NT$ 1,370` → `1370`。千分位與貨幣前綴都不進數字。 */
+function parseTwd(text: string): number {
+  const digits = text.replace(/[^0-9]/g, "");
+  if (!digits) throw new Error(`金額字串解析不出數字: ${JSON.stringify(text)}`);
+  return Number(digits);
 }

@@ -64,19 +64,10 @@ export const AI_TOOLS: Anthropic.Tool[] = [
           items: {
             type: "object",
             properties: {
-              kind: {
+              code: {
                 type: "string",
-                enum: [
-                  "table",
-                  "chair",
-                  "cabinet",
-                  "counter",
-                  "bannerStand",
-                  "sofa",
-                  "podium",
-                  "plant",
-                  "display",
-                ],
+                description:
+                  "家具目錄代碼。可用代碼與其名稱、尺寸列在使用者訊息附帶的目前配置 JSON 的 catalogue 欄位,只能從那裡面選;不在目錄裡的代碼會被拒絕。",
               },
               center: POINT_SCHEMA,
               rotationDeg: {
@@ -84,7 +75,7 @@ export const AI_TOOLS: Anthropic.Tool[] = [
                 description: "旋轉角度 0-359,0 為不旋轉",
               },
             },
-            required: ["kind", "center", "rotationDeg"],
+            required: ["code", "center", "rotationDeg"],
             additionalProperties: false,
           },
         },
@@ -95,30 +86,23 @@ export const AI_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "add_furniture",
+    // 尺寸不寫在 description 裡:尺寸的唯一來源是目錄,寫在這裡會變成第二份
+    // 會過期的數字。目錄本身透過每輪的目前配置附錄送進去(見 AiPanel)。
     description:
-      "新增一件家具到指定位置。尺寸用預設值(桌1.2x0.7/椅0.45x0.45/櫃0.6x1.2/櫃檯1.0x0.5/展示架0.8x0.3/沙發1.8x0.8/講台0.6x0.5/植栽0.5x0.5/展示櫃1.0x0.5)。",
+      "新增一件家具到指定位置。尺寸由目錄代碼決定,不可指定。",
     strict: true,
     input_schema: {
       type: "object",
       properties: {
-        kind: {
+        code: {
           type: "string",
-          enum: [
-            "table",
-            "chair",
-            "cabinet",
-            "counter",
-            "bannerStand",
-            "sofa",
-            "podium",
-            "plant",
-            "display",
-          ],
+          description:
+            "家具目錄代碼。可用代碼與其名稱、尺寸列在使用者訊息附帶的目前配置 JSON 的 catalogue 欄位,只能從那裡面選;不在目錄裡的代碼會被拒絕。",
         },
         center: POINT_SCHEMA,
         rotationDeg: { type: "number", description: "旋轉角度 0-359" },
       },
-      required: ["kind", "center", "rotationDeg"],
+      required: ["code", "center", "rotationDeg"],
       additionalProperties: false,
     },
   },

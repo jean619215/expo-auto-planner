@@ -15,15 +15,11 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { Instances, Instance } from "@react-three/drei";
+import { type FurnitureItem } from "@/lib/venue/furniture";
+import { catalogItem, type CatalogItem } from "@/lib/venue/catalog";
 import {
-  FURNITURE_DEFAULTS,
-  type FurnitureItem,
-  type FurnitureKind,
-} from "@/lib/venue/furniture";
-import {
-  hasProceduralFurniture,
-  proceduralFurnitureParts,
   proceduralFurnitureSizeM,
+  proceduralPartsForItem,
   type FurniturePart,
   type PartFinish,
 } from "@/lib/venue/proceduralFurniture";
@@ -35,16 +31,16 @@ import {
   type CachedFurniturePart,
 } from "./proceduralFurnitureStats";
 
-/** 供探針/測試讀取的單一 kind 量測結果。 */
+/** 供探針/測試讀取的單一品項量測結果。 */
 export interface ProceduralFurnitureReport {
-  kind: FurnitureKind;
+  code: string;
   /** 拼出來的實際外廓(公尺)。 */
   sizeM: [number, number, number];
-  /** `FURNITURE_DEFAULTS` 的標稱尺寸(公尺)。 */
+  /** 目錄宣告的標稱尺寸(公尺)。 */
   targetM: [number, number, number];
   /** 這件家具由幾個零件組成。 */
   partCount: number;
-  /** 目前場上這個 kind 有幾件。 */
+  /** 目前場上這個品項有幾件。 */
   instanceCount: number;
 }
 
@@ -133,27 +129,30 @@ export function buildPartGeometry(part: FurniturePart): THREE.BufferGeometry {
   return geometry;
 }
 
-interface ProceduralKindGroupProps {
-  kind: FurnitureKind;
+interface ProceduralCodeGroupProps {
+  entry: CatalogItem;
   items: FurnitureItem[];
   onReport: (report: ProceduralFurnitureReport) => void;
 }
 
-function ProceduralKindGroup({
-  kind,
+function ProceduralCodeGroup({
+  entry,
   items,
   onReport,
-}: ProceduralKindGroupProps) {
-  // 資源依 kind 快取在模組層(理由見 proceduralFurnitureStats.ts:一個 kind
-  // 的零件完全由 kind 決定,而且 StrictMode 的雙重 render 會讓「useMemo 建立
-  // + useEffect dispose」漏掉被丟棄的那一份)。這裡的 useMemo 只是省下每次
-  // render 查表的成本,穩態下不新建任何 GPU 資源。
+}: ProceduralCodeGroupProps) {
+  // 資源依**目錄代碼**快取在模組層(理由見 proceduralFurnitureStats.ts:一個
+  // 品項的零件完全由該品項決定,而且 StrictMode 的雙重 render 會讓「useMemo
+  // 建立 + useEffect dispose」漏掉被丟棄的那一份)。這裡的 useMemo 只是省下
+  // 每次 render 查表的成本,穩態下不新建任何 GPU 資源。
+  //
+  // 鍵是代碼而不是造型:同一個造型的兩個尺寸變體共用造型卻不共用幾何,以造型
+  // 為鍵會讓後建立的那個尺寸拿到前一個的幾何。
   const built = useMemo<CachedFurniturePart[]>(
     () =>
-      getOrBuildProceduralParts(kind, () => {
-        const parts = proceduralFurnitureParts(kind);
+      getOrBuildProceduralParts(entry.code, () => {
+        const parts = proceduralPartsForItem(entry);
         if (!parts) return [];
-        const baseColor = FURNITURE_DEFAULTS[kind].color;
+        const baseColor = entry.color;
         return parts.map((part) => {
           const spec = finishMaterialSpec(part.finish, baseColor);
           return {
@@ -167,21 +166,20 @@ function ProceduralKindGroup({
           };
         });
       }),
-    [kind]
+    [entry]
   );
 
   const report = useMemo<ProceduralFurnitureReport | null>(() => {
-    const sizeM = proceduralFurnitureSizeM(kind);
+    const sizeM = proceduralFurnitureSizeM(entry.code);
     if (!sizeM) return null;
-    const defaults = FURNITURE_DEFAULTS[kind];
     return {
-      kind,
+      code: entry.code,
       sizeM,
-      targetM: [defaults.w, defaults.height3d, defaults.h],
+      targetM: [entry.w, entry.height3d, entry.d],
       partCount: built.length,
       instanceCount: 0,
     };
-  }, [kind, built.length]);
+  }, [entry, built.length]);
 
   const reportedRef = useRef<string>("");
   useEffect(() => {
@@ -201,14 +199,14 @@ function ProceduralKindGroup({
     <>
       {built.map((part, index) => (
         <Instances
-          key={`${kind}-${part.id}-${limit}`}
+          key={`${entry.code}-${part.id}-${limit}`}
           limit={limit}
           range={items.length}
           geometry={part.geometry}
           material={part.material}
           castShadow
           receiveShadow
-          name={refinedFurnitureInstanceName(kind, index)}
+          name={refinedFurnitureInstanceName(entry.code, index)}
         >
           {items.map((item) => (
             <Instance
@@ -241,22 +239,25 @@ export default function ProceduralFurniture({
   onReport,
 }: ProceduralFurnitureProps) {
   const groups = useMemo(() => {
-    const byKind = new Map<FurnitureKind, FurnitureItem[]>();
-    for (const item of furniture) {
-      if (!hasProceduralFurniture(item.kind)) continue;
-      const list = byKind.get(item.kind);
-      if (list) list.push(item);
-      else byKind.set(item.kind, [item]);
+    const byCode = new Map<string, FurnitureItem[]>();
+    for (const placed of furniture) {
+      const entry = catalogItem(placed.code);
+      if (!entry || entry.geometry.kind !== "procedural") continue;
+      const list = byCode.get(placed.code);
+      if (list) list.push(placed);
+      else byCode.set(placed.code, [placed]);
     }
-    return [...byKind.entries()];
+    return [...byCode.entries()].map(
+      ([code, items]) => [catalogItem(code)!, items] as const,
+    );
   }, [furniture]);
 
   return (
     <>
-      {groups.map(([kind, items]) => (
-        <ProceduralKindGroup
-          key={kind}
-          kind={kind}
+      {groups.map(([entry, items]) => (
+        <ProceduralCodeGroup
+          key={entry.code}
+          entry={entry}
           items={items}
           onReport={onReport}
         />

@@ -9,12 +9,9 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useGLTF, Instances, Instance } from "@react-three/drei";
-import {
-  FURNITURE_DEFAULTS,
-  type FurnitureItem,
-  type FurnitureKind,
-} from "@/lib/venue/furniture";
-import { furnitureModel, uniformFitScale } from "@/lib/venue/models";
+import { type FurnitureItem } from "@/lib/venue/furniture";
+import { catalogItem, type CatalogItem } from "@/lib/venue/catalog";
+import { uniformFitScale } from "@/lib/venue/models";
 import { refinedFurnitureInstanceName } from "./RefinedSceneProbe";
 import { instanceLimitFor } from "./instanceLimit";
 import { getOrBuildNormalizedModel } from "./furnitureModelStats";
@@ -32,18 +29,18 @@ export interface FurnitureModelPart {
   material: THREE.Material;
 }
 
-/** 供探針/測試讀取的單一 kind 量測結果。 */
+/** 供探針/測試讀取的單一品項量測結果。 */
 export interface FurnitureModelReport {
-  kind: FurnitureKind;
+  code: string;
   /** 等比縮放倍率(三軸共用一個值,這正是「不得非等比拉伸」的證據)。 */
   scale: number;
   /** 縮放後的實際包圍盒尺寸(公尺,已套用 rotationY)。 */
   fittedM: [number, number, number];
-  /** `FURNITURE_DEFAULTS` 的目標尺寸(公尺)。 */
+  /** 目錄宣告的目標尺寸(公尺)。 */
   targetM: [number, number, number];
-  /** 這個 kind 被拆成幾個 instanced mesh(GLB 內的 mesh 數)。 */
+  /** 這個品項被拆成幾個 instanced mesh(GLB 內的 mesh 數)。 */
   partCount: number;
-  /** 目前場上這個 kind 有幾件。 */
+  /** 目前場上這個品項有幾件。 */
   instanceCount: number;
 }
 
@@ -58,20 +55,14 @@ export interface FurnitureModelReport {
  * 座標約定與既有 box 版本一致:模型底面貼在 y=0,水平方向以原點為中心;
  * 呼叫端用 `position=[center.x, 0, center.y]` 擺放即可。
  */
-function normalizeModel(
+export function normalizeModel(
   source: THREE.Object3D,
-  kind: FurnitureKind,
+  item: CatalogItem,
   rotationY: number
 ): { parts: FurnitureModelPart[]; report: FurnitureModelReport } {
-  const defaults = FURNITURE_DEFAULTS[kind];
-
   // Poly Haven 的 glTF 是 Y-up(轉檔時已從 Blender 的 Z-up 轉過),所以
-  // 目標尺寸在模型座標系裡是 (w, height3d, h)。
-  const target: [number, number, number] = [
-    defaults.w,
-    defaults.height3d,
-    defaults.h,
-  ];
+  // 目標尺寸在模型座標系裡是 (w, height3d, d)。
+  const target: [number, number, number] = [item.w, item.height3d, item.d];
 
   const rotation = new THREE.Matrix4().makeRotationY(
     (rotationY * Math.PI) / 180
@@ -128,7 +119,7 @@ function normalizeModel(
   return {
     parts: baked,
     report: {
-      kind,
+      code: item.code,
       scale,
       fittedM: [size.x * scale, size.y * scale, size.z * scale],
       targetM: target,
@@ -139,48 +130,52 @@ function normalizeModel(
 }
 
 /**
- * 取得某個 kind 正規化後的幾何(依 kind 快取,見 furnitureModelStats.ts)。
+ * 取得某個品項正規化後的幾何(依**目錄代碼**快取,見 furnitureModelStats.ts)。
  *
  * 步驟 02 的白模輪廓與步驟 03 的精細場景共用這個 hook —— 兩邊畫的是**同一
  * 份**幾何,差別只在材質:03 用 GLB 自帶的 PBR 材質,02 用單色。共用而不是
  * 各算一份,是「02 與 03 的家具外型必然一致」這件事的來源。
  */
 export function useNormalizedFurnitureModel(
-  kind: FurnitureKind,
+  item: CatalogItem,
   url: string,
   rotationY: number
 ): { parts: FurnitureModelPart[]; report: FurnitureModelReport } {
   const gltf = useGLTF(url, DRACO_DECODER_PATH);
   return useMemo(
     () =>
-      getOrBuildNormalizedModel(kind, () =>
-        normalizeModel(gltf.scene, kind, rotationY)
+      getOrBuildNormalizedModel(item.code, () =>
+        normalizeModel(gltf.scene, item, rotationY)
       ),
-    [gltf.scene, kind, rotationY]
+    [gltf.scene, item, rotationY]
   );
 }
 
-interface FurnitureKindGroupProps {
-  kind: FurnitureKind;
+interface FurnitureCodeGroupProps {
+  item: CatalogItem;
   url: string;
   rotationY: number;
   items: FurnitureItem[];
   onReport: (report: FurnitureModelReport) => void;
 }
 
-function FurnitureKindGroup({
-  kind,
+function FurnitureCodeGroup({
+  item: catalogEntry,
   url,
   rotationY,
   items,
   onReport,
-}: FurnitureKindGroupProps) {
+}: FurnitureCodeGroupProps) {
   // useGLTF 會 suspend,所以這個元件一定被包在 <Suspense> 裡。
   //
-  // 依 kind 快取,不是每次掛載各自算一份。理由(StrictMode 雙重建置、
+  // 依目錄代碼快取,不是每次掛載各自算一份。理由(StrictMode 雙重建置、
   // 96k 面植栽每趟往返重 clone)寫在 furnitureModelStats.ts 的檔頭。
   // 快取本身就是這些 geometry 的擁有者,所以這裡**沒有** dispose。
-  const { parts, report } = useNormalizedFurnitureModel(kind, url, rotationY);
+  const { parts, report } = useNormalizedFurnitureModel(
+    catalogEntry,
+    url,
+    rotationY,
+  );
 
   const reportedRef = useRef<string>("");
   useEffect(() => {
@@ -202,14 +197,14 @@ function FurnitureKindGroup({
     <>
       {parts.map((part, index) => (
         <Instances
-          key={`${kind}-${index}-${limit}`}
+          key={`${catalogEntry.code}-${index}-${limit}`}
           limit={limit}
           range={items.length}
           geometry={part.geometry}
           material={part.material}
           castShadow
           receiveShadow
-          name={refinedFurnitureInstanceName(kind, index)}
+          name={refinedFurnitureInstanceName(catalogEntry.code, index)}
         >
           {items.map((item) => (
             <Instance
@@ -241,9 +236,13 @@ interface FurnitureModelsProps {
 }
 
 /**
- * 依 kind 分組繪製有真實模型的家具。沒有模型的 kind 直接跳過 —— 呼叫端負責
- * 用別的方式(box 或 task 6 的程序化幾何)畫它們,這裡不做 fallback,免得
- * 同一件家具被畫兩次。
+ * 依**目錄代碼**分組繪製有 GLB 的家具。不是 `model` 幾何的品項直接跳過 ——
+ * 呼叫端負責用別的方式(程序化幾何或保底 box)畫它們,這裡不做 fallback,
+ * 免得同一件家具被畫兩次。
+ *
+ * 分組鍵是代碼而不是造型/kind:兩個代碼可能指向同一個 GLB 卻有不同的目標
+ * 尺寸(目錄長大後的常態),混在同一個 `<Instances>` 會讓其中一種被畫成另一
+ * 種的大小。
  */
 export default function FurnitureModels({
   furniture,
@@ -252,30 +251,34 @@ export default function FurnitureModels({
 }: FurnitureModelsProps) {
   const groups = useMemo(() => {
     const wantDeferred = phase === "deferred";
-    const byKind = new Map<FurnitureKind, FurnitureItem[]>();
-    for (const item of furniture) {
-      const model = furnitureModel(item.kind);
-      if (!model || model.deferred !== wantDeferred) continue;
-      const list = byKind.get(item.kind);
-      if (list) list.push(item);
-      else byKind.set(item.kind, [item]);
+    const byCode = new Map<string, FurnitureItem[]>();
+    for (const placed of furniture) {
+      const entry = catalogItem(placed.code);
+      if (!entry || entry.geometry.kind !== "model") continue;
+      if (entry.geometry.deferred !== wantDeferred) continue;
+      const list = byCode.get(placed.code);
+      if (list) list.push(placed);
+      else byCode.set(placed.code, [placed]);
     }
-    return [...byKind.entries()].map(([kind, items]) => ({
-      kind,
-      items,
-      // furnitureModel(kind) 在上面的迴圈已確認存在。
-      model: furnitureModel(kind)!,
-    }));
+    return [...byCode.entries()].map(([code, items]) => {
+      // 上面的迴圈已確認這個代碼存在且是 model 幾何。
+      const entry = catalogItem(code)!;
+      const geometry = entry.geometry as Extract<
+        CatalogItem["geometry"],
+        { kind: "model" }
+      >;
+      return { entry, items, geometry };
+    });
   }, [furniture, phase]);
 
   return (
     <>
       {groups.map((group) => (
-        <FurnitureKindGroup
-          key={group.kind}
-          kind={group.kind}
-          url={group.model.url}
-          rotationY={group.model.rotationY}
+        <FurnitureCodeGroup
+          key={group.entry.code}
+          item={group.entry}
+          url={group.geometry.url}
+          rotationY={group.geometry.rotationY}
           items={group.items}
           onReport={onReport}
         />
