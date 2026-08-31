@@ -10,7 +10,12 @@ import {
 import type Anthropic from "@anthropic-ai/sdk";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import type { Column, FloorPolygon, WallSegment } from "@/lib/venue/plan";
+import type {
+  Column,
+  FloorBounds,
+  FloorPolygon,
+  WallSegment,
+} from "@/lib/venue/plan";
 import type { FurnitureItem } from "@/lib/venue/furniture";
 import { catalogueForModel } from "@/lib/venue/catalog";
 import {
@@ -42,6 +47,14 @@ export interface AiPanelPlanSnapshot {
   walls: WallSegment[];
   columns: Column[];
   furniture: FurnitureItem[];
+  /**
+   * 可編輯範圍(公尺)。**模型必須知道這個,否則畫出來的東西會被無聲夾壞。**
+   *
+   * 2026-08-31 的實際案例:模型畫正六角形時把中心放在 (30,30),而當時的可
+   * 編輯範圍是 [15,28] —— 超界的頂點被 `snapPoint` 夾到邊界,兩個頂點疊成
+   * 一點,六角形塌成三角形。模型不是算錯,是**從來沒被告知能畫在哪裡**。
+   */
+  area: FloorBounds;
 }
 
 export interface ChatTurn {
@@ -196,6 +209,15 @@ export default function AiPanel({
     // 目錄長到上百項時(T6)要重新考慮:那時整份塞進每一輪的成本就不划算,
     // 比較合理的做法是給模型一支查詢工具,而不是繼續加大這份清單。
     const configJson = JSON.stringify({
+      // 可編輯範圍放在最前面 —— 這是所有座標的前提。超出去的頂點會被夾到
+      // 邊界上(形狀會塌),所以模型產生任何座標之前都要先看這個。
+      editableArea: {
+        minX: plan.area.minX,
+        maxX: plan.area.maxX,
+        minY: plan.area.minY,
+        maxY: plan.area.maxY,
+        note: "所有 floor / walls / columns / furniture 的座標必須落在此範圍內(公尺),超出的會被夾到邊界,形狀會變形",
+      },
       floor: plan.polygon,
       walls: plan.walls,
       columns: plan.columns,
