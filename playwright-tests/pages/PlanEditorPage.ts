@@ -861,6 +861,113 @@ export class PlanEditorPage {
     return Number(raw);
   }
 
+  /**
+   * 背景圖層(圖紙底色 + 網格)在畫布局部座標上的實際像素。
+   *
+   * 直接從 canvas 讀回 —— 不讀任何 `data-*`。判斷「畫布有沒有鋪滿」「範圍外
+   * 的網格是不是比較淡」時,唯一算數的是螢幕上真的畫了什麼(AGENTS.md:
+   * 探針不得是 prop 的回音)。背景是第一個 Layer,所以取第一個 canvas 就
+   * 不會被地板/家具那幾層蓋住。
+   */
+  private async readBackgroundPixel(
+    localX: number,
+    localY: number,
+  ): Promise<[number, number, number, number]> {
+    return this.page.evaluate(
+      ({ x, y }) => {
+        const c = document.querySelector(
+          '[data-testid="plan-editor"] canvas',
+        ) as HTMLCanvasElement | null;
+        if (!c) throw new Error("background canvas not found");
+        const rect = c.getBoundingClientRect();
+        const ctx = c.getContext("2d");
+        if (!ctx) throw new Error("no 2d context on background canvas");
+        const data = ctx.getImageData(
+          Math.round(x * (c.width / rect.width)),
+          Math.round(y * (c.height / rect.height)),
+          1,
+          1,
+        ).data;
+        return [data[0], data[1], data[2], data[3]] as [
+          number,
+          number,
+          number,
+          number,
+        ];
+      },
+      { x: localX, y: localY },
+    );
+  }
+
+  /** 背景圖層在指定**公尺座標**處的實際像素。 */
+  async backgroundPixelAtMeter(
+    meter: PlanPoint,
+  ): Promise<[number, number, number, number]> {
+    const [screen, box] = await Promise.all([
+      this.meterToScreen(meter),
+      this.containerBox(),
+    ]);
+    return this.readBackgroundPixel(screen.x - box.x, screen.y - box.y);
+  }
+
+  /** 畫布四角的實際像素(內縮數 px 避開外框)。 */
+  async backgroundCornerPixels(): Promise<
+    [number, number, number, number][]
+  > {
+    const box = await this.containerBox();
+    const inset = 4;
+    return [
+      await this.readBackgroundPixel(inset, inset),
+      await this.readBackgroundPixel(box.width - inset, inset),
+      await this.readBackgroundPixel(inset, box.height - inset),
+      await this.readBackgroundPixel(box.width - inset, box.height - inset),
+    ];
+  }
+
+  /**
+   * 沿著一條水平線讀回一整排像素的亮度。用來判斷某一段是「純底色」還是
+   * 「底色 + 網格」—— 前者只會有一種值。
+   */
+  async backgroundRowLuma(
+    meterY: number,
+    meterX0: number,
+    meterX1: number,
+  ): Promise<number[]> {
+    const [box, left, right] = await Promise.all([
+      this.containerBox(),
+      this.meterToScreen({ x: meterX0, y: meterY }),
+      this.meterToScreen({ x: meterX1, y: meterY }),
+    ]);
+    return this.page.evaluate(
+      ({ x0, x1, y }) => {
+        const c = document.querySelector(
+          '[data-testid="plan-editor"] canvas',
+        ) as HTMLCanvasElement | null;
+        if (!c) throw new Error("background canvas not found");
+        const rect = c.getBoundingClientRect();
+        const ctx = c.getContext("2d");
+        if (!ctx) throw new Error("no 2d context on background canvas");
+        const sx = c.width / rect.width;
+        const sy = c.height / rect.height;
+        const px0 = Math.round(x0 * sx);
+        const width = Math.max(1, Math.round((x1 - x0) * sx));
+        const data = ctx.getImageData(px0, Math.round(y * sy), width, 1).data;
+        const out: number[] = [];
+        for (let i = 0; i < data.length; i += 4) {
+          out.push(Math.round((data[i] + data[i + 1] + data[i + 2]) / 3));
+        }
+        return out;
+      },
+      { x0: left.x - box.x, x1: right.x - box.x, y: left.y - box.y },
+    );
+  }
+
+  /** 目前鋪滿畫布的那一份網格(可編輯範圍外)的線條數。 */
+  async canvasGridLineCount(): Promise<number> {
+    const raw = await this.editor.getAttribute("data-canvas-grid-line-count");
+    return Number(raw);
+  }
+
   /** 確認對話框上顯示的「會超出場地的件數」。 */
   async boothOutsideCount(): Promise<number> {
     const raw = await this.boothSizeConfirmDialog.getAttribute(
