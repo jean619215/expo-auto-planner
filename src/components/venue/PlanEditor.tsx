@@ -80,9 +80,15 @@ import RefinedSceneLoader from "./RefinedSceneLoader";
 import {
   DEFAULT_SURFACE_SELECTION,
   FLOOR_PRESETS,
+  SURFACE_KEEP,
+  SURFACE_WALL_DEFAULT,
   WALL_PRESETS,
+  floorPreset,
+  isFloorPresetId,
+  isWallPresetId,
   normalizeSurfaceSelection,
   pruneWallOverrides,
+  wallPreset,
   wallPresetIdFor,
   withWallOverride,
   type SurfaceSelection,
@@ -461,11 +467,15 @@ export default function PlanEditor() {
   const wallsRef = useRef(walls);
   const columnsRef = useRef(columns);
   const furnitureRef = useRef(furniture);
+  // 材質同理:AI 也能改它(set_surfaces),而使用者可能在等回應時自己先動了
+  // 步驟 03 的選單。少了這個 ref,套用時會拿送出當下的舊選擇覆蓋回去。
+  const surfacesRef = useRef(surfaces);
   useEffect(() => {
     polygonRef.current = polygon;
     wallsRef.current = walls;
     columnsRef.current = columns;
     furnitureRef.current = furniture;
+    surfacesRef.current = surfaces;
   });
   // 是否已按過「下一步」— 純 gate(是否可渲染 preview/3D 場景),不再是
   // 幾何複本。3D 場景的幾何一律直接讀頂層 polygon/walls/columns/furniture
@@ -1030,6 +1040,7 @@ export default function PlanEditor() {
     let nextWalls = wallsRef.current;
     let nextColumns = columnsRef.current;
     let nextFurniture = furnitureRef.current;
+    let nextSurfaces = surfacesRef.current;
 
     for (const action of actions) {
       switch (action.type) {
@@ -1282,6 +1293,77 @@ export default function PlanEditor() {
           });
           break;
         }
+        case "set_surfaces": {
+          const { floor, wall, wallOverrides } = action.input;
+          const applied: string[] = [];
+          const skipped: string[] = [];
+
+          // 逐項明確檢查,不走 floorPreset()/wallPreset() —— 那兩支查不到會
+          // 退回第一款,模型送了不存在的款式時使用者會拿到水泥地板,而工具
+          // 回報成功。同一類 bug 讓六角形塌成三角形過一次了。
+          if (floor !== SURFACE_KEEP) {
+            if (isFloorPresetId(floor)) {
+              nextSurfaces = { ...nextSurfaces, floor };
+              applied.push(`地板→${floorPreset(floor).label}`);
+            } else {
+              skipped.push(`地板款式「${floor}」不在可用清單中`);
+            }
+          }
+          if (wall !== SURFACE_KEEP) {
+            if (isWallPresetId(wall)) {
+              nextSurfaces = { ...nextSurfaces, wall };
+              applied.push(`預設牆面→${wallPreset(wall).label}`);
+            } else {
+              skipped.push(`牆面款式「${wall}」不在可用清單中`);
+            }
+          }
+          for (const override of wallOverrides ?? []) {
+            const target = nextWalls[override.index];
+            if (!target) {
+              skipped.push(`牆 #${override.index} 不存在`);
+              continue;
+            }
+            if (override.preset === SURFACE_WALL_DEFAULT) {
+              nextSurfaces = withWallOverride(nextSurfaces, target.id, null);
+              applied.push(`牆 #${override.index}→跟隨預設`);
+              continue;
+            }
+            if (!isWallPresetId(override.preset)) {
+              skipped.push(
+                `牆 #${override.index} 的款式「${override.preset}」不在可用清單中`,
+              );
+              continue;
+            }
+            nextSurfaces = withWallOverride(
+              nextSurfaces,
+              target.id,
+              override.preset,
+            );
+            applied.push(
+              `牆 #${override.index}→${wallPreset(override.preset).label}`,
+            );
+          }
+
+          if (applied.length === 0 && skipped.length === 0) {
+            // 三個欄位都是 keep + 空陣列。不是錯誤,但也什麼都沒發生 ——
+            // 說出來,否則模型會以為自己改了東西。
+            results.push({
+              toolUseId: action.toolUseId,
+              ok: true,
+              message: "材質未變更(三項都指定維持現狀)",
+            });
+            break;
+          }
+          const parts = [];
+          if (applied.length > 0) parts.push(`已設定材質:${applied.join("、")}`);
+          if (skipped.length > 0) parts.push(`已跳過:${skipped.join("、")}`);
+          results.push({
+            toolUseId: action.toolUseId,
+            ok: applied.length > 0,
+            message: parts.join(";"),
+          });
+          break;
+        }
       }
     }
 
@@ -1306,6 +1388,20 @@ export default function PlanEditor() {
     if (nextFurniture !== furnitureRef.current) {
       setFurniture(nextFurniture);
       furnitureRef.current = nextFurniture;
+    }
+    // 牆被換掉(generate_plan)之後,舊牆留下的個別材質設定指向已不存在的
+    // id。不清掉的話存檔會累積孤兒設定,更糟的是新牆萬一拿到同一個 id,
+    // 會突然套上前一面牆的材質。
+    const prunedSurfaces =
+      nextWalls === wallsRef.current
+        ? nextSurfaces
+        : pruneWallOverrides(
+            nextSurfaces,
+            nextWalls.map((wall) => wall.id),
+          );
+    if (prunedSurfaces !== surfacesRef.current) {
+      setSurfaces(prunedSurfaces);
+      surfacesRef.current = prunedSurfaces;
     }
 
     return results;
@@ -2828,7 +2924,14 @@ export default function PlanEditor() {
           className={step === "refined" ? "hidden" : "contents"}
         >
           <AiPanel
-            plan={{ polygon, walls, columns, furniture, area: planArea }}
+            plan={{
+              polygon,
+              walls,
+              columns,
+              furniture,
+              area: planArea,
+              surfaces,
+            }}
             applyActions={applyActions}
             planId={currentPlanId}
             slot={currentSlot}

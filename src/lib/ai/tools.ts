@@ -2,6 +2,14 @@ import "server-only";
 
 import type Anthropic from "@anthropic-ai/sdk";
 
+import {
+  FLOOR_PRESETS,
+  SURFACE_KEEP,
+  SURFACE_WALL_DEFAULT,
+  WALL_PRESETS,
+  presetLegend,
+} from "@/lib/venue/surfacePresets";
+
 // Tool 定義:模型只回傳 tool call,實際執行在前端(套用到 PlanEditor state)。
 // schema 對齊 src/lib/venue/plan.ts / furniture.ts 型別;id 由前端生成,schema 不含 id。
 // 全部 strict(structured outputs 保證參數合法);structured outputs 不支援
@@ -136,6 +144,61 @@ export const AI_TOOLS: Anthropic.Tool[] = [
         index: { type: "integer" },
       },
       required: ["itemType", "index"],
+      additionalProperties: false,
+    },
+  },
+  {
+    // 材質(貼皮)可以用 enum,家具目錄不行 —— 差別在**會不會長大**。款式是
+    // 十來款的靜態常數,列進 schema 就永遠留在 prompt cache 的前綴裡;目錄
+    // 會長到上百項,每次增刪都會讓整段快取失效,所以走逐輪夾帶的附錄。
+    name: "set_surfaces",
+    description:
+      "設定步驟 03 精密 3D 的材質(貼皮)。地板一款、牆面一款(所有牆的預設)," +
+      "個別牆要與預設不同時用 wallOverrides。柱子沒有獨立選項,一律跟隨預設牆面。" +
+      `地板款式:${presetLegend(FLOOR_PRESETS)}。` +
+      `牆面款式:${presetLegend(WALL_PRESETS)}。` +
+      `這次不想改的項目填 "${SURFACE_KEEP}",不要為了填欄位而重送目前的值。`,
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: {
+        floor: {
+          type: "string",
+          enum: [...FLOOR_PRESETS.map((preset) => preset.id), SURFACE_KEEP],
+          description: `地板款式;"${SURFACE_KEEP}" 表示這次不改地板`,
+        },
+        wall: {
+          type: "string",
+          enum: [...WALL_PRESETS.map((preset) => preset.id), SURFACE_KEEP],
+          description: `預設牆面款式(套用到所有沒有個別設定的牆與柱子);"${SURFACE_KEEP}" 表示這次不改`,
+        },
+        wallOverrides: {
+          type: "array",
+          description:
+            "個別牆的覆寫(可為空陣列)。只列出要改的牆,沒列到的維持原狀。",
+          items: {
+            type: "object",
+            properties: {
+              index: {
+                type: "integer",
+                description:
+                  "目前配置 JSON 中 walls 陣列的索引(0 起算),規則同 move_item",
+              },
+              preset: {
+                type: "string",
+                enum: [
+                  ...WALL_PRESETS.map((preset) => preset.id),
+                  SURFACE_WALL_DEFAULT,
+                ],
+                description: `這面牆的款式;"${SURFACE_WALL_DEFAULT}" 表示取消個別設定、改回跟隨預設牆面`,
+              },
+            },
+            required: ["index", "preset"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["floor", "wall", "wallOverrides"],
       additionalProperties: false,
     },
   },

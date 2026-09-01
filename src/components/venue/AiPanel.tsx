@@ -19,6 +19,10 @@ import type {
 import type { FurnitureItem } from "@/lib/venue/furniture";
 import { catalogueForModel } from "@/lib/venue/catalog";
 import {
+  wallPresetIdFor,
+  type SurfaceSelection,
+} from "@/lib/venue/surfacePresets";
+import {
   parseToolUse,
   type AiAction,
   type AiActionResult,
@@ -55,6 +59,11 @@ export interface AiPanelPlanSnapshot {
    * 一點,六角形塌成三角形。模型不是算錯,是**從來沒被告知能畫在哪裡**。
    */
   area: FloorBounds;
+  /**
+   * 目前的材質(貼皮)選擇。模型要能用 `set_surfaces` 改它,就得先知道現在是
+   * 什麼 —— 否則「換成暖色系」只能瞎猜,而「維持現狀」這個選項也失去意義。
+   */
+  surfaces: SurfaceSelection;
 }
 
 export interface ChatTurn {
@@ -222,6 +231,21 @@ export default function AiPanel({
       walls: plan.walls,
       columns: plan.columns,
       furniture: plan.furniture,
+      // 個別牆的覆寫在內部是以 `WallSegment.id` 為鍵,但模型從來沒看過那些
+      // id —— 它認得的是 walls 陣列的索引(move_item 也是這個規則)。所以這裡
+      // 翻成索引再送出去,回來的 wallOverrides 也用索引。
+      surfaces: {
+        floor: plan.surfaces.floor,
+        wall: plan.surfaces.wall,
+        wallOverrides: plan.walls
+          .map((wall, index) => ({
+            index,
+            preset: wallPresetIdFor(plan.surfaces, wall.id),
+          }))
+          .filter(
+            (entry) => plan.surfaces.wallOverrides[plan.walls[entry.index].id],
+          ),
+      },
       // 欄位定義在 catalogueForModel() —— 大小守衛的測試讀同一個函式,
       // 兩邊不可能各自漂移。
       catalogue: catalogueForModel(),

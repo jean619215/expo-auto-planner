@@ -1,6 +1,6 @@
 // Client-side AI 面板動作型別 + tool_use 解析。
 //
-// 對齊 src/lib/ai/tools.ts(server-only,5 支 tool 的 input schema),但刻意
+// 對齊 src/lib/ai/tools.ts(server-only,6 支 tool 的 input schema),但刻意
 // 不 import 該檔 — 它掛了 "server-only",client 端 import 會直接編譯失敗。
 // 型別以手動方式與 schema 保持同步。
 
@@ -45,12 +45,27 @@ export interface ResizeFloorInput {
   points: AiPoint[];
 }
 
+export interface SetSurfacesInput {
+  /**
+   * 款式 id,或 `SURFACE_KEEP`(維持現狀)。
+   *
+   * schema 用 enum 限制過(款式是靜態常數,不像目錄會長大),但這裡仍當作
+   * **未驗證字串**看待 —— 型別是手動對齊的,而且 strict 之外的模型行為不該
+   * 由型別假設兜底。合法性由套用端明確檢查,不合法就回報失敗。
+   */
+  floor: string;
+  wall: string;
+  /** 只列出要改的牆;`preset` 為 `SURFACE_WALL_DEFAULT` 表示清除覆寫。 */
+  wallOverrides: { index: number; preset: string }[];
+}
+
 export type AiAction =
   | { type: "generate_plan"; toolUseId: string; input: GeneratePlanInput }
   | { type: "add_furniture"; toolUseId: string; input: AddFurnitureInput }
   | { type: "move_item"; toolUseId: string; input: MoveItemInput }
   | { type: "remove_item"; toolUseId: string; input: RemoveItemInput }
-  | { type: "resize_floor"; toolUseId: string; input: ResizeFloorInput };
+  | { type: "resize_floor"; toolUseId: string; input: ResizeFloorInput }
+  | { type: "set_surfaces"; toolUseId: string; input: SetSurfacesInput };
 
 export interface AiActionResult {
   toolUseId: string;
@@ -111,6 +126,13 @@ export function parseToolUse(content: unknown[]): AiAction[] {
           type: "remove_item",
           toolUseId: id,
           input: input as RemoveItemInput,
+        });
+        break;
+      case "set_surfaces":
+        actions.push({
+          type: "set_surfaces",
+          toolUseId: id,
+          input: input as SetSurfacesInput,
         });
         break;
       case "resize_floor":
