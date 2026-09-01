@@ -205,7 +205,12 @@ export function pruneWallOverrides(
   for (const [wallId, presetId] of Object.entries(selection.wallOverrides)) {
     if (live.has(wallId)) next[wallId] = presetId;
   }
-  return { ...selection, wallOverrides: next };
+  // 沒有東西被清掉時回**原本那個物件**,不是內容相同的新物件。呼叫端用
+  // identity 判斷「有沒有變」來決定要不要 setState —— 每次都給新物件的話,
+  // 那個判斷永遠成立,等於失效。
+  const sameSize =
+    Object.keys(next).length === Object.keys(selection.wallOverrides).length;
+  return sameSize ? selection : { ...selection, wallOverrides: next };
 }
 
 /**
@@ -228,4 +233,38 @@ export function normalizeSurfaceSelection(raw: {
     wall: wallPreset(raw.wall ?? "").id,
     wallOverrides: overrides,
   };
+}
+
+// --- AI 工具用 -----------------------------------------------------------
+
+/**
+ * 「維持現狀」與「清除個別牆覆寫」的哨符值。
+ *
+ * 款式清單是**靜態常數**(和會長大的家具目錄不同),所以可以直接進 tool schema
+ * 的 enum,留在 prompt cache 的前綴裡不必每輪付費。代價是 strict schema 的每個
+ * 欄位都必須有值 —— 沒有「不填」這回事,所以「這次不動地板」得是一個明說出來
+ * 的值,而不是靠省略。這樣模型也必須為「不改」做一次明確的決定。
+ */
+export const SURFACE_KEEP = "keep";
+/** 個別牆的覆寫用:改回跟隨預設牆面。 */
+export const SURFACE_WALL_DEFAULT = "default";
+
+/**
+ * 款式 id 是否真的存在。
+ *
+ * **不要用 `floorPreset()`/`wallPreset()` 做這件事** —— 它們查不到就退回第一款,
+ * 那正是「無聲夾制」那一類 bug:模型送了一個不存在的款式,使用者拿到水泥地板,
+ * 而工具回報成功。要判斷合法性就明說,要解析才用那兩支。
+ */
+export function isFloorPresetId(id: string): boolean {
+  return FLOOR_PRESETS.some((preset) => preset.id === id);
+}
+
+export function isWallPresetId(id: string): boolean {
+  return WALL_PRESETS.some((preset) => preset.id === id);
+}
+
+/** 款式 id + 標籤,給 tool description 用(靜態,不逐輪夾帶)。 */
+export function presetLegend(presets: readonly SurfacePreset[]): string {
+  return presets.map((preset) => `${preset.id}=${preset.label}`).join("、");
 }
